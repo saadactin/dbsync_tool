@@ -1,0 +1,149 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{% if object %}Edit{% else %}Create{% endif %} Connection - DB Sync Tool{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Pass URLs to JavaScript
+    const TEST_AND_LIST_DATABASES_URL = "{% url 'connections:test_and_list_databases' %}";
+    {% if object %}
+    const TEST_CONNECTION_URL = "{% url 'connections:test' object.pk %}";
+    {% endif %}
+</script>
+<script src="{% static 'js/connection_form.js' %}"></script>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-8 offset-md-2">
+            <div class="card">
+                <div class="card-header">
+                    <h3>{% if object %}Edit{% else %}Create{% endif %} Database Connection</h3>
+                </div>
+                <div class="card-body">
+                    {% if messages %}
+                        {% for message in messages %}
+                            <div class="alert alert-{{ message.tags }} alert-dismissible fade show">
+                                {{ message }}
+                                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                            </div>
+                        {% endfor %}
+                    {% endif %}
+
+                    <form method="post">
+                        {% csrf_token %}
+                        
+                        <div class="mb-3">
+                            <label for="{{ form.name.id_for_label }}" class="form-label">Connection Name *</label>
+                            {{ form.name }}
+                            {% if form.name.errors %}
+                                <div class="text-danger small">{{ form.name.errors }}</div>
+                            {% endif %}
+                            <small class="form-text text-muted">A friendly name to identify this connection</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="{{ form.db_type.id_for_label }}" class="form-label">Database Type *</label>
+                            {{ form.db_type }}
+                            {% if form.db_type.errors %}
+                                <div class="text-danger small">{{ form.db_type.errors }}</div>
+                            {% endif %}
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-8 mb-3">
+                                <label for="{{ form.host.id_for_label }}" class="form-label">Host *</label>
+                                {{ form.host }}
+                                {% if form.host.errors %}
+                                    <div class="text-danger small">{{ form.host.errors }}</div>
+                                {% endif %}
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label for="{{ form.port.id_for_label }}" class="form-label">Port *</label>
+                                {{ form.port }}
+                                {% if form.port.errors %}
+                                    <div class="text-danger small">{{ form.port.errors }}</div>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <div class="mb-3" id="database-name-field" {% if not object %}style="display: none;"{% endif %}>
+                            <label for="{{ form.database_name.id_for_label }}" class="form-label">Database Name *</label>
+                            {{ form.database_name }}
+                            {% if form.database_name.errors %}
+                                <div class="text-danger small">{{ form.database_name.errors }}</div>
+                            {% endif %}
+                            {% if not object %}
+                            <small class="form-text text-muted">Select a database from the list below after testing connection</small>
+                            {% endif %}
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="{{ form.username.id_for_label }}" class="form-label">Username *</label>
+                            {{ form.username }}
+                            {% if form.username.errors %}
+                                <div class="text-danger small">{{ form.username.errors }}</div>
+                            {% endif %}
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="{{ form.password.id_for_label }}" class="form-label">Password {% if not object %}*{% endif %}</label>
+                            {{ form.password }}
+                            {% if form.password.errors %}
+                                <div class="text-danger small">{{ form.password.errors }}</div>
+                            {% endif %}
+                            <small class="form-text text-muted">{{ form.password.help_text }}</small>
+                        </div>
+
+                        {% if not object %}
+                        <div class="mb-3" id="test-connection-section">
+                            <button type="button" id="test-connection-btn" class="btn btn-info">
+                                <span id="test-connection-text">Test Connection</span>
+                                <span id="test-connection-spinner" class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                            </button>
+                            <div id="test-connection-message" class="mt-2"></div>
+                        </div>
+
+                        <div class="mb-3" id="database-selection-section" style="display: none;">
+                            <label for="database-select" class="form-label">Select Database *</label>
+                            <select id="database-select" class="form-select" required>
+                                <option value="">-- Select a database --</option>
+                            </select>
+                            <small class="form-text text-muted">Choose a database from the list above</small>
+                            <div id="database-selection-error" class="text-danger small mt-1" style="display: none;"></div>
+                        </div>
+                        {% else %}
+                        <div class="mb-3" id="test-connection-section-edit">
+                            <button type="button" id="test-connection-btn-edit" class="btn btn-info">
+                                <span id="test-connection-text-edit">Test Connection</span>
+                                <span id="test-connection-spinner-edit" class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                            </button>
+                            <div id="test-connection-message-edit" class="mt-2"></div>
+                            <small class="form-text text-muted">Test the connection with the current credentials</small>
+                        </div>
+                        {% endif %}
+
+                        <div class="mb-3 form-check">
+                            {{ form.is_active }}
+                            <label class="form-check-label" for="{{ form.is_active.id_for_label }}">
+                                Active
+                            </label>
+                            {% if form.is_active.errors %}
+                                <div class="text-danger small">{{ form.is_active.errors }}</div>
+                            {% endif %}
+                        </div>
+
+                        <div class="d-flex justify-content-between">
+                            <a href="{% url 'connections:list' %}" class="btn btn-secondary">Cancel</a>
+                            <button type="submit" class="btn btn-primary">{% if object %}Update{% else %}Create{% endif %} Connection</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

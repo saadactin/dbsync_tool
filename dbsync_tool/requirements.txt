@@ -1,0 +1,20 @@
+Django==4.2.7
+djangorestframework==3.14.0
+psycopg2-binary==2.9.9
+mysql-connector-python==8.2.0
+pyodbc==5.0.1
+# Celery and Redis - REMOVED, using APScheduler instead
+# celery==5.3.4
+# redis==5.0.1
+# django-celery-beat==2.5.0
+# django-celery-results==2.5.0
+# APScheduler for lightweight task scheduling (no Redis/Celery needed)
+APScheduler==3.10.4
+croniter==2.0.1
+cryptography==41.0.7
+sqlalchemy==2.0.23
+pandas==2.1.4
+python-dateutil==2.8.2
+python-dotenv==1.0.0
+pytz>=2024.2
+

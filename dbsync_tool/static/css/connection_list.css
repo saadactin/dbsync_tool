@@ -1,0 +1,297 @@
+/* Additional styles for connection list page */
+
+/* Accordion Styles */
+.accordion {
+    border-radius: 0.5rem;
+    overflow: hidden;
+}
+
+.accordion-item {
+    border: 1px solid rgba(0, 0, 0, 0.125);
+    margin-bottom: 0.5rem;
+    border-radius: 0.5rem;
+    overflow: hidden;
+}
+
+.accordion-item:first-child {
+    border-top-left-radius: 0.5rem;
+    border-top-right-radius: 0.5rem;
+}
+
+.accordion-item:last-child {
+    border-bottom-left-radius: 0.5rem;
+    border-bottom-right-radius: 0.5rem;
+    margin-bottom: 0;
+}
+
+.accordion-button {
+    background-color: #f8f9fa;
+    border: none;
+    padding: 1rem 1.25rem;
+    font-size: 1rem;
+    transition: all 0.3s ease;
+}
+
+.accordion-button:not(.collapsed) {
+    background-color: #e7f1ff;
+    color: #0c63e4;
+    box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.125);
+}
+
+.accordion-button:focus {
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+    border-color: transparent;
+}
+
+.accordion-button::after {
+    margin-left: auto;
+    transition: transform 0.3s ease;
+}
+
+/* Database Type Icons */
+.db-type-icon {
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    position: relative;
+    flex-shrink: 0;
+}
+
+.db-type-icon::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 16px;
+    font-weight: bold;
+    color: white;
+}
+
+/* PostgreSQL Icon - Blue */
+.db-type-postgres {
+    background: linear-gradient(135deg, #336791 0%, #4a9bd1 100%);
+}
+
+.db-type-postgres::before {
+    content: '🐘';
+    font-size: 18px;
+}
+
+/* MySQL Icon - Orange */
+.db-type-mysql {
+    background: linear-gradient(135deg, #f29111 0%, #ff6b35 100%);
+}
+
+.db-type-mysql::before {
+    content: '🐬';
+    font-size: 18px;
+}
+
+/* SQL Server Icon - Red */
+.db-type-sqlserver {
+    background: linear-gradient(135deg, #a91c22 0%, #d13438 100%);
+}
+
+.db-type-sqlserver::before {
+    content: '🖥️';
+    font-size: 18px;
+}
+
+/* Connection Count Badge */
+.accordion-button .badge {
+    font-size: 0.875rem;
+    padding: 0.35em 0.65em;
+    min-width: 2rem;
+    text-align: center;
+}
+
+/* Table Styles */
+.accordion-body .table {
+    margin-bottom: 0;
+}
+
+.accordion-body .table thead th {
+    background-color: #f8f9fa;
+    font-weight: 600;
+    border-bottom: 2px solid #dee2e6;
+    padding: 0.75rem;
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #6c757d;
+}
+
+.accordion-body .table tbody td {
+    padding: 0.75rem;
+    vertical-align: middle;
+}
+
+.accordion-body .table tbody tr {
+    transition: background-color 0.2s ease;
+}
+
+.accordion-body .table tbody tr:hover {
+    background-color: #f8f9fa;
+}
+
+/* Action Buttons */
+.btn-group {
+    display: flex;
+    gap: 0.25rem;
+}
+
+.btn-group .btn {
+    margin-right: 0;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    transition: all 0.2s ease;
+}
+
+.btn-group .btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.btn-group .btn:active {
+    transform: translateY(0);
+}
+
+/* Test Connection Button */
+.test-connection {
+    cursor: pointer;
+}
+
+.test-connection:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Status Badges */
+.badge {
+    font-size: 0.75rem;
+    padding: 0.35em 0.65em;
+    font-weight: 500;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .accordion-button {
+        padding: 0.75rem 1rem;
+        font-size: 0.9rem;
+    }
+    
+    .accordion-button .fw-bold {
+        font-size: 0.9rem;
+    }
+    
+    .db-type-icon {
+        width: 20px;
+        height: 20px;
+    }
+    
+    .db-type-icon::before {
+        font-size: 14px;
+    }
+    
+    .accordion-body .table {
+        font-size: 0.875rem;
+    }
+    
+    .accordion-body .table thead th,
+    .accordion-body .table tbody td {
+        padding: 0.5rem;
+    }
+    
+    .btn-group .btn {
+        padding: 0.2rem 0.4rem;
+        font-size: 0.75rem;
+    }
+    
+    /* Hide less important columns on mobile */
+    .accordion-body .table thead th:nth-child(2),
+    .accordion-body .table tbody td:nth-child(2),
+    .accordion-body .table thead th:nth-child(3),
+    .accordion-body .table tbody td:nth-child(3) {
+        display: none;
+    }
+}
+
+@media (max-width: 576px) {
+    .accordion-button {
+        flex-direction: column;
+        align-items: flex-start !important;
+        gap: 0.5rem;
+    }
+    
+    .accordion-button .badge {
+        margin-left: 0 !important;
+        margin-top: 0.25rem;
+    }
+    
+    .accordion-body .table {
+        font-size: 0.8rem;
+    }
+    
+    /* Stack action buttons vertically on very small screens */
+    .btn-group {
+        flex-direction: column;
+        width: 100%;
+    }
+    
+    .btn-group .btn {
+        width: 100%;
+        margin-bottom: 0.25rem;
+    }
+    
+    .btn-group .btn:last-child {
+        margin-bottom: 0;
+    }
+}
+
+/* Smooth Transitions */
+.accordion-collapse {
+    transition: height 0.35s ease;
+}
+
+/* Empty State */
+.card-body.text-center {
+    padding: 3rem 1rem;
+}
+
+/* Link Styles */
+a.text-decoration-none {
+    color: #0d6efd;
+    transition: color 0.2s ease;
+}
+
+a.text-decoration-none:hover {
+    color: #0a58ca;
+    text-decoration: underline;
+}
+
+/* Last Test Info */
+.text-muted.d-block {
+    font-size: 0.75rem;
+    margin-top: 0.25rem;
+}
+
+/* Improved spacing */
+.accordion-body {
+    padding: 0 !important;
+}
+
+.accordion-body .table-responsive {
+    border-radius: 0;
+}
+
+/* Header improvements */
+.d-flex.justify-content-between.align-items-center.mb-4 {
+    margin-bottom: 2rem !important;
+}
+
+/* Badge improvements */
+.badge.rounded-pill {
+    font-weight: 600;
+}

@@ -1,0 +1,308 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load humanize %}
+{% load sync_jobs_tags %}
+
+{% block title %}Execution Detail - {{ execution.id }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .execution-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 2rem;
+        border-radius: 8px;
+        margin-bottom: 2rem;
+    }
+    .stat-card {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 1rem;
+    }
+    .stat-label {
+        font-size: 0.875rem;
+        color: #6c757d;
+        margin-bottom: 0.5rem;
+    }
+    .stat-value {
+        font-size: 1.5rem;
+        font-weight: 600;
+    }
+    .log-row {
+        transition: background-color 0.2s;
+    }
+    .log-row:hover {
+        background-color: #f8f9fa;
+    }
+    .progress-bar-container {
+        height: 8px;
+        background-color: #e9ecef;
+        border-radius: 4px;
+        overflow: hidden;
+        margin-top: 0.5rem;
+    }
+    .progress-bar-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        transition: width 0.3s ease;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Breadcrumb -->
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{% url 'sync_jobs:list' %}">Sync Jobs</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'sync_jobs:job_detail' job_id=job.id %}">{{ job.name }}</a></li>
+            <li class="breadcrumb-item active">Execution {{ execution.id|truncatechars:8 }}</li>
+        </ol>
+    </nav>
+
+    <!-- Execution Header -->
+    <div class="execution-header">
+        <div class="d-flex justify-content-between align-items-start">
+            <div>
+                <h2 class="mb-2">Execution Details</h2>
+                <p class="mb-0">
+                    <strong>Job:</strong> {{ job.name }}<br>
+                    <strong>Started:</strong> {{ execution.started_at|date:"Y-m-d H:i:s" }}<br>
+                    {% if execution.completed_at %}
+                        <strong>Completed:</strong> {{ execution.completed_at|date:"Y-m-d H:i:s" }}<br>
+                    {% endif %}
+                    {% if duration %}
+                        <strong>Duration:</strong> {{ duration|format_duration }}
+                    {% endif %}
+                </p>
+            </div>
+            <div class="text-end">
+                <span class="badge bg-{{ execution.status|status_badge_class }} fs-6 px-3 py-2">
+                    {{ execution.get_status_display }}
+                </span>
+                {% if execution.status == 'running' %}
+                    <div class="spinner-border spinner-border-sm text-white ms-2" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Execution Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-label">Tables Progress</div>
+                <div class="stat-value">
+                    {{ execution.completed_tables }}/{{ execution.total_tables }}
+                </div>
+                <div class="progress-bar-container">
+                    <div class="progress-bar-fill" 
+                         style="width: {% widthratio execution.completed_tables execution.total_tables 100 %}%">
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-label">Rows Synced</div>
+                <div class="stat-value">{{ execution.total_rows_synced|intcomma }}</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-label">Completed Tables</div>
+                <div class="stat-value text-success">{{ completed_logs.count }}</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-label">Failed Tables</div>
+                <div class="stat-value text-danger">{{ failed_logs.count }}</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Error Message (if failed) -->
+    {% if execution.status == 'failed' and execution.error_message %}
+    <div class="alert alert-danger">
+        <strong>Error:</strong> {{ execution.error_message }}
+    </div>
+    {% endif %}
+
+    <!-- Per-Table Logs -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">Table Sync Logs</h5>
+            <div>
+                <button class="btn btn-sm btn-outline-primary" onclick="exportLogs('csv')">
+                    <i class="bi bi-download"></i> Export CSV
+                </button>
+                <button class="btn btn-sm btn-outline-primary" onclick="exportLogs('json')">
+                    <i class="bi bi-download"></i> Export JSON
+                </button>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Schema.Table</th>
+                            <th>Status</th>
+                            <th>Batches</th>
+                            <th>Rows Fetched</th>
+                            <th>Rows Inserted</th>
+                            <th>Duration</th>
+                            <th>Error</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logs-table-body">
+                        {% for log in logs %}
+                        <tr class="log-row" data-log-id="{{ log.id }}">
+                            <td>
+                                <strong>{{ log.schema_name }}.{{ log.table_name }}</strong>
+                            </td>
+                            <td>
+                                <span class="badge bg-{{ log.status|status_badge_class }}">
+                                    {{ log.get_status_display }}
+                                </span>
+                                {% if log.status == 'running' %}
+                                    <span class="spinner-border spinner-border-sm ms-1" role="status"></span>
+                                {% endif %}
+                            </td>
+                            <td>{{ log.batch_number|default:"-" }}</td>
+                            <td>{{ log.rows_fetched|intcomma|default:"-" }}</td>
+                            <td>{{ log.rows_inserted|intcomma|default:"-" }}</td>
+                            <td>
+                                {% if log.status == 'running' and log.started_at %}
+                                    <span class="text-info">Running...</span>
+                                {% elif log.completed_at and log.started_at %}
+                                    {% with duration=log.completed_at|timeuntil:log.started_at %}
+                                        {{ duration|slice:":-4" }}
+                                    {% endwith %}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if log.error_message %}
+                                    <button class="btn btn-sm btn-outline-danger" 
+                                            data-bs-toggle="modal" 
+                                            data-bs-target="#errorModal{{ log.id }}">
+                                        View Error
+                                    </button>
+                                    <!-- Error Modal -->
+                                    <div class="modal fade" id="errorModal{{ log.id }}" tabindex="-1">
+                                        <div class="modal-dialog">
+                                            <div class="modal-content">
+                                                <div class="modal-header">
+                                                    <h5 class="modal-title">Error Details</h5>
+                                                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                                </div>
+                                                <div class="modal-body">
+                                                    <pre class="bg-light p-3 rounded">{{ log.error_message }}</pre>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="7" class="text-center text-muted">
+                                No table logs available yet.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Real-time update script -->
+{% if execution.status == 'running' %}
+<script src="{% static 'js/execution_detail.js' %}"></script>
+<script>
+    // Initialize real-time updates
+    const executionId = '{{ execution.id }}';
+    const jobId = '{{ job.id }}';
+    initializeExecutionUpdates(executionId, jobId);
+</script>
+{% endif %}
+
+<script>
+// Export logs functionality
+function exportLogs(format) {
+    const logs = [
+        {% for log in logs %}
+        {
+            schema: '{{ log.schema_name }}',
+            table: '{{ log.table_name }}',
+            status: '{{ log.status }}',
+            batches: {{ log.batch_number|default:0 }},
+            rowsFetched: {{ log.rows_fetched|default:0 }},
+            rowsInserted: {{ log.rows_inserted|default:0 }},
+            startedAt: '{{ log.started_at|date:"Y-m-d H:i:s"|default:"" }}',
+            completedAt: '{{ log.completed_at|date:"Y-m-d H:i:s"|default:"" }}',
+            error: '{{ log.error_message|default:""|escapejs }}'
+        }{% if not forloop.last %},{% endif %}
+        {% endfor %}
+    ];
+    
+    if (format === 'csv') {
+        exportToCSV(logs);
+    } else if (format === 'json') {
+        exportToJSON(logs);
+    }
+}
+
+function exportToCSV(logs) {
+    const headers = ['Schema', 'Table', 'Status', 'Batches', 'Rows Fetched', 'Rows Inserted', 'Started At', 'Completed At', 'Error'];
+    const rows = logs.map(log => [
+        log.schema,
+        log.table,
+        log.status,
+        log.batches,
+        log.rowsFetched,
+        log.rowsInserted,
+        log.startedAt,
+        log.completedAt,
+        log.error
+    ]);
+    
+    const csvContent = [
+        headers.join(','),
+        ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+    
+    downloadFile(csvContent, 'execution_logs.csv', 'text/csv');
+}
+
+function exportToJSON(logs) {
+    const jsonContent = JSON.stringify(logs, null, 2);
+    downloadFile(jsonContent, 'execution_logs.json', 'application/json');
+}
+
+function downloadFile(content, filename, mimeType) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+}
+</script>
+{% endblock %}
+

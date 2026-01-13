@@ -1,0 +1,482 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load humanize %}
+{% load sync_jobs_tags %}
+
+{% block title %}{{ job.name }} - DB Sync Tool{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/sync_jobs.css' %}">
+<style>
+    .job-header {
+        background: white;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .info-card {
+        background: white;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .info-row {
+        display: flex;
+        padding: 10px 0;
+        border-bottom: 1px solid #eee;
+    }
+    .info-row:last-child {
+        border-bottom: none;
+    }
+    .info-label {
+        font-weight: 600;
+        width: 200px;
+        color: #666;
+    }
+    .info-value {
+        flex: 1;
+    }
+    .action-buttons {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+    .status-badge-large {
+        font-size: 1.1rem;
+        padding: 8px 16px;
+    }
+    .stat-card-small {
+        background: #f8f9fa;
+        padding: 0.75rem;
+        border-radius: 4px;
+        text-align: center;
+    }
+    .stat-label-small {
+        font-size: 0.75rem;
+        color: #6c757d;
+        margin-bottom: 0.25rem;
+    }
+    .stat-value-small {
+        font-size: 1.1rem;
+        font-weight: 600;
+    }
+    .alert-sm {
+        padding: 0.5rem 0.75rem;
+        font-size: 0.875rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header with Job Name and Status -->
+    <div class="job-header">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h1 class="mb-2">{{ job.name }}</h1>
+                <div class="mb-2">
+                    {% if job.status == 'pending' %}
+                        <span class="badge bg-secondary status-badge-large">{{ job.get_status_display }}</span>
+                    {% elif job.status == 'running' %}
+                        <span class="badge bg-primary status-badge-large">{{ job.get_status_display }}</span>
+                    {% elif job.status == 'completed' %}
+                        <span class="badge bg-success status-badge-large">{{ job.get_status_display }}</span>
+                    {% elif job.status == 'failed' %}
+                        <span class="badge bg-danger status-badge-large">{{ job.get_status_display }}</span>
+                    {% elif job.status == 'paused' %}
+                        <span class="badge bg-warning text-dark status-badge-large">{{ job.get_status_display }}</span>
+                    {% else %}
+                        <span class="badge bg-secondary status-badge-large">{{ job.get_status_display }}</span>
+                    {% endif %}
+                    <span class="badge bg-info ms-2">{{ job.get_sync_type_display }}</span>
+                </div>
+            </div>
+            <div class="action-buttons">
+                {% if job.status != 'running' and job.status != 'paused' %}
+                    <a href="{% url 'sync_jobs:job_run_now' job.id %}" class="btn btn-success" onclick="return confirm('Are you sure you want to run this job now?');">
+                        Run Now
+                    </a>
+                {% endif %}
+                {% if job.status == 'paused' %}
+                    <a href="{% url 'sync_jobs:job_resume' job.id %}" class="btn btn-success" onclick="return confirm('Are you sure you want to resume this job?');">
+                        Resume
+                    </a>
+                {% elif job.status != 'running' %}
+                    <a href="{% url 'sync_jobs:job_pause' job.id %}" class="btn btn-warning" onclick="return confirm('Are you sure you want to pause this job?');">
+                        Pause
+                    </a>
+                {% endif %}
+                {% if job.status != 'running' %}
+                    <a href="{% url 'sync_jobs:job_edit' job.id %}" class="btn btn-primary">Edit</a>
+                {% endif %}
+                <a href="{% url 'sync_jobs:job_delete' job.id %}" class="btn btn-danger" onclick="return confirm('Are you sure you want to delete this job? This action cannot be undone.');">
+                    Delete
+                </a>
+                <a href="{% url 'sync_jobs:list' %}" class="btn btn-secondary">Back to List</a>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <!-- Left Column: Job Information -->
+        <div class="col-md-8">
+            <!-- Job Information Card -->
+            <div class="info-card">
+                <h5 class="mb-3">Job Information</h5>
+                <div class="info-row">
+                    <div class="info-label">Job Name:</div>
+                    <div class="info-value">{{ job.name }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Sync Type:</div>
+                    <div class="info-value">
+                        <span class="badge bg-info">{{ job.get_sync_type_display }}</span>
+                    </div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Status:</div>
+                    <div class="info-value">
+                        {% if job.status == 'pending' %}
+                            <span class="badge bg-secondary">{{ job.get_status_display }}</span>
+                        {% elif job.status == 'running' %}
+                            <span class="badge bg-primary">{{ job.get_status_display }}</span>
+                        {% elif job.status == 'completed' %}
+                            <span class="badge bg-success">{{ job.get_status_display }}</span>
+                        {% elif job.status == 'failed' %}
+                            <span class="badge bg-danger">{{ job.get_status_display }}</span>
+                        {% elif job.status == 'paused' %}
+                            <span class="badge bg-warning text-dark">{{ job.get_status_display }}</span>
+                        {% else %}
+                            <span class="badge bg-secondary">{{ job.get_status_display }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Created:</div>
+                    <div class="info-value">{{ job.created_at|date:"F d, Y H:i" }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Last Updated:</div>
+                    <div class="info-value">{{ job.updated_at|date:"F d, Y H:i" }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Last Run:</div>
+                    <div class="info-value">
+                        {% if job.last_run_at %}
+                            {{ job.last_run_at|date:"F d, Y H:i" }}
+                        {% else %}
+                            <span class="text-muted">Never</span>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Next Run:</div>
+                    <div class="info-value">
+                        {% if job.next_run_at %}
+                            {{ job.next_run_at|date:"F d, Y H:i" }}
+                        {% else %}
+                            <span class="text-muted">Not scheduled</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Connection Information -->
+            <div class="info-card">
+                <h5 class="mb-3">Connection Information</h5>
+                <div class="info-row">
+                    <div class="info-label">Source Connection:</div>
+                    <div class="info-value">
+                        <strong>{{ job.source_connection.name }}</strong>
+                        <br>
+                        <small class="text-muted">
+                            {{ job.source_connection.get_db_type_display }} - 
+                            {{ job.source_connection.host }}:{{ job.source_connection.port }} / 
+                            {{ job.source_connection.database_name }}
+                        </small>
+                    </div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Target Connection:</div>
+                    <div class="info-value">
+                        <strong>{{ job.target_connection.name }}</strong>
+                        <br>
+                        <small class="text-muted">
+                            {{ job.target_connection.get_db_type_display }} - 
+                            {{ job.target_connection.host }}:{{ job.target_connection.port }} / 
+                            {{ job.target_connection.database_name }}
+                        </small>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Tables Included -->
+            <div class="info-card">
+                <h5 class="mb-3">Tables Included ({{ job.tables.count }})</h5>
+                {% if job.tables.all %}
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Schema</th>
+                                    <th>Table Name</th>
+                                    <th>Incremental Column</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for table in job.tables.all %}
+                                <tr>
+                                    <td>{{ table.schema_name }}</td>
+                                    <td><strong>{{ table.table_name }}</strong></td>
+                                    <td>
+                                        {% if table.incremental_column %}
+                                            <code>{{ table.incremental_column }}</code>
+                                        {% else %}
+                                            <span class="text-muted">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if table.is_enabled %}
+                                            <span class="badge bg-success">Enabled</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary">Disabled</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <p class="text-muted">No tables configured for this job.</p>
+                {% endif %}
+            </div>
+            
+            <!-- Checkpoints Section (for incremental sync only) -->
+            {% if job.sync_type == 'incremental' %}
+            <div class="info-card">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0">Checkpoints</h5>
+                    <small class="text-muted">Last synced values per table</small>
+                </div>
+                {% if job.tables.all %}
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Table</th>
+                                    <th>Checkpoint Value</th>
+                                    <th>Last Updated</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for table in job.tables.all %}
+                                {% with checkpoint=table|get_checkpoint_for_table:checkpoint_map %}
+                                <tr>
+                                    <td>
+                                        <strong>{{ table.schema_name }}.{{ table.table_name }}</strong>
+                                    </td>
+                                    <td>
+                                        {% if checkpoint %}
+                                            <code class="text-success">{{ checkpoint.last_value|truncatechars:50 }}</code>
+                                        {% else %}
+                                            <span class="text-muted">No checkpoint</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if checkpoint and checkpoint.updated_at %}
+                                            {{ checkpoint.updated_at|date:"Y-m-d H:i:s" }}
+                                        {% else %}
+                                            <span class="text-muted">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if checkpoint %}
+                                            <button class="btn btn-sm btn-warning reset-checkpoint-btn"
+                                                    data-job-id="{{ job.id }}"
+                                                    data-schema="{{ table.schema_name }}"
+                                                    data-table="{{ table.table_name }}"
+                                                    title="Reset checkpoint - next sync will be full sync">
+                                                Reset
+                                            </button>
+                                        {% else %}
+                                            <span class="text-muted small">-</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endwith %}
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="alert alert-info alert-sm mt-3">
+                        <small>
+                            <strong>Note:</strong> Checkpoints track the last synced value for each table. 
+                            Resetting a checkpoint will cause the next sync to process all rows from that table.
+                        </small>
+                    </div>
+                {% else %}
+                    <p class="text-muted">No tables configured for this job.</p>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+        
+        <!-- Right Column: Schedule & Execution History -->
+        <div class="col-md-4">
+            <!-- Schedule Information -->
+            <div class="info-card">
+                <h5 class="mb-3">Schedule Configuration</h5>
+                {% if job.schedule %}
+                    <div class="info-row">
+                        <div class="info-label">Schedule Type:</div>
+                        <div class="info-value">{{ job.schedule.get_schedule_type_display }}</div>
+                    </div>
+                    {% if job.schedule.cron_expression %}
+                        <div class="info-row">
+                            <div class="info-label">Cron Expression:</div>
+                            <div class="info-value"><code>{{ job.schedule.cron_expression }}</code></div>
+                        </div>
+                    {% endif %}
+                    <div class="info-row">
+                        <div class="info-label">Enabled:</div>
+                        <div class="info-value">
+                            {% if job.schedule.is_enabled %}
+                                <span class="badge bg-success">Yes</span>
+                            {% else %}
+                                <span class="badge bg-secondary">No</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="info-row">
+                        <div class="info-label">Next Run:</div>
+                        <div class="info-value">
+                            {% if job.schedule.next_run_at %}
+                                {{ job.schedule.next_run_at|date:"F d, Y H:i" }}
+                            {% else %}
+                                <span class="text-muted">Not scheduled</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                {% else %}
+                    <p class="text-muted">No schedule configured.</p>
+                {% endif %}
+            </div>
+            
+            <!-- Execution History -->
+            <div class="info-card">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0">Execution History</h5>
+                    <span class="badge bg-secondary">{{ total_executions }} total</span>
+                </div>
+                
+                <!-- Execution Statistics -->
+                <div class="row mb-3">
+                    <div class="col-6 mb-2">
+                        <div class="stat-card-small">
+                            <div class="stat-label-small">Total</div>
+                            <div class="stat-value-small">{{ total_executions }}</div>
+                        </div>
+                    </div>
+                    <div class="col-6 mb-2">
+                        <div class="stat-card-small">
+                            <div class="stat-label-small">Successful</div>
+                            <div class="stat-value-small text-success">{{ successful_executions }}</div>
+                        </div>
+                    </div>
+                    <div class="col-6 mb-2">
+                        <div class="stat-card-small">
+                            <div class="stat-label-small">Failed</div>
+                            <div class="stat-value-small text-danger">{{ failed_executions }}</div>
+                        </div>
+                    </div>
+                    <div class="col-6 mb-2">
+                        <div class="stat-card-small">
+                            <div class="stat-label-small">Total Rows</div>
+                            <div class="stat-value-small">{{ total_rows_synced_all_time|intcomma }}</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Latest Execution Status -->
+                {% if latest_execution %}
+                <div class="alert alert-info alert-sm mb-3">
+                    <strong>Latest:</strong>
+                    <span class="badge bg-{{ latest_execution.status|status_badge_class }}">
+                        {{ latest_execution.get_status_display }}
+                    </span>
+                    {% if latest_execution.status == 'running' %}
+                        <span class="spinner-border spinner-border-sm ms-2" role="status"></span>
+                    {% endif %}
+                    <a href="{% url 'sync_jobs:execution_detail' job_id=job.id execution_id=latest_execution.id %}" 
+                       class="btn btn-sm btn-outline-primary ms-2">
+                        View Details
+                    </a>
+                </div>
+                {% endif %}
+                
+                <!-- Execution List Table -->
+                {% if executions %}
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Started At</th>
+                                    <th>Status</th>
+                                    <th>Duration</th>
+                                    <th>Tables</th>
+                                    <th>Rows</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for execution in executions %}
+                                <tr>
+                                    <td>{{ execution.started_at|date:"Y-m-d H:i:s" }}</td>
+                                    <td>
+                                        <span class="badge bg-{{ execution.status|status_badge_class }}">
+                                            {{ execution.get_status_display }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        {% if execution.status == 'running' %}
+                                            <span class="text-info">Running...</span>
+                                        {% else %}
+                                            {{ execution|execution_duration }}
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {{ execution.completed_tables }}/{{ execution.total_tables }}
+                                    </td>
+                                    <td>{{ execution.total_rows_synced|intcomma }}</td>
+                                    <td>
+                                        <a href="{% url 'sync_jobs:execution_detail' job_id=job.id execution_id=execution.id %}" 
+                                           class="btn btn-sm btn-outline-primary">
+                                            View
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <p class="text-muted">No executions yet. Click "Run Now" to start a sync.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/sync_jobs.js' %}"></script>
+{% if job.sync_type == 'incremental' %}
+<script src="{% static 'js/checkpoint_management.js' %}"></script>
+{% endif %}
+{% endblock %}
+

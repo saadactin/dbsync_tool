@@ -1,0 +1,55 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Delete Connection - DB Sync Tool{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-6 offset-md-3">
+            <div class="card">
+                <div class="card-header bg-danger text-white">
+                    <h3>Delete Connection</h3>
+                </div>
+                <div class="card-body">
+                    <p>Are you sure you want to delete the connection <strong>{{ object.name }}</strong>?</p>
+                    
+                    <div class="alert alert-warning">
+                        <strong>Warning:</strong> This action cannot be undone. All test logs associated with this connection will also be deleted.
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-body">
+                            <h6>Connection Details:</h6>
+                            <table class="table table-sm table-borderless mb-0">
+                                <tr>
+                                    <th>Type:</th>
+                                    <td>{{ object.get_db_type_display }}</td>
+                                </tr>
+                                <tr>
+                                    <th>Host:</th>
+                                    <td>{{ object.host }}</td>
+                                </tr>
+                                <tr>
+                                    <th>Database:</th>
+                                    <td>{{ object.database_name }}</td>
+                                </tr>
+                            </table>
+                        </div>
+                    </div>
+
+                    <form method="post">
+                        {% csrf_token %}
+                        <div class="d-flex justify-content-between">
+                            <a href="{% url 'connections:detail' object.id %}" class="btn btn-secondary">Cancel</a>
+                            <button type="submit" class="btn btn-danger">Delete Connection</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+

@@ -1,0 +1,152 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}My Reports{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/sync_jobs.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>My Reports</h1>
+        <div>
+            <a href="?export=csv" class="btn btn-outline-primary">Export CSV</a>
+            <a href="?export=json" class="btn btn-outline-primary">Export JSON</a>
+        </div>
+    </div>
+    
+    <!-- Date Range Filter -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-4">
+                    <label for="start_date" class="form-label">Start Date</label>
+                    <input type="date" class="form-control" id="start_date" name="start_date" 
+                           value="{{ report.period.start|date:'Y-m-d'|default:'' }}">
+                </div>
+                <div class="col-md-4">
+                    <label for="end_date" class="form-label">End Date</label>
+                    <input type="date" class="form-control" id="end_date" name="end_date" 
+                           value="{{ report.period.end|date:'Y-m-d'|default:'' }}">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">&nbsp;</label>
+                    <div>
+                        <button type="submit" class="btn btn-primary">Filter</button>
+                        <a href="{% url 'sync_jobs:user_report' %}" class="btn btn-outline-secondary">Clear</a>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Summary Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title text-muted">Total Jobs</h5>
+                    <h2 class="text-primary">{{ report.summary.total_jobs }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title text-muted">Total Executions</h5>
+                    <h2 class="text-info">{{ report.summary.total_executions }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title text-muted">Successful</h5>
+                    <h2 class="text-success">{{ report.summary.successful_executions }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title text-muted">Success Rate</h5>
+                    <h2 class="text-info">{{ report.summary.success_rate }}%</h2>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title text-muted">Total Rows Synced</h5>
+                    <h2 class="text-primary">{{ report.summary.total_rows_synced|intcomma }}</h2>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Job Statistics -->
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0">Job Statistics</h5>
+        </div>
+        <div class="card-body">
+            {% if report.job_statistics %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Job Name</th>
+                                <th>Sync Type</th>
+                                <th>Status</th>
+                                <th>Executions</th>
+                                <th>Successful</th>
+                                <th>Total Rows</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for stat in report.job_statistics %}
+                            <tr>
+                                <td>
+                                    <a href="{% url 'sync_jobs:job_detail' job_id=stat.job.id %}">
+                                        <strong>{{ stat.job.name }}</strong>
+                                    </a>
+                                </td>
+                                <td>{{ stat.job.get_sync_type_display }}</td>
+                                <td>
+                                    {% if stat.job.status == 'completed' %}
+                                        <span class="badge bg-success">{{ stat.job.get_status_display }}</span>
+                                    {% elif stat.job.status == 'running' %}
+                                        <span class="badge bg-primary">{{ stat.job.get_status_display }}</span>
+                                    {% elif stat.job.status == 'failed' %}
+                                        <span class="badge bg-danger">{{ stat.job.get_status_display }}</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">{{ stat.job.get_status_display }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ stat.execution_count }}</td>
+                                <td>{{ stat.success_count }}</td>
+                                <td>{{ stat.total_rows|intcomma }}</td>
+                                <td>
+                                    <a href="{% url 'sync_jobs:job_report' job_id=stat.job.id %}" 
+                                       class="btn btn-sm btn-outline-primary">View Report</a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p class="text-muted text-center py-4">No jobs found.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+

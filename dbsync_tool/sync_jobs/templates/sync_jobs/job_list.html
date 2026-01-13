@@ -1,0 +1,264 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Sync Jobs - DB Sync Tool{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/sync_jobs.css' %}">
+<style>
+    .stats-card {
+        background: white;
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
+    }
+    .stats-card h3 {
+        margin: 0;
+        font-size: 2rem;
+        font-weight: 600;
+    }
+    .stats-card p {
+        margin: 5px 0 0 0;
+        color: #666;
+        font-size: 0.9rem;
+    }
+    .filter-section {
+        background: white;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .table-actions {
+        display: flex;
+        gap: 5px;
+    }
+    .table-actions .btn {
+        padding: 4px 8px;
+        font-size: 0.85rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>Sync Jobs</h1>
+        <a href="{% url 'sync_jobs:create_step1' %}" class="btn btn-primary">Create New Sync Job</a>
+    </div>
+    
+    <!-- Statistics Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-primary">{{ stats.total }}</h3>
+                <p>Total Jobs</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-warning">{{ stats.pending }}</h3>
+                <p>Pending</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-info">{{ stats.running }}</h3>
+                <p>Running</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-danger">{{ stats.failed }}</h3>
+                <p>Failed</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Filters and Search -->
+    <div class="filter-section">
+        <form method="get" action="{% url 'sync_jobs:list' %}" class="row g-3">
+            <div class="col-md-3">
+                <label for="search" class="form-label">Search</label>
+                <input 
+                    type="text" 
+                    class="form-control" 
+                    id="search" 
+                    name="search" 
+                    placeholder="Search by job name..."
+                    value="{{ search_query }}"
+                >
+            </div>
+            <div class="col-md-2">
+                <label for="status" class="form-label">Status</label>
+                <select class="form-select" id="status" name="status">
+                    <option value="">All Statuses</option>
+                    <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
+                    <option value="running" {% if status_filter == 'running' %}selected{% endif %}>Running</option>
+                    <option value="completed" {% if status_filter == 'completed' %}selected{% endif %}>Completed</option>
+                    <option value="failed" {% if status_filter == 'failed' %}selected{% endif %}>Failed</option>
+                    <option value="paused" {% if status_filter == 'paused' %}selected{% endif %}>Paused</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label for="sync_type" class="form-label">Sync Type</label>
+                <select class="form-select" id="sync_type" name="sync_type">
+                    <option value="">All Types</option>
+                    <option value="full" {% if sync_type_filter == 'full' %}selected{% endif %}>Full Sync</option>
+                    <option value="incremental" {% if sync_type_filter == 'incremental' %}selected{% endif %}>Incremental</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label for="sort" class="form-label">Sort By</label>
+                <select class="form-select" id="sort" name="sort">
+                    <option value="-created_at" {% if sort_by == '-created_at' %}selected{% endif %}>Newest First</option>
+                    <option value="created_at" {% if sort_by == 'created_at' %}selected{% endif %}>Oldest First</option>
+                    <option value="name" {% if sort_by == 'name' %}selected{% endif %}>Name (A-Z)</option>
+                    <option value="-name" {% if sort_by == '-name' %}selected{% endif %}>Name (Z-A)</option>
+                    <option value="-last_run_at" {% if sort_by == '-last_run_at' %}selected{% endif %}>Last Run (Recent)</option>
+                    <option value="last_run_at" {% if sort_by == 'last_run_at' %}selected{% endif %}>Last Run (Oldest)</option>
+                    <option value="status" {% if sort_by == 'status' %}selected{% endif %}>Status</option>
+                </select>
+            </div>
+            <div class="col-md-3 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary me-2">Apply Filters</button>
+                <a href="{% url 'sync_jobs:list' %}" class="btn btn-secondary">Clear</a>
+            </div>
+        </form>
+    </div>
+    
+    <!-- Jobs Table -->
+    {% if jobs %}
+        <div class="card">
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Job Name</th>
+                                <th>Source → Target</th>
+                                <th>Type</th>
+                                <th>Status</th>
+                                <th>Tables</th>
+                                <th>Last Run</th>
+                                <th>Next Run</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for job in jobs %}
+                            <tr>
+                                <td>
+                                    <strong>{{ job.name }}</strong>
+                                </td>
+                                <td>
+                                    <small>
+                                        {{ job.source_connection.name }} → {{ job.target_connection.name }}
+                                    </small>
+                                </td>
+                                <td>
+                                    <span class="badge bg-info">{{ job.get_sync_type_display }}</span>
+                                </td>
+                                <td>
+                                    {% if job.status == 'pending' %}
+                                        <span class="badge bg-secondary">{{ job.get_status_display }}</span>
+                                    {% elif job.status == 'running' %}
+                                        <span class="badge bg-primary">{{ job.get_status_display }}</span>
+                                    {% elif job.status == 'completed' %}
+                                        <span class="badge bg-success">{{ job.get_status_display }}</span>
+                                    {% elif job.status == 'failed' %}
+                                        <span class="badge bg-danger">{{ job.get_status_display }}</span>
+                                    {% elif job.status == 'paused' %}
+                                        <span class="badge bg-warning text-dark">{{ job.get_status_display }}</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">{{ job.get_status_display }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <span class="badge bg-light text-dark">{{ job.tables.count }} table(s)</span>
+                                </td>
+                                <td>
+                                    {% if job.last_run_at %}
+                                        <small>{{ job.last_run_at|date:"Y-m-d H:i" }}</small>
+                                    {% else %}
+                                        <small class="text-muted">Never</small>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if job.next_run_at %}
+                                        <small>{{ job.next_run_at|date:"Y-m-d H:i" }}</small>
+                                    {% else %}
+                                        <small class="text-muted">-</small>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <small>{{ job.created_at|date:"Y-m-d H:i" }}</small>
+                                </td>
+                                <td>
+                                    <div class="table-actions">
+                                        <a href="{% url 'sync_jobs:job_detail' job.id %}" class="btn btn-sm btn-info" title="View Details">
+                                            <i class="bi bi-eye"></i> View
+                                        </a>
+                                        {% if job.status != 'running' %}
+                                        <form method="post" action="{% url 'sync_jobs:job_run_now' job.id %}" style="display: inline;" class="run-job-form">
+                                            {% csrf_token %}
+                                            <button type="submit" class="btn btn-sm btn-success" title="Run Now">
+                                                <i class="bi bi-play-fill"></i> Run
+                                            </button>
+                                        </form>
+                                        {% endif %}
+                                        {% if job.status == 'running' %}
+                                        <span class="badge bg-primary">
+                                            <span class="spinner-border spinner-border-sm" role="status"></span> Running
+                                        </span>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    {% else %}
+        <div class="card">
+            <div class="card-body text-center py-5">
+                <h5 class="text-muted">No sync jobs found</h5>
+                {% if search_query or status_filter or sync_type_filter %}
+                    <p class="text-muted">Try adjusting your filters or search criteria.</p>
+                    <a href="{% url 'sync_jobs:list' %}" class="btn btn-secondary">Clear Filters</a>
+                {% else %}
+                    <p class="text-muted">Get started by creating your first sync job.</p>
+                    <a href="{% url 'sync_jobs:create_step1' %}" class="btn btn-primary">Create Your First Sync Job</a>
+                {% endif %}
+            </div>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/sync_jobs.js' %}"></script>
+<script src="{% static 'js/notifications.js' %}"></script>
+<script>
+    // Add loading states for actions
+    document.addEventListener('DOMContentLoaded', function() {
+        const runForms = document.querySelectorAll('.run-job-form');
+        runForms.forEach(form => {
+            form.addEventListener('submit', function(e) {
+                const button = form.querySelector('button[type="submit"]');
+                button.disabled = true;
+                button.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Running...';
+                
+                // Show notification
+                if (typeof showNotification === 'function') {
+                    showNotification('Starting sync job...', 'info');
+                }
+            });
+        });
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,318 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load sync_jobs_tags %}
+
+{% block title %}Edit Job: {{ job.name }} - DB Sync Tool{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/sync_jobs.css' %}">
+<style>
+    .sync-type-card {
+        border: 2px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 15px;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+    .sync-type-card:hover {
+        border-color: #007bff;
+        background-color: #f8f9fa;
+    }
+    .sync-type-card.selected {
+        border-color: #007bff;
+        background-color: #e7f3ff;
+    }
+    .incremental-column-section {
+        display: none;
+        margin-top: 20px;
+    }
+    .incremental-column-section.active {
+        display: block;
+    }
+    .table-config-row {
+        padding: 10px;
+        margin-bottom: 10px;
+        background-color: #f8f9fa;
+        border-radius: 4px;
+    }
+    .schedule-section {
+        margin-top: 30px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <h1 class="mb-4">Edit Sync Job: {{ job.name }}</h1>
+            
+            <!-- Job Summary -->
+            <div class="card mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Job Information</h5>
+                    <p><strong>Source:</strong> {{ job.source_connection.name }} ({{ job.source_connection.get_db_type_display }})</p>
+                    <p><strong>Target:</strong> {{ job.target_connection.name }} ({{ job.target_connection.get_db_type_display }})</p>
+                    <p><strong>Tables:</strong> {{ job.tables.count }} table(s)</p>
+                </div>
+            </div>
+            
+            <form method="post" id="edit-form">
+                {% csrf_token %}
+                
+                <!-- Job Name -->
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Job Name *</h5>
+                        <div class="form-group">
+                            <input 
+                                type="text" 
+                                class="form-control" 
+                                id="job_name" 
+                                name="job_name" 
+                                value="{{ job.name }}"
+                                placeholder="Enter a descriptive name for this sync job"
+                                required
+                            >
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Sync Type Selection -->
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Sync Type *</h5>
+                        
+                        <div class="sync-type-card" data-sync-type="full">
+                            <div class="form-check">
+                                <input 
+                                    class="form-check-input" 
+                                    type="radio" 
+                                    name="sync_type" 
+                                    id="sync_type_full" 
+                                    value="full" 
+                                    {% if job.sync_type == 'full' %}checked{% endif %}
+                                    required
+                                >
+                                <label class="form-check-label" for="sync_type_full">
+                                    <strong>Full Sync</strong>
+                                    <p class="text-muted mb-0">Sync all data from source tables. Existing data in target tables will be replaced.</p>
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div class="sync-type-card" data-sync-type="incremental">
+                            <div class="form-check">
+                                <input 
+                                    class="form-check-input" 
+                                    type="radio" 
+                                    name="sync_type" 
+                                    id="sync_type_incremental" 
+                                    value="incremental"
+                                    {% if job.sync_type == 'incremental' %}checked{% endif %}
+                                    required
+                                >
+                                <label class="form-check-label" for="sync_type_incremental">
+                                    <strong>Incremental Sync</strong>
+                                    <p class="text-muted mb-0">Sync only new or updated records based on a timestamp or ID column. Existing data is preserved.</p>
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <!-- Incremental Column Configuration -->
+                        <div id="incremental-column-section" class="incremental-column-section {% if job.sync_type == 'incremental' %}active{% endif %}">
+                            <h6 class="mt-4 mb-3">Configure Incremental Columns</h6>
+                            <p class="text-muted">Select the column to use for tracking incremental changes for each table.</p>
+                            
+                            {% for table in job.tables.all %}
+                                {% with table_key=table.schema_name|add:"."|add:table.table_name %}
+                                    <div class="table-config-row">
+                                        <label><strong>{{ table_key }}</strong></label>
+                                        <select 
+                                            class="form-select mt-2" 
+                                            name="incremental_column_{{ table_key }}" 
+                                            id="inc_col_{{ table_key|slugify }}"
+                                            {% if job.sync_type == 'incremental' %}required{% endif %}
+                                        >
+                                            <option value="">-- Select Column --</option>
+                                            {% with table_data=table_columns|get_item:table_key %}
+                                                {% if table_data and table_data.incremental_candidates %}
+                                                    {% for col in table_data.incremental_candidates %}
+                                                        <option value="{{ col.name }}" {% if table.incremental_column == col.name %}selected{% endif %}>
+                                                            {{ col.name }} ({{ col.data_type }})
+                                                            {% if 'time' in col.data_type|lower or 'date' in col.data_type|lower %}
+                                                                - Recommended
+                                                            {% endif %}
+                                                        </option>
+                                                    {% endfor %}
+                                                {% endif %}
+                                            {% endwith %}
+                                        </select>
+                                        {% with table_data=table_columns|get_item:table_key %}
+                                            {% if not table_data or not table_data.incremental_candidates %}
+                                                <small class="text-warning">No suitable incremental columns found. Please use Full Sync for this table.</small>
+                                            {% endif %}
+                                        {% endwith %}
+                                    </div>
+                                {% endwith %}
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Schedule Configuration -->
+                <div class="card mb-4 schedule-section">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Schedule *</h5>
+                        
+                        <div class="form-group mb-3">
+                            <label for="schedule_type"><strong>Schedule Type</strong></label>
+                            <select class="form-select" id="schedule_type" name="schedule_type" required>
+                                <option value="once" {% if job.schedule and job.schedule.schedule_type == 'once' %}selected{% endif %}>Run Once (Manual)</option>
+                                <option value="hourly" {% if job.schedule and job.schedule.schedule_type == 'hourly' %}selected{% endif %}>Hourly</option>
+                                <option value="daily" {% if job.schedule and job.schedule.schedule_type == 'daily' %}selected{% endif %}>Daily</option>
+                                <option value="weekly" {% if job.schedule and job.schedule.schedule_type == 'weekly' %}selected{% endif %}>Weekly</option>
+                                <option value="custom" {% if job.schedule and job.schedule.schedule_type == 'custom' %}selected{% endif %}>Custom Cron Expression</option>
+                            </select>
+                        </div>
+                        
+                        <!-- Custom Cron Expression -->
+                        <div id="cron-section" class="form-group mb-3" style="display: {% if job.schedule and job.schedule.schedule_type == 'custom' %}block{% else %}none{% endif %};">
+                            <label for="cron_expression"><strong>Cron Expression</strong></label>
+                            <input 
+                                type="text" 
+                                class="form-control" 
+                                id="cron_expression" 
+                                name="cron_expression" 
+                                placeholder="e.g., 0 0 * * * (daily at midnight)"
+                                value="{% if job.schedule %}{{ job.schedule.cron_expression|default:'' }}{% endif %}"
+                            >
+                            <small class="form-text text-muted">
+                                Format: minute hour day month day-of-week<br>
+                                Example: <code>0 0 * * *</code> = Daily at midnight<br>
+                                Example: <code>0 */2 * * *</code> = Every 2 hours
+                            </small>
+                        </div>
+                        
+                        <!-- Start Date/Time -->
+                        <div id="start-datetime-section" class="form-group mb-3" style="display: {% if job.schedule and job.schedule.schedule_type != 'once' and job.schedule.schedule_type != 'custom' %}block{% else %}none{% endif %};">
+                            <label for="start_datetime"><strong>Start Date/Time</strong></label>
+                            <input 
+                                type="datetime-local" 
+                                class="form-control" 
+                                id="start_datetime" 
+                                name="start_datetime"
+                                value="{% if job.schedule and job.schedule.next_run_at %}{{ job.schedule.next_run_at|date:'Y-m-d\TH:i' }}{% endif %}"
+                            >
+                            <small class="form-text text-muted">When should the scheduled sync start? (Leave empty to start now)</small>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Form Actions -->
+                <div class="mb-4">
+                    <a href="{% url 'sync_jobs:job_detail' job.id %}" class="btn btn-secondary">Cancel</a>
+                    <button type="submit" class="btn btn-primary" id="save-btn">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Sync type selection
+    document.querySelectorAll('.sync-type-card').forEach(card => {
+        const radio = card.querySelector('input[type="radio"]');
+        card.addEventListener('click', function(e) {
+            if (e.target.type !== 'radio') {
+                radio.checked = true;
+                updateSyncTypeUI();
+            }
+        });
+        radio.addEventListener('change', updateSyncTypeUI);
+    });
+    
+    function updateSyncTypeUI() {
+        const selectedType = document.querySelector('input[name="sync_type"]:checked').value;
+        const incrementalSection = document.getElementById('incremental-column-section');
+        
+        document.querySelectorAll('.sync-type-card').forEach(card => {
+            card.classList.remove('selected');
+        });
+        document.querySelector(`[data-sync-type="${selectedType}"]`).classList.add('selected');
+        
+        if (selectedType === 'incremental') {
+            incrementalSection.classList.add('active');
+            // Make incremental columns required
+            document.querySelectorAll('#incremental-column-section select').forEach(select => {
+                select.required = true;
+            });
+        } else {
+            incrementalSection.classList.remove('active');
+            // Make incremental columns not required
+            document.querySelectorAll('#incremental-column-section select').forEach(select => {
+                select.required = false;
+            });
+        }
+    }
+    
+    // Schedule type selection
+    document.getElementById('schedule_type').addEventListener('change', function() {
+        const scheduleType = this.value;
+        const cronSection = document.getElementById('cron-section');
+        const startDatetimeSection = document.getElementById('start-datetime-section');
+        const cronExpression = document.getElementById('cron_expression');
+        
+        if (scheduleType === 'custom') {
+            cronSection.style.display = 'block';
+            cronExpression.required = true;
+            startDatetimeSection.style.display = 'none';
+        } else if (scheduleType !== 'once') {
+            cronSection.style.display = 'none';
+            cronExpression.required = false;
+            startDatetimeSection.style.display = 'block';
+        } else {
+            cronSection.style.display = 'none';
+            cronExpression.required = false;
+            startDatetimeSection.style.display = 'none';
+        }
+    });
+    
+    // Form validation
+    document.getElementById('edit-form').addEventListener('submit', function(e) {
+        const syncType = document.querySelector('input[name="sync_type"]:checked').value;
+        const scheduleType = document.getElementById('schedule_type').value;
+        const cronExpression = document.getElementById('cron_expression').value;
+        
+        if (syncType === 'incremental') {
+            const missingColumns = [];
+            document.querySelectorAll('#incremental-column-section select').forEach(select => {
+                if (!select.value) {
+                    missingColumns.push(select.closest('.table-config-row').querySelector('label strong').textContent);
+                }
+            });
+            
+            if (missingColumns.length > 0) {
+                e.preventDefault();
+                alert('Please select incremental columns for all tables:\n' + missingColumns.join('\n'));
+                return false;
+            }
+        }
+        
+        if (scheduleType === 'custom' && !cronExpression) {
+            e.preventDefault();
+            alert('Please enter a cron expression for custom schedule.');
+            return false;
+        }
+    });
+    
+    // Initial UI state
+    updateSyncTypeUI();
+});
+</script>
+{% endblock %}
+

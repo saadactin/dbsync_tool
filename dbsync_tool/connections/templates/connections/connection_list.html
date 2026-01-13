@@ -1,0 +1,280 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Connections - DB Sync Tool{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/connection_list.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>Database Connections</h1>
+        <a href="{% url 'connections:create' %}" class="btn btn-primary">
+            <span>➕</span> Add New Connection
+        </a>
+    </div>
+
+    {% if grouped_list %}
+        {% if total_connections > 0 %}
+            <div class="accordion" id="connectionsAccordion">
+                {% for group in grouped_list %}
+                    {% if group.connections %}
+                        <div class="accordion-item" data-db-type="{{ group.type }}">
+                            <h2 class="accordion-header" id="heading{{ group.type|capfirst }}">
+                                <button class="accordion-button {% if not forloop.first %}collapsed{% endif %}" type="button" 
+                                        data-bs-toggle="collapse" 
+                                        data-bs-target="#collapse{{ group.type|capfirst }}" 
+                                        aria-expanded="{% if forloop.first %}true{% else %}false{% endif %}" 
+                                        aria-controls="collapse{{ group.type|capfirst }}">
+                                    <div class="d-flex align-items-center w-100">
+                                        <span class="db-type-icon db-type-{{ group.type }} me-3"></span>
+                                        <span class="fw-bold me-2">{{ group.name }}</span>
+                                        <span class="badge bg-secondary rounded-pill ms-auto">{{ group.count }}</span>
+                                    </div>
+                                </button>
+                            </h2>
+                            <div id="collapse{{ group.type|capfirst }}" 
+                                 class="accordion-collapse collapse {% if forloop.first %}show{% endif %}" 
+                                 aria-labelledby="heading{{ group.type|capfirst }}" 
+                                 data-bs-parent="#connectionsAccordion">
+                                <div class="accordion-body p-0">
+                                    <div class="table-responsive">
+                                        <table class="table table-hover mb-0">
+                                            <thead>
+                                                <tr>
+                                                    <th>Name</th>
+                                                    <th>Host</th>
+                                                    <th>Port</th>
+                                                    <th>Database</th>
+                                                    <th>Status</th>
+                                                    <th>Last Test</th>
+                                                    <th>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {% for connection in group.connections %}
+                                                <tr>
+                                                    <td>
+                                                        <a href="{% url 'connections:detail' connection.id %}" class="text-decoration-none fw-semibold">
+                                                            {{ connection.name }}
+                                                        </a>
+                                                    </td>
+                                                    <td>{{ connection.host }}</td>
+                                                    <td>{{ connection.port }}</td>
+                                                    <td>{{ connection.database_name }}</td>
+                                                    <td>
+                                                        {% if connection.is_active %}
+                                                            <span class="badge bg-success">Active</span>
+                                                        {% else %}
+                                                            <span class="badge bg-secondary">Inactive</span>
+                                                        {% endif %}
+                                                    </td>
+                                                    <td>
+                                                        {% with last_test=connection.test_logs.first %}
+                                                            {% if last_test %}
+                                                                {% if last_test.status == 'success' %}
+                                                                    <span class="badge bg-success">{{ last_test.status|capfirst }}</span>
+                                                                {% else %}
+                                                                    <span class="badge bg-danger">{{ last_test.status|capfirst }}</span>
+                                                                {% endif %}
+                                                                <small class="text-muted d-block">{{ last_test.tested_at|timesince }} ago</small>
+                                                            {% else %}
+                                                                <span class="text-muted">Never tested</span>
+                                                            {% endif %}
+                                                        {% endwith %}
+                                                    </td>
+                                                    <td>
+                                                        <div class="btn-group" role="group">
+                                                            <a href="{% url 'connections:detail' connection.id %}" class="btn btn-sm btn-outline-primary" title="View">
+                                                                <span>👁️</span>
+                                                            </a>
+                                                            <a href="{% url 'connections:update' connection.id %}" class="btn btn-sm btn-outline-secondary" title="Edit">
+                                                                <span>✏️</span>
+                                                            </a>
+                                                            <button type="button" class="btn btn-sm btn-outline-info test-connection" data-connection-id="{{ connection.id }}" title="Test">
+                                                                <span>🔌</span>
+                                                            </button>
+                                                            <a href="{% url 'connections:delete' connection.id %}" class="btn btn-sm btn-outline-danger" title="Delete">
+                                                                <span>🗑️</span>
+                                                            </a>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    {% endif %}
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="card">
+                <div class="card-body text-center py-5">
+                    <h5 class="text-muted">No connections found</h5>
+                    <p class="text-muted">Get started by adding your first database connection.</p>
+                    <a href="{% url 'connections:create' %}" class="btn btn-primary">
+                        <span>➕</span> Add New Connection
+                    </a>
+                </div>
+            </div>
+        {% endif %}
+    {% else %}
+        <div class="card">
+            <div class="card-body text-center py-5">
+                <h5 class="text-muted">No connections found</h5>
+                <p class="text-muted">Get started by adding your first database connection.</p>
+                <a href="{% url 'connections:create' %}" class="btn btn-primary">
+                    <span>➕</span> Add New Connection
+                </a>
+            </div>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Get CSRF token
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Accordion state management
+const ACCORDION_STATE_KEY = 'connection_list_accordion_state';
+
+function saveAccordionState() {
+    const state = {};
+    const accordionItems = document.querySelectorAll('.accordion-item');
+    
+    accordionItems.forEach(item => {
+        const dbType = item.getAttribute('data-db-type');
+        const collapse = item.querySelector('.accordion-collapse');
+        const isExpanded = collapse.classList.contains('show');
+        state[dbType] = isExpanded;
+    });
+    
+    localStorage.setItem(ACCORDION_STATE_KEY, JSON.stringify(state));
+}
+
+function restoreAccordionState() {
+    try {
+        const savedState = localStorage.getItem(ACCORDION_STATE_KEY);
+        if (!savedState) return;
+        
+        const state = JSON.parse(savedState);
+        const accordionItems = document.querySelectorAll('.accordion-item');
+        
+        accordionItems.forEach(item => {
+            const dbType = item.getAttribute('data-db-type');
+            const button = item.querySelector('.accordion-button');
+            const collapse = item.querySelector('.accordion-collapse');
+            
+            if (state.hasOwnProperty(dbType) && button && collapse) {
+                const shouldBeExpanded = state[dbType];
+                const isCurrentlyExpanded = collapse.classList.contains('show');
+                
+                // Only change state if it's different from saved state
+                if (shouldBeExpanded !== isCurrentlyExpanded) {
+                    // Check if Bootstrap is available
+                    if (typeof bootstrap !== 'undefined' && bootstrap.Collapse) {
+                        const bsCollapse = new bootstrap.Collapse(collapse, {
+                            toggle: false
+                        });
+                        
+                        if (shouldBeExpanded) {
+                            bsCollapse.show();
+                            button.classList.remove('collapsed');
+                            button.setAttribute('aria-expanded', 'true');
+                        } else {
+                            bsCollapse.hide();
+                            button.classList.add('collapsed');
+                            button.setAttribute('aria-expanded', 'false');
+                        }
+                    } else {
+                        // Fallback: manually toggle classes if Bootstrap isn't available
+                        if (shouldBeExpanded) {
+                            collapse.classList.add('show');
+                            button.classList.remove('collapsed');
+                            button.setAttribute('aria-expanded', 'true');
+                        } else {
+                            collapse.classList.remove('show');
+                            button.classList.add('collapsed');
+                            button.setAttribute('aria-expanded', 'false');
+                        }
+                    }
+                }
+            }
+        });
+    } catch (e) {
+        console.error('Error restoring accordion state:', e);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Restore accordion state on page load
+    restoreAccordionState();
+    
+    // Save state when accordion is toggled
+    const accordion = document.getElementById('connectionsAccordion');
+    if (accordion) {
+        accordion.addEventListener('shown.bs.collapse', saveAccordionState);
+        accordion.addEventListener('hidden.bs.collapse', saveAccordionState);
+    }
+    
+    // Test connection functionality
+    const testButtons = document.querySelectorAll('.test-connection');
+    const csrftoken = getCookie('csrftoken');
+    
+    testButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            const connectionId = this.getAttribute('data-connection-id');
+            const button = this;
+            const originalHTML = button.innerHTML;
+            
+            button.disabled = true;
+            button.innerHTML = '<span>⏳</span>';
+            
+            fetch(`/connections/${connectionId}/test/`, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrftoken,
+                    'Content-Type': 'application/json',
+                },
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Connection test successful!');
+                    window.location.reload();
+                } else {
+                    alert('Connection test failed: ' + data.message);
+                }
+            })
+            .catch(error => {
+                alert('Error testing connection: ' + error.message);
+            })
+            .finally(() => {
+                button.disabled = false;
+                button.innerHTML = originalHTML;
+            });
+        });
+    });
+});
+</script>
+{% endblock %}

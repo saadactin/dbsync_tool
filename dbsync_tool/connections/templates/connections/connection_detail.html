@@ -1,0 +1,236 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{{ connection.name }} - DB Sync Tool{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>{{ connection.name }}</h1>
+        <div class="btn-group" role="group">
+            <button type="button" class="btn btn-info test-connection" data-connection-id="{{ connection.id }}">
+                <span>🔌</span> Test Connection
+            </button>
+            <a href="{% url 'connections:update' connection.id %}" class="btn btn-secondary">
+                <span>✏️</span> Edit
+            </a>
+            <a href="{% url 'connections:delete' connection.id %}" class="btn btn-danger">
+                <span>🗑️</span> Delete
+            </a>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5>Connection Details</h5>
+                </div>
+                <div class="card-body">
+                    <table class="table table-borderless">
+                        <tr>
+                            <th width="200">Name:</th>
+                            <td>{{ connection.name }}</td>
+                        </tr>
+                        <tr>
+                            <th>Database Type:</th>
+                            <td>{{ connection.get_db_type_display }}</td>
+                        </tr>
+                        <tr>
+                            <th>Host:</th>
+                            <td>{{ connection.host }}</td>
+                        </tr>
+                        <tr>
+                            <th>Port:</th>
+                            <td>{{ connection.port }}</td>
+                        </tr>
+                        <tr>
+                            <th>Database Name:</th>
+                            <td>{{ connection.database_name }}</td>
+                        </tr>
+                        <tr>
+                            <th>Username:</th>
+                            <td>{{ connection.username }}</td>
+                        </tr>
+                        <tr>
+                            <th>Status:</th>
+                            <td>
+                                {% if connection.is_active %}
+                                    <span class="badge bg-success">Active</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">Inactive</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Created:</th>
+                            <td>{{ connection.created_at|date:"F d, Y H:i" }}</td>
+                        </tr>
+                        <tr>
+                            <th>Last Updated:</th>
+                            <td>{{ connection.updated_at|date:"F d, Y H:i" }}</td>
+                        </tr>
+                        <tr>
+                            <th>Created By:</th>
+                            <td>{{ connection.created_by.username }}</td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h5>Connection Test History</h5>
+                </div>
+                <div class="card-body">
+                    {% if test_logs %}
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Status</th>
+                                    <th>Tested At</th>
+                                    <th>Tested By</th>
+                                    <th>Error Message</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for log in test_logs %}
+                                <tr>
+                                    <td>
+                                        {% if log.status == 'success' %}
+                                            <span class="badge bg-success">{{ log.status|capfirst }}</span>
+                                        {% else %}
+                                            <span class="badge bg-danger">{{ log.status|capfirst }}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ log.tested_at|date:"F d, Y H:i:s" }}</td>
+                                    <td>{{ log.tested_by.username|default:"System" }}</td>
+                                    <td>
+                                        {% if log.error_message %}
+                                            <small class="text-danger">{{ log.error_message }}</small>
+                                        {% else %}
+                                            <span class="text-muted">-</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <p class="text-muted">No test history available.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Quick Actions</h5>
+                </div>
+                <div class="card-body">
+                    <div class="d-grid gap-2">
+                        <button type="button" class="btn btn-info test-connection" data-connection-id="{{ connection.id }}">
+                            <span>🔌</span> Test Connection
+                        </button>
+                        <a href="{% url 'connections:update' connection.id %}" class="btn btn-secondary">
+                            <span>✏️</span> Edit Connection
+                        </a>
+                        <a href="{% url 'connections:delete' connection.id %}" class="btn btn-danger">
+                            <span>🗑️</span> Delete Connection
+                        </a>
+                        <a href="{% url 'connections:list' %}" class="btn btn-outline-secondary">
+                            <span>←</span> Back to List
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            {% if last_test_status %}
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h5>Last Test Result</h5>
+                </div>
+                <div class="card-body">
+                    {% if last_test_status == 'success' %}
+                        <div class="alert alert-success mb-0">
+                            <strong>Success!</strong><br>
+                            Last connection test was successful.
+                        </div>
+                    {% else %}
+                        <div class="alert alert-danger mb-0">
+                            <strong>Failed!</strong><br>
+                            Last connection test failed.
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Get CSRF token
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const testButtons = document.querySelectorAll('.test-connection');
+    const csrftoken = getCookie('csrftoken');
+    
+    testButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            const connectionId = this.getAttribute('data-connection-id');
+            const button = this;
+            const originalHTML = button.innerHTML;
+            
+            button.disabled = true;
+            button.innerHTML = '<span>⏳</span> Testing...';
+            
+            fetch(`/connections/${connectionId}/test/`, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrftoken,
+                    'Content-Type': 'application/json',
+                },
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Connection test successful!');
+                    window.location.reload();
+                } else {
+                    alert('Connection test failed: ' + data.message);
+                }
+            })
+            .catch(error => {
+                alert('Error testing connection: ' + error.message);
+            })
+            .finally(() => {
+                button.disabled = false;
+                button.innerHTML = originalHTML;
+            });
+        });
+    });
+});
+</script>
+{% endblock %}
+
+

@@ -1,0 +1,55 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}My Profile - DB Sync Tool{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <h1 class="mb-4">My Profile</h1>
+    
+    <div class="card">
+        <div class="card-body">
+            <h5 class="card-title">User Information</h5>
+            <table class="table">
+                <tr>
+                    <th>Username:</th>
+                    <td>{{ user.username }}</td>
+                </tr>
+                <tr>
+                    <th>Email:</th>
+                    <td>{{ user.email|default:"Not provided" }}</td>
+                </tr>
+                <tr>
+                    <th>First Name:</th>
+                    <td>{{ user.first_name|default:"Not provided" }}</td>
+                </tr>
+                <tr>
+                    <th>Last Name:</th>
+                    <td>{{ user.last_name|default:"Not provided" }}</td>
+                </tr>
+                <tr>
+                    <th>Last Login:</th>
+                    <td>{{ user.last_login|date:"F d, Y H:i"|default:"Never" }}</td>
+                </tr>
+                <tr>
+                    <th>Date Joined:</th>
+                    <td>{{ user.date_joined|date:"F d, Y" }}</td>
+                </tr>
+                <tr>
+                    <th>Is Staff:</th>
+                    <td>{% if user.is_staff %}Yes{% else %}No{% endif %}</td>
+                </tr>
+                <tr>
+                    <th>Is Superuser:</th>
+                    <td>{% if user.is_superuser %}Yes{% else %}No{% endif %}</td>
+                </tr>
+            </table>
+            <div class="mt-3">
+                <a href="{% url 'accounts:change_password' %}" class="btn btn-primary">Change Password</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+

@@ -1,0 +1,304 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load sync_jobs_tags %}
+
+{% block title %}Configure Sync - Step 3 - DB Sync Tool{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/sync_jobs.css' %}">
+<style>
+    .sync-type-card {
+        border: 2px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 15px;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+    .sync-type-card:hover {
+        border-color: #007bff;
+        background-color: #f8f9fa;
+    }
+    .sync-type-card.selected {
+        border-color: #007bff;
+        background-color: #e7f3ff;
+    }
+    .incremental-column-section {
+        display: none;
+        margin-top: 20px;
+    }
+    .incremental-column-section.active {
+        display: block;
+    }
+    .table-config-row {
+        padding: 10px;
+        margin-bottom: 10px;
+        background-color: #f8f9fa;
+        border-radius: 4px;
+    }
+    .schedule-section {
+        margin-top: 30px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <h1 class="mb-4">Create Sync Job - Step 3: Configure Sync</h1>
+            
+            <!-- Progress indicator -->
+            <div class="progress mb-4" style="height: 30px;">
+                <div class="progress-bar" role="progressbar" style="width: 100%;" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100">
+                    Step 3 of 3
+                </div>
+            </div>
+            
+            <!-- Job Summary -->
+            <div class="card mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Job Summary</h5>
+                    <p><strong>Job Name:</strong> {{ job_name }}</p>
+                    <p><strong>Source:</strong> {{ source_connection.name }} ({{ source_connection.get_db_type_display }})</p>
+                    <p><strong>Tables Selected:</strong> {{ selected_tables|length }} table(s)</p>
+                </div>
+            </div>
+            
+            <form method="post" id="step3-form" action="{% url 'sync_jobs:create_step3_submit' %}">
+                {% csrf_token %}
+                
+                <!-- Sync Type Selection -->
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Sync Type *</h5>
+                        
+                        <div class="sync-type-card" data-sync-type="full">
+                            <div class="form-check">
+                                <input 
+                                    class="form-check-input" 
+                                    type="radio" 
+                                    name="sync_type" 
+                                    id="sync_type_full" 
+                                    value="full" 
+                                    checked
+                                    required
+                                >
+                                <label class="form-check-label" for="sync_type_full">
+                                    <strong>Full Sync</strong>
+                                    <p class="text-muted mb-0">Sync all data from source tables. Existing data in target tables will be replaced.</p>
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div class="sync-type-card" data-sync-type="incremental">
+                            <div class="form-check">
+                                <input 
+                                    class="form-check-input" 
+                                    type="radio" 
+                                    name="sync_type" 
+                                    id="sync_type_incremental" 
+                                    value="incremental"
+                                    required
+                                >
+                                <label class="form-check-label" for="sync_type_incremental">
+                                    <strong>Incremental Sync</strong>
+                                    <p class="text-muted mb-0">Sync only new or updated records based on a timestamp or ID column. Existing data is preserved.</p>
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <!-- Incremental Column Configuration -->
+                        <div id="incremental-column-section" class="incremental-column-section">
+                            <h6 class="mt-4 mb-3">Configure Incremental Columns</h6>
+                            <p class="text-muted">Select the column to use for tracking incremental changes for each table.</p>
+                            
+                            {% for table_info in selected_tables %}
+                                {% with table_key=table_info.schema_name|add:"."|add:table_info.table_name %}
+                                    <div class="table-config-row">
+                                        <label><strong>{{ table_key }}</strong></label>
+                                        <select 
+                                            class="form-select mt-2" 
+                                            name="incremental_column_{{ table_key }}" 
+                                            id="inc_col_{{ table_key|slugify }}"
+                                            required
+                                        >
+                                            <option value="">-- Select Column --</option>
+                                            {% with table_data=table_columns|get_item:table_key %}
+                                                {% if table_data and table_data.incremental_candidates %}
+                                                    {% for col in table_data.incremental_candidates %}
+                                                        <option value="{{ col.name }}">
+                                                            {{ col.name }} ({{ col.data_type }})
+                                                            {% if 'time' in col.data_type|lower or 'date' in col.data_type|lower %}
+                                                                - Recommended
+                                                            {% endif %}
+                                                        </option>
+                                                    {% endfor %}
+                                                {% endif %}
+                                            {% endwith %}
+                                        </select>
+                                        {% with table_data=table_columns|get_item:table_key %}
+                                            {% if not table_data or not table_data.incremental_candidates %}
+                                                <small class="text-warning">No suitable incremental columns found. Please use Full Sync for this table.</small>
+                                            {% endif %}
+                                        {% endwith %}
+                                    </div>
+                                {% endwith %}
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Schedule Configuration -->
+                <div class="card mb-4 schedule-section">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Schedule *</h5>
+                        
+                        <div class="form-group mb-3">
+                            <label for="schedule_type"><strong>Schedule Type</strong></label>
+                            <select class="form-select" id="schedule_type" name="schedule_type" required>
+                                <option value="once">Run Once (Manual)</option>
+                                <option value="hourly">Hourly</option>
+                                <option value="daily">Daily</option>
+                                <option value="weekly">Weekly</option>
+                                <option value="custom">Custom Cron Expression</option>
+                            </select>
+                        </div>
+                        
+                        <!-- Custom Cron Expression -->
+                        <div id="cron-section" class="form-group mb-3" style="display: none;">
+                            <label for="cron_expression"><strong>Cron Expression</strong></label>
+                            <input 
+                                type="text" 
+                                class="form-control" 
+                                id="cron_expression" 
+                                name="cron_expression" 
+                                placeholder="e.g., 0 0 * * * (daily at midnight)"
+                            >
+                            <small class="form-text text-muted">
+                                Format: minute hour day month day-of-week<br>
+                                Example: <code>0 0 * * *</code> = Daily at midnight<br>
+                                Example: <code>0 */2 * * *</code> = Every 2 hours
+                            </small>
+                        </div>
+                        
+                        <!-- Start Date/Time -->
+                        <div id="start-datetime-section" class="form-group mb-3" style="display: none;">
+                            <label for="start_datetime"><strong>Start Date/Time</strong></label>
+                            <input 
+                                type="datetime-local" 
+                                class="form-control" 
+                                id="start_datetime" 
+                                name="start_datetime"
+                            >
+                            <small class="form-text text-muted">When should the scheduled sync start? (Leave empty to start now)</small>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Form Actions -->
+                <div class="mb-4">
+                    <button type="button" class="btn btn-secondary" onclick="window.location.href='{% url 'sync_jobs:create_step2' %}'">Back</button>
+                    <button type="submit" class="btn btn-primary" id="create-btn">Create Sync Job</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Sync type selection
+    document.querySelectorAll('.sync-type-card').forEach(card => {
+        const radio = card.querySelector('input[type="radio"]');
+        card.addEventListener('click', function(e) {
+            if (e.target.type !== 'radio') {
+                radio.checked = true;
+                updateSyncTypeUI();
+            }
+        });
+        radio.addEventListener('change', updateSyncTypeUI);
+    });
+    
+    function updateSyncTypeUI() {
+        const selectedType = document.querySelector('input[name="sync_type"]:checked').value;
+        const incrementalSection = document.getElementById('incremental-column-section');
+        
+        document.querySelectorAll('.sync-type-card').forEach(card => {
+            card.classList.remove('selected');
+        });
+        document.querySelector(`[data-sync-type="${selectedType}"]`).classList.add('selected');
+        
+        if (selectedType === 'incremental') {
+            incrementalSection.classList.add('active');
+            // Make incremental columns required
+            document.querySelectorAll('#incremental-column-section select').forEach(select => {
+                select.required = true;
+            });
+        } else {
+            incrementalSection.classList.remove('active');
+            // Make incremental columns not required
+            document.querySelectorAll('#incremental-column-section select').forEach(select => {
+                select.required = false;
+            });
+        }
+    }
+    
+    // Schedule type selection
+    document.getElementById('schedule_type').addEventListener('change', function() {
+        const scheduleType = this.value;
+        const cronSection = document.getElementById('cron-section');
+        const startDatetimeSection = document.getElementById('start-datetime-section');
+        const cronExpression = document.getElementById('cron_expression');
+        
+        if (scheduleType === 'custom') {
+            cronSection.style.display = 'block';
+            cronExpression.required = true;
+            startDatetimeSection.style.display = 'none';
+        } else if (scheduleType !== 'once') {
+            cronSection.style.display = 'none';
+            cronExpression.required = false;
+            startDatetimeSection.style.display = 'block';
+        } else {
+            cronSection.style.display = 'none';
+            cronExpression.required = false;
+            startDatetimeSection.style.display = 'none';
+        }
+    });
+    
+    // Form validation
+    document.getElementById('step3-form').addEventListener('submit', function(e) {
+        const syncType = document.querySelector('input[name="sync_type"]:checked').value;
+        const scheduleType = document.getElementById('schedule_type').value;
+        const cronExpression = document.getElementById('cron_expression').value;
+        
+        if (syncType === 'incremental') {
+            const missingColumns = [];
+            document.querySelectorAll('#incremental-column-section select').forEach(select => {
+                if (!select.value) {
+                    missingColumns.push(select.closest('.table-config-row').querySelector('label strong').textContent);
+                }
+            });
+            
+            if (missingColumns.length > 0) {
+                e.preventDefault();
+                alert('Please select incremental columns for all tables:\n' + missingColumns.join('\n'));
+                return false;
+            }
+        }
+        
+        if (scheduleType === 'custom' && !cronExpression) {
+            e.preventDefault();
+            alert('Please enter a cron expression for custom schedule.');
+            return false;
+        }
+    });
+    
+    // Initial UI state
+    updateSyncTypeUI();
+});
+</script>
+{% endblock %}
+

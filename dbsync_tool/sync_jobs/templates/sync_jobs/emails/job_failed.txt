@@ -1,0 +1,26 @@
+Sync Job Failed
+
+Hello {{ user.username }},
+
+Your sync job "{{ job.name }}" has failed.
+
+Job Details:
+- Job Name: {{ job.name }}
+- Sync Type: {{ job.get_sync_type_display }}
+- Status: {{ execution.get_status_display }}
+- Tables Processed: {{ execution.completed_tables }}/{{ execution.total_tables }}
+- Rows Synced: {{ execution.total_rows_synced|default:0|intcomma }}
+- Started At: {{ execution.started_at|date:"Y-m-d H:i:s" }}
+
+{% if execution.error_message %}
+Error Message:
+{{ execution.error_message }}
+{% endif %}
+
+View execution details: {{ site_url }}{% url 'sync_jobs:execution_detail' job_id=job.id execution_id=execution.id %}
+
+Please review the error and take appropriate action.
+
+This is an automated notification from DB Sync Tool.
+You can manage your notification preferences in your account settings.
+

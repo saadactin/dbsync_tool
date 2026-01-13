@@ -1,0 +1,365 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Dashboard - DB Sync Tool{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/sync_jobs.css' %}">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+    .stats-card {
+        background: white;
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
+        transition: transform 0.2s;
+    }
+    .stats-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+    .stats-card h3 {
+        margin: 0;
+        font-size: 2.5rem;
+        font-weight: 600;
+    }
+    .stats-card p {
+        margin: 5px 0 0 0;
+        color: #666;
+        font-size: 0.9rem;
+    }
+    .quick-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+    .chart-container {
+        position: relative;
+        height: 300px;
+        margin-bottom: 20px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>Dashboard</h1>
+        <div class="quick-actions">
+            <a href="{% url 'sync_jobs:create_step1' %}" class="btn btn-primary">
+                <i class="bi bi-plus-circle"></i> Create New Job
+            </a>
+            <a href="{% url 'sync_jobs:list' %}" class="btn btn-outline-primary">
+                <i class="bi bi-list"></i> View All Jobs
+            </a>
+        </div>
+    </div>
+    
+    <!-- Statistics Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-primary">{{ stats.jobs.total }}</h3>
+                <p>Total Jobs</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-info">{{ stats.jobs.running }}</h3>
+                <p>Running</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-success">{{ stats.jobs.completed }}</h3>
+                <p>Completed</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-danger">{{ stats.jobs.failed }}</h3>
+                <p>Failed</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Additional Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-warning">{{ stats.jobs.paused }}</h3>
+                <p>Paused</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-secondary">{{ stats.jobs.scheduled }}</h3>
+                <p>Scheduled</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-primary">{{ stats.connections.total }}</h3>
+                <p>Connections</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-info">{{ stats.executions.last_24h }}</h3>
+                <p>Executions (24h)</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Performance Metrics -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Success Rate (Last 30 Days)</h5>
+                </div>
+                <div class="card-body">
+                    <h2 class="text-success">{{ stats.success_rates.last_30d }}%</h2>
+                    <p class="text-muted">Based on {{ stats.executions.last_30d }} executions</p>
+                    <small class="text-muted">
+                        24h: {{ stats.success_rates.last_24h }}% | 
+                        7d: {{ stats.success_rates.last_7d }}%
+                    </small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Total Rows Synced (Last 30 Days)</h5>
+                </div>
+                <div class="card-body">
+                    <h2 class="text-info">{{ stats.rows_synced.last_30d|intcomma }}</h2>
+                    <p class="text-muted">Rows synchronized successfully</p>
+                    <small class="text-muted">
+                        24h: {{ stats.rows_synced.last_24h|intcomma }} | 
+                        7d: {{ stats.rows_synced.last_7d|intcomma }}
+                    </small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Average Duration (Last 30 Days)</h5>
+                </div>
+                <div class="card-body">
+                    {% if stats.performance.avg_duration_30d %}
+                        <h2 class="text-primary">{{ stats.performance.avg_duration_30d|floatformat:0 }}s</h2>
+                        <p class="text-muted">Average execution time</p>
+                    {% else %}
+                        <h2 class="text-muted">N/A</h2>
+                        <p class="text-muted">No completed executions</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Charts Row -->
+    <div class="row mb-4">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Execution Trends (Last 30 Days)</h5>
+                </div>
+                <div class="card-body">
+                    <div class="chart-container">
+                        <canvas id="executionTrendsChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Success Rate Distribution</h5>
+                </div>
+                <div class="card-body">
+                    <div class="chart-container">
+                        <canvas id="successRateChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Top Jobs and Recent Activity -->
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Top Jobs by Rows Synced</h5>
+                </div>
+                <div class="card-body">
+                    {% if top_jobs %}
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Job Name</th>
+                                        <th>Total Rows</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for job in top_jobs %}
+                                    <tr>
+                                        <td>
+                                            <a href="{% url 'sync_jobs:job_detail' job_id=job.id %}">
+                                                {{ job.name }}
+                                            </a>
+                                        </td>
+                                        <td>{{ job.total_rows|default:0|intcomma }}</td>
+                                        <td>
+                                            {% if job.status == 'completed' %}
+                                                <span class="badge bg-success">{{ job.get_status_display }}</span>
+                                            {% elif job.status == 'running' %}
+                                                <span class="badge bg-primary">{{ job.get_status_display }}</span>
+                                            {% elif job.status == 'failed' %}
+                                                <span class="badge bg-danger">{{ job.get_status_display }}</span>
+                                            {% else %}
+                                                <span class="badge bg-secondary">{{ job.get_status_display }}</span>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <p class="text-muted text-center py-4">No jobs with synced data yet.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Recent Activity</h5>
+                </div>
+                <div class="card-body">
+                    {% if recent_activity %}
+                        <div class="list-group">
+                            {% for execution in recent_activity %}
+                            <div class="list-group-item">
+                                <div class="d-flex w-100 justify-content-between">
+                                    <h6 class="mb-1">
+                                        <a href="{% url 'sync_jobs:job_detail' job_id=execution.job.id %}">
+                                            {{ execution.job.name }}
+                                        </a>
+                                    </h6>
+                                    <small>{{ execution.started_at|timesince }} ago</small>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center mt-2">
+                                    <div>
+                                        {% if execution.status == 'completed' %}
+                                            <span class="badge bg-success">{{ execution.get_status_display }}</span>
+                                        {% elif execution.status == 'failed' %}
+                                            <span class="badge bg-danger">{{ execution.get_status_display }}</span>
+                                        {% elif execution.status == 'running' %}
+                                            <span class="badge bg-primary">{{ execution.get_status_display }}</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary">{{ execution.get_status_display }}</span>
+                                        {% endif %}
+                                        <small class="text-muted ms-2">
+                                            {{ execution.total_rows_synced|default:0|intcomma }} rows
+                                        </small>
+                                    </div>
+                                    <a href="{% url 'sync_jobs:execution_detail' job_id=execution.job.id execution_id=execution.id %}" 
+                                       class="btn btn-sm btn-outline-primary">
+                                        View
+                                    </a>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="text-muted text-center py-4">No recent activity.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Execution Trends Chart
+const trendsData = {{ trends|safe }};
+const trendsCtx = document.getElementById('executionTrendsChart').getContext('2d');
+const executionTrendsChart = new Chart(trendsCtx, {
+    type: 'line',
+    data: {
+        labels: trendsData.map(t => t.day),
+        datasets: [{
+            label: 'Total Executions',
+            data: trendsData.map(t => t.total),
+            borderColor: 'rgb(75, 192, 192)',
+            backgroundColor: 'rgba(75, 192, 192, 0.2)',
+            tension: 0.1
+        }, {
+            label: 'Successful',
+            data: trendsData.map(t => t.successful),
+            borderColor: 'rgb(54, 162, 235)',
+            backgroundColor: 'rgba(54, 162, 235, 0.2)',
+            tension: 0.1
+        }, {
+            label: 'Failed',
+            data: trendsData.map(t => t.failed),
+            borderColor: 'rgb(255, 99, 132)',
+            backgroundColor: 'rgba(255, 99, 132, 0.2)',
+            tension: 0.1
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+            y: {
+                beginAtZero: true
+            }
+        }
+    }
+});
+
+// Success Rate Chart
+const successRateCtx = document.getElementById('successRateChart').getContext('2d');
+const successRateChart = new Chart(successRateCtx, {
+    type: 'doughnut',
+    data: {
+        labels: ['Successful', 'Failed'],
+        datasets: [{
+            data: [
+                {{ stats.executions.last_30d|default:0 }} - {{ stats.executions.failed_24h|default:0 }},
+                {{ stats.executions.failed_24h|default:0 }}
+            ],
+            backgroundColor: [
+                'rgb(54, 162, 235)',
+                'rgb(255, 99, 132)'
+            ]
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                position: 'bottom'
+            }
+        }
+    }
+});
+
+// Auto-refresh dashboard every 30 seconds
+setInterval(function() {
+    location.reload();
+}, 30000);
+</script>
+{% endblock %}

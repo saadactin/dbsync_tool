@@ -1,0 +1,273 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Create Sync Job - Step 1 - DB Sync Tool{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/sync_jobs.css' %}">
+<style>
+    .connection-select-card {
+        border: 2px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+        transition: border-color 0.3s;
+    }
+    .connection-select-card:hover {
+        border-color: #007bff;
+    }
+    .connection-select-card.selected {
+        border-color: #007bff;
+        background-color: #f0f8ff;
+    }
+    .connection-info {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .connection-details {
+        flex: 1;
+    }
+    .connection-details h6 {
+        margin-bottom: 5px;
+        font-weight: 600;
+    }
+    .connection-details p {
+        margin: 0;
+        color: #666;
+        font-size: 0.9em;
+    }
+    .radio-wrapper {
+        margin-left: 15px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <h1 class="mb-4">Create Sync Job - Step 1: Select Connections</h1>
+            
+            <!-- Progress indicator -->
+            <div class="progress mb-4" style="height: 30px;">
+                <div class="progress-bar" role="progressbar" style="width: 33%;" aria-valuenow="33" aria-valuemin="0" aria-valuemax="100">
+                    Step 1 of 3
+                </div>
+            </div>
+            
+            <form method="post" id="step1-form">
+                {% csrf_token %}
+                
+                <!-- Job Name -->
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Job Information</h5>
+                        <div class="form-group">
+                            <label for="job_name"><strong>Job Name *</strong></label>
+                            <input 
+                                type="text" 
+                                class="form-control" 
+                                id="job_name" 
+                                name="job_name" 
+                                value="{{ job_name }}"
+                                placeholder="Enter a descriptive name for this sync job"
+                                required
+                            >
+                            <small class="form-text text-muted">Choose a name that helps you identify this sync job.</small>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Source Connection -->
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Source Connection *</h5>
+                        <p class="text-muted mb-3">Select the database connection where data will be read from.</p>
+                        
+                        {% if connections %}
+                            <div id="source-connections">
+                                {% for connection in connections %}
+                                    <div class="connection-select-card" data-connection-id="{{ connection.id }}">
+                                        <div class="connection-info">
+                                            <div class="connection-details">
+                                                <h6>{{ connection.name }}</h6>
+                                                <p>
+                                                    <span class="badge bg-primary">{{ connection.get_db_type_display }}</span>
+                                                    <span style="margin-left: 10px;">{{ connection.host }}:{{ connection.port }}</span>
+                                                    <span style="margin-left: 10px;">Database: {{ connection.database_name }}</span>
+                                                </p>
+                                            </div>
+                                            <div class="radio-wrapper">
+                                                <input 
+                                                    type="radio" 
+                                                    name="source_connection" 
+                                                    id="source_{{ connection.id }}" 
+                                                    value="{{ connection.id }}"
+                                                    {% if selected_source_id == connection.id|stringformat:"s" %}checked{% endif %}
+                                                    required
+                                                >
+                                                <label for="source_{{ connection.id }}" class="ms-2">Select</label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            <div class="alert alert-warning">
+                                <p>No active connections found. <a href="{% url 'connections:create' %}">Create a connection</a> first.</p>
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+                
+                <!-- Target Connection -->
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Target Connection *</h5>
+                        <p class="text-muted mb-3">Select the database connection where data will be written to.</p>
+                        
+                        {% if connections %}
+                            <div id="target-connections">
+                                {% for connection in connections %}
+                                    <div class="connection-select-card" data-connection-id="{{ connection.id }}">
+                                        <div class="connection-info">
+                                            <div class="connection-details">
+                                                <h6>{{ connection.name }}</h6>
+                                                <p>
+                                                    <span class="badge bg-success">{{ connection.get_db_type_display }}</span>
+                                                    <span style="margin-left: 10px;">{{ connection.host }}:{{ connection.port }}</span>
+                                                    <span style="margin-left: 10px;">Database: {{ connection.database_name }}</span>
+                                                </p>
+                                            </div>
+                                            <div class="radio-wrapper">
+                                                <input 
+                                                    type="radio" 
+                                                    name="target_connection" 
+                                                    id="target_{{ connection.id }}" 
+                                                    value="{{ connection.id }}"
+                                                    {% if selected_target_id == connection.id|stringformat:"s" %}checked{% endif %}
+                                                    required
+                                                >
+                                                <label for="target_{{ connection.id }}" class="ms-2">Select</label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            <div class="alert alert-warning">
+                                <p>No active connections found. <a href="{% url 'connections:create' %}">Create a connection</a> first.</p>
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+                
+                <!-- Form Actions -->
+                <div class="mb-4">
+                    <button type="button" class="btn btn-secondary" onclick="window.location.href='{% url 'sync_jobs:list' %}'">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="next-btn" {% if not connections %}disabled{% endif %}>Next</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Handle connection card selection for source
+    document.querySelectorAll('#source-connections .connection-select-card').forEach(card => {
+        const radio = card.querySelector('input[type="radio"]');
+        radio.addEventListener('change', function() {
+            document.querySelectorAll('#source-connections .connection-select-card').forEach(c => {
+                c.classList.remove('selected');
+            });
+            if (this.checked) {
+                card.classList.add('selected');
+            }
+            validateForm();
+        });
+        
+        if (radio.checked) {
+            card.classList.add('selected');
+        }
+    });
+    
+    // Handle connection card selection for target
+    document.querySelectorAll('#target-connections .connection-select-card').forEach(card => {
+        const radio = card.querySelector('input[type="radio"]');
+        radio.addEventListener('change', function() {
+            document.querySelectorAll('#target-connections .connection-select-card').forEach(c => {
+                c.classList.remove('selected');
+            });
+            if (this.checked) {
+                card.classList.add('selected');
+            }
+            validateForm();
+        });
+        
+        if (radio.checked) {
+            card.classList.add('selected');
+        }
+    });
+    
+    // Form validation
+    function validateForm() {
+        const jobName = document.getElementById('job_name').value.trim();
+        const sourceConnection = document.querySelector('input[name="source_connection"]:checked');
+        const targetConnection = document.querySelector('input[name="target_connection"]:checked');
+        const nextBtn = document.getElementById('next-btn');
+        
+        if (jobName && sourceConnection && targetConnection) {
+            // Check if source and target are different
+            if (sourceConnection.value === targetConnection.value) {
+                nextBtn.disabled = true;
+                if (!document.getElementById('same-connection-error')) {
+                    const errorDiv = document.createElement('div');
+                    errorDiv.id = 'same-connection-error';
+                    errorDiv.className = 'alert alert-danger mt-3';
+                    errorDiv.textContent = 'Source and target connections cannot be the same.';
+                    document.getElementById('step1-form').insertBefore(errorDiv, document.querySelector('.mb-4:last-of-type'));
+                }
+            } else {
+                nextBtn.disabled = false;
+                const errorDiv = document.getElementById('same-connection-error');
+                if (errorDiv) {
+                    errorDiv.remove();
+                }
+            }
+        } else {
+            nextBtn.disabled = true;
+        }
+    }
+    
+    // Initial validation
+    document.getElementById('job_name').addEventListener('input', validateForm);
+    document.querySelectorAll('input[name="source_connection"], input[name="target_connection"]').forEach(radio => {
+        radio.addEventListener('change', validateForm);
+    });
+    
+    // Prevent form submission if validation fails
+    document.getElementById('step1-form').addEventListener('submit', function(e) {
+        const jobName = document.getElementById('job_name').value.trim();
+        const sourceConnection = document.querySelector('input[name="source_connection"]:checked');
+        const targetConnection = document.querySelector('input[name="target_connection"]:checked');
+        
+        if (!jobName || !sourceConnection || !targetConnection) {
+            e.preventDefault();
+            alert('Please fill in all required fields.');
+            return false;
+        }
+        
+        if (sourceConnection.value === targetConnection.value) {
+            e.preventDefault();
+            alert('Source and target connections cannot be the same.');
+            return false;
+        }
+    });
+});
+</script>
+{% endblock %}
+

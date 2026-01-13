@@ -1,0 +1,22 @@
+Sync Job Completed Successfully
+
+Hello {{ user.username }},
+
+Your sync job "{{ job.name }}" has completed successfully.
+
+Job Details:
+- Job Name: {{ job.name }}
+- Sync Type: {{ job.get_sync_type_display }}
+- Status: {{ execution.get_status_display }}
+- Tables Processed: {{ execution.completed_tables }}/{{ execution.total_tables }}
+- Rows Synced: {{ execution.total_rows_synced|default:0|intcomma }}
+- Started At: {{ execution.started_at|date:"Y-m-d H:i:s" }}
+- Completed At: {{ execution.completed_at|date:"Y-m-d H:i:s" }}
+
+View execution details: {{ site_url }}{% url 'sync_jobs:execution_detail' job_id=job.id execution_id=execution.id %}
+
+Thank you for using DB Sync Tool!
+
+This is an automated notification from DB Sync Tool.
+You can manage your notification preferences in your account settings.
+

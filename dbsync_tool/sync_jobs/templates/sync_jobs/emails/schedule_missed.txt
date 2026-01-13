@@ -1,0 +1,27 @@
+Scheduled Job Missed
+
+Hello {{ user.username }},
+
+Your scheduled sync job "{{ job.name }}" was supposed to run but did not execute.
+
+Job Details:
+- Job Name: {{ job.name }}
+- Sync Type: {{ job.get_sync_type_display }}
+- Status: {{ job.get_status_display }}
+{% if job.schedule %}
+- Schedule Type: {{ job.schedule.get_schedule_type_display }}
+- Next Run: {{ job.next_run_at|date:"Y-m-d H:i:s"|default:"Not scheduled" }}
+{% endif %}
+
+Possible reasons for missed execution:
+- The job may be paused
+- Celery worker may not be running
+- There may be a system issue
+
+View job details: {{ site_url }}{% url 'sync_jobs:job_detail' job_id=job.id %}
+
+Please check the job status and system health.
+
+This is an automated notification from DB Sync Tool.
+You can manage your notification preferences in your account settings.
+

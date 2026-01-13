@@ -1,0 +1,207 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}Job Report - {{ report.job.name }}{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/sync_jobs.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>Report: {{ report.job.name }}</h1>
+        <div>
+            <a href="?export=csv" class="btn btn-outline-primary">Export CSV</a>
+            <a href="?export=json" class="btn btn-outline-primary">Export JSON</a>
+            <a href="{% url 'sync_jobs:job_detail' job_id=report.job.id %}" class="btn btn-secondary">Back to Job</a>
+        </div>
+    </div>
+    
+    <!-- Date Range Filter -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-4">
+                    <label for="start_date" class="form-label">Start Date</label>
+                    <input type="date" class="form-control" id="start_date" name="start_date" 
+                           value="{{ report.period.start|date:'Y-m-d'|default:'' }}">
+                </div>
+                <div class="col-md-4">
+                    <label for="end_date" class="form-label">End Date</label>
+                    <input type="date" class="form-control" id="end_date" name="end_date" 
+                           value="{{ report.period.end|date:'Y-m-d'|default:'' }}">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">&nbsp;</label>
+                    <div>
+                        <button type="submit" class="btn btn-primary">Filter</button>
+                        <a href="{% url 'sync_jobs:job_report' job_id=report.job.id %}" class="btn btn-outline-secondary">Clear</a>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Summary Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title text-muted">Total Executions</h5>
+                    <h2 class="text-primary">{{ report.summary.total_executions }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title text-muted">Successful</h5>
+                    <h2 class="text-success">{{ report.summary.successful_executions }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title text-muted">Failed</h5>
+                    <h2 class="text-danger">{{ report.summary.failed_executions }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title text-muted">Success Rate</h5>
+                    <h2 class="text-info">{{ report.summary.success_rate }}%</h2>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Additional Metrics -->
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title text-muted">Total Rows Synced</h5>
+                    <h2 class="text-primary">{{ report.summary.total_rows_synced|intcomma }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title text-muted">Average Duration</h5>
+                    <h2 class="text-info">
+                        {% if report.summary.avg_duration_seconds %}
+                            {{ report.summary.avg_duration_seconds|floatformat:0 }}s
+                        {% else %}
+                            N/A
+                        {% endif %}
+                    </h2>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Execution History -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0">Execution History</h5>
+        </div>
+        <div class="card-body">
+            {% if report.execution_history %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Started At</th>
+                                <th>Status</th>
+                                <th>Tables</th>
+                                <th>Rows Synced</th>
+                                <th>Duration</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for execution in report.execution_history %}
+                            <tr>
+                                <td>{{ execution.started_at|date:"Y-m-d H:i:s" }}</td>
+                                <td>
+                                    {% if execution.status == 'completed' %}
+                                        <span class="badge bg-success">{{ execution.get_status_display }}</span>
+                                    {% elif execution.status == 'failed' %}
+                                        <span class="badge bg-danger">{{ execution.get_status_display }}</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">{{ execution.get_status_display }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ execution.completed_tables }}/{{ execution.total_tables }}</td>
+                                <td>{{ execution.total_rows_synced|intcomma }}</td>
+                                <td>
+                                    {% if execution.completed_at %}
+                                        {{ execution.started_at|timesince:execution.completed_at }}
+                                    {% else %}
+                                        N/A
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <a href="{% url 'sync_jobs:execution_detail' job_id=report.job.id execution_id=execution.id %}" 
+                                       class="btn btn-sm btn-outline-primary">View</a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p class="text-muted text-center py-4">No executions found for the selected period.</p>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Table Performance -->
+    {% if report.table_performance %}
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0">Table Performance</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Schema.Table</th>
+                            <th>Total Executions</th>
+                            <th>Total Rows</th>
+                            <th>Avg Rows/Execution</th>
+                            <th>Failed Count</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for table in report.table_performance %}
+                        <tr>
+                            <td><strong>{{ table.schema_name }}.{{ table.table_name }}</strong></td>
+                            <td>{{ table.total_executions }}</td>
+                            <td>{{ table.total_rows|intcomma }}</td>
+                            <td>{{ table.avg_rows_per_execution|floatformat:0|intcomma }}</td>
+                            <td>
+                                {% if table.failed_count > 0 %}
+                                    <span class="badge bg-danger">{{ table.failed_count }}</span>
+                                {% else %}
+                                    <span class="badge bg-success">0</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+

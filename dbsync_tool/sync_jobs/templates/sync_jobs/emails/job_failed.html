@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            background-color: #dc3545;
+            color: white;
+            padding: 20px;
+            text-align: center;
+            border-radius: 5px 5px 0 0;
+        }
+        .content {
+            background-color: #f9f9f9;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-top: none;
+        }
+        .info-box {
+            background-color: white;
+            padding: 15px;
+            margin: 15px 0;
+            border-left: 4px solid #dc3545;
+        }
+        .error-box {
+            background-color: #fff3cd;
+            padding: 15px;
+            margin: 15px 0;
+            border-left: 4px solid #ffc107;
+        }
+        .footer {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+            font-size: 12px;
+        }
+        .button {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>❌ Sync Job Failed</h1>
+    </div>
+    <div class="content">
+        <p>Hello {{ user.username }},</p>
+        
+        <p>Your sync job <strong>{{ job.name }}</strong> has failed.</p>
+        
+        <div class="info-box">
+            <h3>Job Details:</h3>
+            <ul>
+                <li><strong>Job Name:</strong> {{ job.name }}</li>
+                <li><strong>Sync Type:</strong> {{ job.get_sync_type_display }}</li>
+                <li><strong>Status:</strong> {{ execution.get_status_display }}</li>
+                <li><strong>Tables Processed:</strong> {{ execution.completed_tables }}/{{ execution.total_tables }}</li>
+                <li><strong>Rows Synced:</strong> {{ execution.total_rows_synced|default:0|intcomma }}</li>
+                <li><strong>Started At:</strong> {{ execution.started_at|date:"Y-m-d H:i:s" }}</li>
+            </ul>
+        </div>
+        
+        {% if execution.error_message %}
+        <div class="error-box">
+            <h3>Error Message:</h3>
+            <pre style="white-space: pre-wrap; word-wrap: break-word;">{{ execution.error_message }}</pre>
+        </div>
+        {% endif %}
+        
+        <p>
+            <a href="{{ site_url }}{% url 'sync_jobs:execution_detail' job_id=job.id execution_id=execution.id %}" class="button">
+                View Execution Details
+            </a>
+        </p>
+        
+        <p>Please review the error and take appropriate action.</p>
+    </div>
+    <div class="footer">
+        <p>This is an automated notification from DB Sync Tool.</p>
+        <p>You can manage your notification preferences in your account settings.</p>
+    </div>
+</body>
+</html>
+
