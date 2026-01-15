@@ -35,4 +35,73 @@
     cursor: not-allowed;
 }
 
+/* Lazy loading tree structure styles */
+.schema-item {
+    margin-bottom: 0.5rem;
+}
+
+.schema-header {
+    user-select: none;
+    transition: background-color 0.2s;
+}
+
+.schema-header:hover {
+    background-color: #e9ecef !important;
+}
+
+.expand-icon {
+    display: inline-block;
+    transition: transform 0.2s;
+    font-size: 0.75rem;
+    color: #6c757d;
+}
+
+.tables-container {
+    max-height: 400px;
+    overflow-y: auto;
+    padding: 0.5rem;
+    border-left: 2px solid #dee2e6;
+    margin-left: 1rem;
+}
+
+.tables-container .form-check {
+    padding: 0.5rem;
+    border-bottom: 1px solid #f0f0f0;
+    transition: background-color 0.2s;
+}
+
+.tables-container .form-check:hover {
+    background-color: #f8f9fa;
+}
+
+.tables-container .form-check-label {
+    cursor: pointer;
+    font-family: monospace;
+    font-size: 0.9rem;
+    margin-left: 0.5rem;
+}
+
+.cursor-pointer {
+    cursor: pointer;
+}
+
+.alert-sm {
+    font-size: 0.875rem;
+    padding: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+/* Loading states */
+.schema-loading {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+/* Search highlight */
+.highlight {
+    background-color: #fff3cd;
+    padding: 0.1rem 0.2rem;
+    border-radius: 0.2rem;
+}
+
 

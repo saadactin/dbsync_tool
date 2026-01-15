@@ -73,10 +73,25 @@ def dashboard(request):
         # Get recent activity
         recent_activity = DashboardService.get_recent_activity(request.user, limit=10)
         
+        # Serialize trends data to JSON for JavaScript
+        import json
+        from django.utils.dateformat import format
+        trends_json = json.dumps([
+            {
+                'day': trend['day'].strftime('%Y-%m-%d') if hasattr(trend['day'], 'strftime') else str(trend['day']),
+                'total': trend.get('total', 0),
+                'successful': trend.get('successful', 0),
+                'failed': trend.get('failed', 0),
+                'rows_synced': trend.get('rows_synced', 0) or 0
+            }
+            for trend in trends
+        ])
+        
         context = {
             'page_title': 'Dashboard',
             'stats': stats,
             'trends': trends,
+            'trends_json': trends_json,  # JSON serialized for JavaScript
             'top_jobs': top_jobs,
             'recent_activity': recent_activity,
             'user_role': profile.role,  # For template display
@@ -1419,14 +1434,21 @@ def execution_status_api(request, job_id, execution_id):
     elif execution.status == 'running' and execution.started_at:
         duration_seconds = (timezone.now() - execution.started_at).total_seconds()
     
+    # Calculate actual counts from logs (more accurate than model fields)
+    completed_logs_count = logs.filter(status='completed').count()
+    failed_logs_count = logs.filter(status='failed').count()
+    running_logs_count = logs.filter(status='running').count()
+    pending_logs_count = logs.filter(status='pending').count()
+    total_logs_count = logs.count()
+    
     # Prepare response
     response_data = {
         'execution': {
             'id': str(execution.id),
             'status': execution.status,
             'status_display': execution.get_status_display(),
-            'total_tables': execution.total_tables,
-            'completed_tables': execution.completed_tables,
+            'total_tables': total_logs_count,  # Use actual count from logs
+            'completed_tables': completed_logs_count,  # Use actual count from logs
             'total_rows_synced': execution.total_rows_synced,
             'started_at': execution.started_at.isoformat() if execution.started_at else None,
             'completed_at': execution.completed_at.isoformat() if execution.completed_at else None,
@@ -1450,10 +1472,11 @@ def execution_status_api(request, job_id, execution_id):
             for log in logs
         ],
         'statistics': {
-            'completed_logs': logs.filter(status='completed').count(),
-            'failed_logs': logs.filter(status='failed').count(),
-            'running_logs': logs.filter(status='running').count(),
-            'pending_logs': logs.filter(status='pending').count(),
+            'completed_logs': completed_logs_count,
+            'failed_logs': failed_logs_count,
+            'running_logs': running_logs_count,
+            'pending_logs': pending_logs_count,
+            'total_logs': total_logs_count,
             'total_rows_fetched': sum(log.rows_fetched or 0 for log in logs),
             'total_rows_inserted': sum(log.rows_inserted or 0 for log in logs),
         }

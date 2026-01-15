@@ -1,15 +1,24 @@
 """
 Metadata service for loading database schemas, tables, and column information
+Supports lazy loading with connection pooling and caching
 """
 from typing import List, Dict, Optional
 from django.core.exceptions import ObjectDoesNotExist, PermissionDenied
+from django.core.cache import cache
 from connections.models import DatabaseConnection
 from connections.connectors import get_connector
-from core.exceptions import DatabaseConnectionError, EncryptionError
+from core.exceptions import DatabaseConnectionError, EncryptionError, DatabaseTimeoutError
 from core.encryption import decrypt_password
+from core.connection_pool import get_connection_pool
 import logging
+import signal
+from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
+
+# Cache TTL in seconds (5-10 minutes)
+METADATA_CACHE_TTL = 300  # 5 minutes
+SCHEMA_CACHE_TTL = 600  # 10 minutes for schemas (change less frequently)
 
 
 def _get_decrypted_password_safe(connection: DatabaseConnection) -> str:
@@ -34,6 +43,301 @@ def _get_decrypted_password_safe(connection: DatabaseConnection) -> str:
             f"Please update the password by editing this connection in the Connections page. "
             f"Details: {error_msg}"
         )
+
+
+@contextmanager
+def _query_timeout(timeout_seconds: int):
+    """Context manager for query timeout using signal (Unix only)"""
+    def timeout_handler(signum, frame):
+        raise DatabaseTimeoutError(f"Query timeout after {timeout_seconds} seconds")
+    
+    # Only works on Unix systems
+    try:
+        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(timeout_seconds)
+        try:
+            yield
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+    except (AttributeError, ValueError):
+        # Windows doesn't support SIGALRM, skip timeout
+        yield
+
+
+def load_schemas_lazy(connection_id: str, user, use_cache: bool = True) -> List[Dict]:
+    """
+    Lazy load schemas only (lightweight, uses connection pool and cache)
+    
+    Args:
+        connection_id: UUID of the database connection
+        user: User object (for permission checking)
+        use_cache: Whether to use cache (default: True)
+        
+    Returns:
+        List[Dict]: List of schema dictionaries with 'name' key
+    """
+    # Check cache first
+    if use_cache:
+        cache_key = f"metadata:{connection_id}:schemas"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            logger.debug(f"Cache hit for schemas: {connection_id}")
+            return cached
+    
+    try:
+        connection = DatabaseConnection.objects.get(id=connection_id, is_active=True)
+    except DatabaseConnection.DoesNotExist:
+        raise ObjectDoesNotExist(f"Connection with ID {connection_id} not found or inactive")
+    
+    # Permission check
+    from accounts.services.tenant_service import TenantService
+    conn_qs = DatabaseConnection.objects.filter(id=connection_id, is_active=True)
+    user_conns = TenantService.get_queryset_for_user(conn_qs, user)
+    if not user_conns.exists():
+        raise PermissionDenied("You don't have permission to access this connection")
+    
+    pool = get_connection_pool()
+    connector = None
+    
+    try:
+        # Get connection from pool (read-only mode)
+        connector = pool.get_connection(connection, read_only=True)
+        
+        # Execute query with timeout
+        with _query_timeout(pool.query_timeout):
+            schema_names = connector.get_schemas()
+        
+        result = [{'name': schema} for schema in schema_names]
+        
+        # Cache result
+        if use_cache:
+            cache.set(cache_key, result, SCHEMA_CACHE_TTL)
+        
+        return result
+        
+    except DatabaseTimeoutError:
+        logger.error(f"Timeout loading schemas for connection {connection_id}")
+        raise DatabaseConnectionError("Query timeout: Database may be slow or unreachable")
+    except Exception as e:
+        logger.error(f"Error loading schemas for connection {connection_id}: {str(e)}")
+        raise DatabaseConnectionError(f"Failed to load schemas: {str(e)}")
+    finally:
+        if connector:
+            pool.return_connection(str(connection.id), connector)
+
+
+def load_tables_lazy(connection_id: str, schema_name: str, user, use_cache: bool = True) -> List[Dict]:
+    """
+    Lazy load tables for a specific schema (uses connection pool and cache)
+    
+    Args:
+        connection_id: UUID of the database connection
+        schema_name: Name of the schema/database
+        user: User object (for permission checking)
+        use_cache: Whether to use cache (default: True)
+        
+    Returns:
+        List[Dict]: List of table dictionaries with 'name' key
+    """
+    # Check cache first
+    if use_cache:
+        cache_key = f"metadata:{connection_id}:{schema_name}:tables"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            logger.debug(f"Cache hit for tables: {connection_id}.{schema_name}")
+            return cached
+    
+    try:
+        connection = DatabaseConnection.objects.get(id=connection_id, is_active=True)
+    except DatabaseConnection.DoesNotExist:
+        raise ObjectDoesNotExist(f"Connection with ID {connection_id} not found or inactive")
+    
+    # Permission check
+    from accounts.services.tenant_service import TenantService
+    conn_qs = DatabaseConnection.objects.filter(id=connection_id, is_active=True)
+    user_conns = TenantService.get_queryset_for_user(conn_qs, user)
+    if not user_conns.exists():
+        raise PermissionDenied("You don't have permission to access this connection")
+    
+    pool = get_connection_pool()
+    connector = None
+    
+    try:
+        # Get connection from pool (read-only mode)
+        connector = pool.get_connection(connection, read_only=True)
+        
+        # Execute query with timeout
+        with _query_timeout(pool.query_timeout):
+            table_names = connector.get_tables(schema_name)
+        
+        result = [{'name': table} for table in table_names]
+        
+        # Cache result
+        if use_cache:
+            cache.set(cache_key, result, METADATA_CACHE_TTL)
+        
+        return result
+        
+    except DatabaseTimeoutError:
+        logger.error(f"Timeout loading tables for {connection_id}.{schema_name}")
+        raise DatabaseConnectionError("Query timeout: Database may be slow or unreachable")
+    except Exception as e:
+        logger.error(f"Error loading tables for connection {connection_id}, schema {schema_name}: {str(e)}")
+        raise DatabaseConnectionError(f"Failed to load tables: {str(e)}")
+    finally:
+        if connector:
+            pool.return_connection(str(connection.id), connector)
+
+
+def load_columns_lazy(connection_id: str, schema_name: str, table_name: str, user, use_cache: bool = True) -> List[Dict]:
+    """
+    Lazy load columns for a specific table (uses connection pool and cache)
+    
+    Args:
+        connection_id: UUID of the database connection
+        schema_name: Name of the schema/database
+        table_name: Name of the table
+        user: User object (for permission checking)
+        use_cache: Whether to use cache (default: True)
+        
+    Returns:
+        List[Dict]: List of column dictionaries
+    """
+    # Check cache first
+    if use_cache:
+        cache_key = f"metadata:{connection_id}:{schema_name}:{table_name}:columns"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            logger.debug(f"Cache hit for columns: {connection_id}.{schema_name}.{table_name}")
+            return cached
+    
+    try:
+        connection = DatabaseConnection.objects.get(id=connection_id, is_active=True)
+    except DatabaseConnection.DoesNotExist:
+        raise ObjectDoesNotExist(f"Connection with ID {connection_id} not found or inactive")
+    
+    # Permission check
+    from accounts.services.tenant_service import TenantService
+    conn_qs = DatabaseConnection.objects.filter(id=connection_id, is_active=True)
+    user_conns = TenantService.get_queryset_for_user(conn_qs, user)
+    if not user_conns.exists():
+        raise PermissionDenied("You don't have permission to access this connection")
+    
+    pool = get_connection_pool()
+    connector = None
+    
+    try:
+        # Get connection from pool (read-only mode)
+        connector = pool.get_connection(connection, read_only=True)
+        
+        # Execute query with timeout
+        with _query_timeout(pool.query_timeout):
+            columns = connector.get_columns(schema_name, table_name)
+        
+        result = [
+            {
+                'name': col.name,
+                'data_type': col.data_type,
+                'is_nullable': col.is_nullable,
+                'is_primary_key': col.is_primary_key,
+                'max_length': col.max_length,
+                'default_value': col.default_value,
+            }
+            for col in columns
+        ]
+        
+        # Cache result
+        if use_cache:
+            cache.set(cache_key, result, METADATA_CACHE_TTL)
+        
+        return result
+        
+    except DatabaseTimeoutError:
+        logger.error(f"Timeout loading columns for {connection_id}.{schema_name}.{table_name}")
+        raise DatabaseConnectionError("Query timeout: Database may be slow or unreachable")
+    except Exception as e:
+        logger.error(f"Error loading columns for {connection_id}.{schema_name}.{table_name}: {str(e)}")
+        raise DatabaseConnectionError(f"Failed to load columns: {str(e)}")
+    finally:
+        if connector:
+            pool.return_connection(str(connection.id), connector)
+
+
+def get_approximate_row_count(connection_id: str, schema_name: str, table_name: str, user) -> Optional[int]:
+    """
+    Get approximate row count using system statistics (safe, no table scan)
+    
+    Args:
+        connection_id: UUID of the database connection
+        schema_name: Name of the schema/database
+        table_name: Name of the table
+        user: User object (for permission checking)
+        
+    Returns:
+        Optional[int]: Approximate row count or None if unavailable
+    """
+    try:
+        connection = DatabaseConnection.objects.get(id=connection_id, is_active=True)
+    except DatabaseConnection.DoesNotExist:
+        raise ObjectDoesNotExist(f"Connection with ID {connection_id} not found or inactive")
+    
+    # Permission check
+    from accounts.services.tenant_service import TenantService
+    conn_qs = DatabaseConnection.objects.filter(id=connection_id, is_active=True)
+    user_conns = TenantService.get_queryset_for_user(conn_qs, user)
+    if not user_conns.exists():
+        raise PermissionDenied("You don't have permission to access this connection")
+    
+    pool = get_connection_pool()
+    connector = None
+    
+    try:
+        connector = pool.get_connection(connection, read_only=True)
+        
+        # Use approximate count method if available
+        if hasattr(connector, 'get_approximate_row_count'):
+            with _query_timeout(pool.query_timeout):
+                return connector.get_approximate_row_count(schema_name, table_name)
+        else:
+            # Fallback to regular row count (may be slow)
+            logger.warning(f"Approximate row count not available, using regular count for {schema_name}.{table_name}")
+            with _query_timeout(pool.query_timeout):
+                return connector.get_row_count(schema_name, table_name)
+                
+    except DatabaseTimeoutError:
+        logger.warning(f"Timeout getting row count for {schema_name}.{table_name}")
+        return None
+    except Exception as e:
+        logger.warning(f"Error getting row count for {schema_name}.{table_name}: {str(e)}")
+        return None
+    finally:
+        if connector:
+            pool.return_connection(str(connection.id), connector)
+
+
+def invalidate_metadata_cache(connection_id: str, schema_name: Optional[str] = None, table_name: Optional[str] = None):
+    """
+    Invalidate metadata cache for a connection
+    
+    Args:
+        connection_id: UUID of the database connection
+        schema_name: Optional schema name (if provided, only invalidate that schema)
+        table_name: Optional table name (if provided, only invalidate that table)
+    """
+    if table_name and schema_name:
+        cache_key = f"metadata:{connection_id}:{schema_name}:{table_name}:columns"
+        cache.delete(cache_key)
+    elif schema_name:
+        cache_key = f"metadata:{connection_id}:{schema_name}:tables"
+        cache.delete(cache_key)
+        # Also delete all table caches for this schema
+        # Note: This is a simple implementation - in production, you might want to track keys
+    else:
+        # Invalidate all caches for this connection
+        cache_key_pattern = f"metadata:{connection_id}:*"
+        # Django cache doesn't support pattern deletion, so we delete known patterns
+        cache.delete(f"metadata:{connection_id}:schemas")
 
 
 def load_schemas(connection_id: str, user) -> List[Dict]:

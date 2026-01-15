@@ -3,6 +3,7 @@ Dashboard statistics and analytics services
 """
 from django.utils import timezone
 from django.db.models import Count, Sum, Avg, Q, F
+from django.db.models.functions import TruncDate
 from datetime import timedelta
 from sync_jobs.models import SyncJob, SyncExecution, SyncExecutionLog
 from connections.models import DatabaseConnection
@@ -86,6 +87,10 @@ class DashboardService:
         # Failed executions in last 24h
         failed_24h = executions_24h.filter(status='failed').count()
         
+        # Failed executions in last 30d (for Success Rate chart)
+        failed_30d = executions_30d.filter(status='failed').count()
+        successful_30d = executions_30d.filter(status='completed').count()
+        
         # Scheduled jobs count
         scheduled_jobs = user_jobs.filter(
             schedule__is_enabled=True
@@ -112,6 +117,8 @@ class DashboardService:
                 'last_7d': executions_7d.count(),
                 'last_30d': executions_30d.count(),
                 'failed_24h': failed_24h,
+                'failed_30d': failed_30d,
+                'successful_30d': successful_30d,
             },
             'success_rates': {
                 'last_24h': success_rate_24h,
@@ -155,11 +162,12 @@ class DashboardService:
         all_jobs = SyncJob.objects.all()
         user_jobs = TenantService.get_queryset_for_user(all_jobs, user)
         
+        # Use TruncDate for database-agnostic date extraction
         executions = SyncExecution.objects.filter(
             job__in=user_jobs,
             started_at__gte=start_date
-        ).extra(
-            select={'day': "DATE(started_at)"}
+        ).annotate(
+            day=TruncDate('started_at')
         ).values('day').annotate(
             total=Count('id'),
             successful=Count('id', filter=Q(status='completed')),
@@ -167,7 +175,24 @@ class DashboardService:
             rows_synced=Sum('total_rows_synced')
         ).order_by('day')
         
-        return list(executions)
+        # Convert to list and ensure dates are properly formatted
+        trends = []
+        for trend in executions:
+            day = trend['day']
+            if day:
+                # Ensure day is a date object
+                if isinstance(day, str):
+                    from datetime import datetime
+                    day = datetime.strptime(day, '%Y-%m-%d').date()
+                trends.append({
+                    'day': day,
+                    'total': trend.get('total', 0) or 0,
+                    'successful': trend.get('successful', 0) or 0,
+                    'failed': trend.get('failed', 0) or 0,
+                    'rows_synced': trend.get('rows_synced', 0) or 0
+                })
+        
+        return trends
     
     @staticmethod
     def get_top_jobs_by_rows(user, limit=10):

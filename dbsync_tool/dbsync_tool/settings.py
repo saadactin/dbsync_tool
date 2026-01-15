@@ -99,6 +99,24 @@ DATABASES = {
     }
 }
 
+# Cache Configuration
+# Using LocMemCache for development (in-memory cache)
+# For production, consider using Redis: 'django.core.cache.backends.redis.RedisCache'
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'unique-snowflake',
+        'OPTIONS': {
+            'MAX_ENTRIES': 10000,  # Maximum number of cache entries
+        },
+        'TIMEOUT': 300,  # Default timeout (5 minutes)
+    }
+}
+
+# Metadata Cache Configuration
+METADATA_CACHE_TTL = 300  # 5 minutes for tables and columns
+SCHEMA_CACHE_TTL = 600    # 10 minutes for schemas (change less frequently)
+
 # Celery Configuration - REMOVED
 # Using APScheduler instead (no Redis/Celery needed)
 # All scheduled jobs are managed by scheduler.service using APScheduler BackgroundScheduler

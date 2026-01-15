@@ -117,10 +117,20 @@ function updateStatusBadge(status, statusDisplay) {
 }
 
 function updateStatistics(execution, stats) {
-    // Update tables progress
+    // Update tables progress - use actual counts from statistics
     const tablesProgress = document.querySelectorAll('.stat-card .stat-value');
     if (tablesProgress.length > 0 && tablesProgress[0].textContent.includes('/')) {
-        tablesProgress[0].textContent = `${execution.completed_tables}/${execution.total_tables}`;
+        // Use statistics counts (more accurate) or fallback to execution counts
+        const completedCount = stats.completed_logs !== undefined ? stats.completed_logs : execution.completed_tables;
+        const totalCount = stats.total_logs !== undefined ? stats.total_logs : execution.total_tables;
+        tablesProgress[0].textContent = `${completedCount}/${totalCount}`;
+        
+        // Update progress bar
+        const progressBar = document.querySelector('.progress-bar-fill');
+        if (progressBar && totalCount > 0) {
+            const percentage = (completedCount / totalCount) * 100;
+            progressBar.style.width = `${percentage}%`;
+        }
     }
     
     // Update rows synced

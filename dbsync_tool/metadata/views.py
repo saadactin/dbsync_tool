@@ -19,7 +19,12 @@ from metadata.services import (
     load_table_metadata,
     get_table_row_count,
     load_all_metadata,
+    load_schemas_lazy,
+    load_tables_lazy,
+    load_columns_lazy,
+    get_approximate_row_count,
 )
+import uuid
 from core.exceptions import DatabaseConnectionError, DatabaseTimeoutError
 from core.error_responses import error_response_from_exception, ErrorCode, create_error_response
 from core.error_handler import ErrorHandler
@@ -31,24 +36,27 @@ logger = logging.getLogger(__name__)
 @permission_classes([IsAuthenticated])
 def load_schemas_view(request, connection_id):
     """
-    API endpoint to load schemas for a connection
+    API endpoint to load schemas for a connection (lazy loading with cache)
     
     GET /api/metadata/<connection_id>/schemas/
+    Query params: use_cache=true/false (default: true)
     """
-    # Path parameter validation
+    # Path parameter validation (UUID)
     try:
-        connection_id = int(connection_id)
-        if connection_id < 1:
-            raise ValueError("Connection ID must be positive")
+        connection_id = str(uuid.UUID(str(connection_id)))
     except (ValueError, TypeError):
         trace_id = ErrorHandler.get_trace_id(request)
         return error_response_from_exception(
-            ValidationError("Invalid connection ID format"),
+            ValidationError("Invalid connection ID format (must be UUID)"),
             trace_id=trace_id
         )
     
+    # Query parameter validation
+    use_cache = request.GET.get('use_cache', 'true').lower() == 'true'
+    
     try:
-        schemas = load_schemas(connection_id, request.user)
+        # Use lazy loading method with connection pooling and caching
+        schemas = load_schemas_lazy(connection_id, request.user, use_cache=use_cache)
         return Response({
             'success': True,
             'data': schemas
@@ -84,19 +92,18 @@ def load_schemas_view(request, connection_id):
 @permission_classes([IsAuthenticated])
 def load_tables_view(request, connection_id, schema):
     """
-    API endpoint to load tables for a schema
+    API endpoint to load tables for a schema (lazy loading with cache)
     
     GET /api/metadata/<connection_id>/schemas/<schema>/tables/
+    Query params: use_cache=true/false (default: true)
     """
-    # Path parameter validation
+    # Path parameter validation (UUID)
     try:
-        connection_id = int(connection_id)
-        if connection_id < 1:
-            raise ValueError("Connection ID must be positive")
+        connection_id = str(uuid.UUID(str(connection_id)))
     except (ValueError, TypeError):
         trace_id = ErrorHandler.get_trace_id(request)
         return error_response_from_exception(
-            ValidationError("Invalid connection ID format"),
+            ValidationError("Invalid connection ID format (must be UUID)"),
             trace_id=trace_id
         )
     
@@ -116,8 +123,12 @@ def load_tables_view(request, connection_id, schema):
             trace_id=trace_id
         )
     
+    # Query parameter validation
+    use_cache = request.GET.get('use_cache', 'true').lower() == 'true'
+    
     try:
-        tables = load_tables(connection_id, schema, request.user)
+        # Use lazy loading method with connection pooling and caching
+        tables = load_tables_lazy(connection_id, schema, request.user, use_cache=use_cache)
         return Response({
             'success': True,
             'data': tables
@@ -153,12 +164,38 @@ def load_tables_view(request, connection_id, schema):
 @permission_classes([IsAuthenticated])
 def load_table_columns_view(request, connection_id, schema, table):
     """
-    API endpoint to load columns for a table
+    API endpoint to load columns for a table (lazy loading with cache)
     
     GET /api/metadata/<connection_id>/schemas/<schema>/tables/<table>/columns/
+    Query params: use_cache=true/false (default: true)
     """
+    # Path parameter validation (UUID)
     try:
-        columns = load_table_columns(connection_id, schema, table, request.user)
+        connection_id = str(uuid.UUID(str(connection_id)))
+    except (ValueError, TypeError):
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            ValidationError("Invalid connection ID format (must be UUID)"),
+            trace_id=trace_id
+        )
+    
+    # Schema and table name validation
+    if not schema or not schema.strip() or not table or not table.strip():
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            ValidationError("Schema and table names are required"),
+            trace_id=trace_id
+        )
+    
+    schema = schema.strip()
+    table = table.strip()
+    
+    # Query parameter validation
+    use_cache = request.GET.get('use_cache', 'true').lower() == 'true'
+    
+    try:
+        # Use lazy loading method with connection pooling and caching
+        columns = load_columns_lazy(connection_id, schema, table, request.user, use_cache=use_cache)
         return Response({
             'success': True,
             'data': columns
@@ -194,15 +231,13 @@ def load_table_metadata_view(request, connection_id, schema, table):
     
     GET /api/metadata/<connection_id>/schemas/<schema>/tables/<table>/
     """
-    # Path parameter validation
+    # Path parameter validation (UUID)
     try:
-        connection_id = int(connection_id)
-        if connection_id < 1:
-            raise ValueError("Connection ID must be positive")
+        connection_id = str(uuid.UUID(str(connection_id)))
     except (ValueError, TypeError):
         trace_id = ErrorHandler.get_trace_id(request)
         return error_response_from_exception(
-            ValidationError("Invalid connection ID format"),
+            ValidationError("Invalid connection ID format (must be UUID)"),
             trace_id=trace_id
         )
     
@@ -270,19 +305,18 @@ def load_table_metadata_view(request, connection_id, schema, table):
 @permission_classes([IsAuthenticated])
 def get_table_row_count_view(request, connection_id, schema, table):
     """
-    API endpoint to get row count for a table
+    API endpoint to get approximate row count for a table (safe, no table scan)
     
     GET /api/metadata/<connection_id>/schemas/<schema>/tables/<table>/row-count/
+    Query params: approximate=true/false (default: true) - use approximate count from statistics
     """
-    # Path parameter validation
+    # Path parameter validation (UUID)
     try:
-        connection_id = int(connection_id)
-        if connection_id < 1:
-            raise ValueError("Connection ID must be positive")
+        connection_id = str(uuid.UUID(str(connection_id)))
     except (ValueError, TypeError):
         trace_id = ErrorHandler.get_trace_id(request)
         return error_response_from_exception(
-            ValidationError("Invalid connection ID format"),
+            ValidationError("Invalid connection ID format (must be UUID)"),
             trace_id=trace_id
         )
     
@@ -294,12 +328,25 @@ def get_table_row_count_view(request, connection_id, schema, table):
             trace_id=trace_id
         )
     
+    schema = schema.strip()
+    table = table.strip()
+    
+    # Query parameter validation
+    use_approximate = request.GET.get('approximate', 'true').lower() == 'true'
+    
     try:
-        row_count = get_table_row_count(connection_id, schema, table, request.user)
+        if use_approximate:
+            # Use approximate count (safe, fast, no table scan)
+            row_count = get_approximate_row_count(connection_id, schema, table, request.user)
+        else:
+            # Use exact count (may be slow for large tables)
+            row_count = get_table_row_count(connection_id, schema, table, request.user)
+        
         return Response({
             'success': True,
             'data': {
-                'row_count': row_count
+                'row_count': row_count,
+                'approximate': use_approximate
             }
         }, status=status.HTTP_200_OK)
     except ObjectDoesNotExist as e:
@@ -334,19 +381,18 @@ def get_table_row_count_view(request, connection_id, schema, table):
 def load_all_metadata_view(request, connection_id):
     """
     API endpoint to load all metadata for a connection (schemas + tables)
+    NOTE: This loads everything at once - consider using lazy loading endpoints instead
     
     GET /api/metadata/<connection_id>/all/
     Query params: include_row_counts=true/false (default: false)
     """
-    # Path parameter validation
+    # Path parameter validation (UUID)
     try:
-        connection_id = int(connection_id)
-        if connection_id < 1:
-            raise ValueError("Connection ID must be positive")
+        connection_id = str(uuid.UUID(str(connection_id)))
     except (ValueError, TypeError):
         trace_id = ErrorHandler.get_trace_id(request)
         return error_response_from_exception(
-            ValidationError("Invalid connection ID format"),
+            ValidationError("Invalid connection ID format (must be UUID)"),
             trace_id=trace_id
         )
     
@@ -361,10 +407,13 @@ def load_all_metadata_view(request, connection_id):
     include_row_counts = include_row_counts == 'true'
     
     try:
+        # Use regular load_all_metadata (not lazy) for backward compatibility
+        # But recommend using lazy endpoints for better performance
         metadata = load_all_metadata(connection_id, request.user, include_row_counts=include_row_counts)
         return Response({
             'success': True,
-            'data': metadata
+            'data': metadata,
+            'warning': 'Consider using lazy loading endpoints (/schemas/, /schemas/<schema>/tables/) for better performance'
         }, status=status.HTTP_200_OK)
     except ObjectDoesNotExist as e:
         trace_id = ErrorHandler.get_trace_id(request)

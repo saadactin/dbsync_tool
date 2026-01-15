@@ -302,70 +302,152 @@
 
 <script>
 // Execution Trends Chart
-const trendsData = {{ trends|safe }};
-const trendsCtx = document.getElementById('executionTrendsChart').getContext('2d');
-const executionTrendsChart = new Chart(trendsCtx, {
-    type: 'line',
-    data: {
-        labels: trendsData.map(t => t.day),
-        datasets: [{
-            label: 'Total Executions',
-            data: trendsData.map(t => t.total),
-            borderColor: 'rgb(75, 192, 192)',
-            backgroundColor: 'rgba(75, 192, 192, 0.2)',
-            tension: 0.1
-        }, {
-            label: 'Successful',
-            data: trendsData.map(t => t.successful),
-            borderColor: 'rgb(54, 162, 235)',
-            backgroundColor: 'rgba(54, 162, 235, 0.2)',
-            tension: 0.1
-        }, {
-            label: 'Failed',
-            data: trendsData.map(t => t.failed),
-            borderColor: 'rgb(255, 99, 132)',
-            backgroundColor: 'rgba(255, 99, 132, 0.2)',
-            tension: 0.1
-        }]
-    },
-    options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {
-            y: {
-                beginAtZero: true
-            }
-        }
-    }
-});
+let trendsData = [];
+try {
+    trendsData = {{ trends_json|safe }};
+} catch (e) {
+    console.error('Error parsing trends data:', e);
+    trendsData = [];
+}
 
-// Success Rate Chart
-const successRateCtx = document.getElementById('successRateChart').getContext('2d');
-const successRateChart = new Chart(successRateCtx, {
-    type: 'doughnut',
-    data: {
-        labels: ['Successful', 'Failed'],
-        datasets: [{
-            data: [
-                {{ stats.executions.last_30d|default:0 }} - {{ stats.executions.failed_24h|default:0 }},
-                {{ stats.executions.failed_24h|default:0 }}
-            ],
-            backgroundColor: [
-                'rgb(54, 162, 235)',
-                'rgb(255, 99, 132)'
-            ]
-        }]
-    },
-    options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-            legend: {
-                position: 'bottom'
+// Ensure we have data, or create empty structure
+if (!trendsData || trendsData.length === 0) {
+    // Create empty data structure for last 30 days
+    const today = new Date();
+    trendsData = [];
+    for (let i = 29; i >= 0; i--) {
+        const date = new Date(today);
+        date.setDate(date.getDate() - i);
+        trendsData.push({
+            day: date.toISOString().split('T')[0],
+            total: 0,
+            successful: 0,
+            failed: 0,
+            rows_synced: 0
+        });
+    }
+}
+
+const trendsCtx = document.getElementById('executionTrendsChart');
+if (trendsCtx) {
+    const executionTrendsChart = new Chart(trendsCtx.getContext('2d'), {
+        type: 'line',
+        data: {
+            labels: trendsData.map(t => {
+                const date = new Date(t.day);
+                return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            }),
+            datasets: [{
+                label: 'Total Executions',
+                data: trendsData.map(t => t.total || 0),
+                borderColor: 'rgb(75, 192, 192)',
+                backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                tension: 0.1,
+                fill: true
+            }, {
+                label: 'Successful',
+                data: trendsData.map(t => t.successful || 0),
+                borderColor: 'rgb(54, 162, 235)',
+                backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                tension: 0.1,
+                fill: true
+            }, {
+                label: 'Failed',
+                data: trendsData.map(t => t.failed || 0),
+                borderColor: 'rgb(255, 99, 132)',
+                backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                tension: 0.1,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top'
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        stepSize: 1
+                    }
+                },
+                x: {
+                    ticks: {
+                        maxRotation: 45,
+                        minRotation: 45
+                    }
+                }
             }
         }
+    });
+}
+
+// Success Rate Chart - Use last 30 days data
+const successRateCtx = document.getElementById('successRateChart');
+if (successRateCtx) {
+    // Use actual counts from stats
+    const successfulCount = {{ stats.executions.successful_30d|default:0 }};
+    const failedCount = {{ stats.executions.failed_30d|default:0 }};
+    const totalCount = successfulCount + failedCount;
+    
+    // Only show chart if there's data
+    if (totalCount > 0) {
+        const successRateChart = new Chart(successRateCtx.getContext('2d'), {
+            type: 'doughnut',
+            data: {
+                labels: ['Successful', 'Failed'],
+                datasets: [{
+                    data: [
+                        successfulCount,
+                        failedCount
+                    ],
+                    backgroundColor: [
+                        'rgb(54, 162, 235)',
+                        'rgb(255, 99, 132)'
+                    ],
+                    borderWidth: 2,
+                    borderColor: '#fff'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            padding: 15,
+                            usePointStyle: true
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const label = context.label || '';
+                                const value = context.parsed || 0;
+                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                                return `${label}: ${value} (${percentage}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    } else {
+        // Show message if no data
+        successRateCtx.parentElement.innerHTML = '<p class="text-muted text-center mt-4">No execution data available for the last 30 days</p>';
     }
-});
+}
 
 // Auto-refresh dashboard every 30 seconds
 setInterval(function() {

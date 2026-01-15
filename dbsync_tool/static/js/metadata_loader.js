@@ -64,20 +64,43 @@ class MetadataLoader {
     }
     
     /**
-     * Load schemas only
+     * Load schemas only (lazy loading)
      */
-    async loadSchemas() {
-        const url = `/metadata/api/${this.connectionId}/schemas/`;
+    async loadSchemas(useCache = true) {
+        const url = `/metadata/api/${this.connectionId}/schemas/?use_cache=${useCache}`;
         
         try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+            
             const response = await fetch(url, {
                 method: 'GET',
                 headers: {
                     'X-CSRFToken': this.csrfToken,
                     'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Accept': 'application/json',
                 },
-                credentials: 'same-origin',
+                credentials: 'include',
+                signal: controller.signal
             });
+            
+            clearTimeout(timeoutId);
+            
+            if (!response.ok) {
+                let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                try {
+                    const errorData = await response.json();
+                    if (errorData.error) {
+                        errorMessage = errorData.error;
+                    } else if (errorData.detail) {
+                        errorMessage = errorData.detail;
+                    }
+                } catch (e) {
+                    // If response is not JSON, use status text
+                }
+                throw new Error(errorMessage);
+            }
             
             const data = await response.json();
             
@@ -87,26 +110,52 @@ class MetadataLoader {
                 throw new Error(data.error || 'Failed to load schemas');
             }
         } catch (error) {
+            if (error.name === 'AbortError') {
+                throw new Error('Request timeout: Database may be slow or unreachable');
+            }
             console.error('Error loading schemas:', error);
             throw error;
         }
     }
     
     /**
-     * Load tables for a schema
+     * Load tables for a schema (lazy loading)
      */
-    async loadTables(schemaName) {
-        const url = `/metadata/api/${this.connectionId}/schemas/${encodeURIComponent(schemaName)}/tables/`;
+    async loadTables(schemaName, useCache = true) {
+        const url = `/metadata/api/${this.connectionId}/schemas/${encodeURIComponent(schemaName)}/tables/?use_cache=${useCache}`;
         
         try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+            
             const response = await fetch(url, {
                 method: 'GET',
                 headers: {
                     'X-CSRFToken': this.csrfToken,
                     'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Accept': 'application/json',
                 },
-                credentials: 'same-origin',
+                credentials: 'include',
+                signal: controller.signal
             });
+            
+            clearTimeout(timeoutId);
+            
+            if (!response.ok) {
+                let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                try {
+                    const errorData = await response.json();
+                    if (errorData.error) {
+                        errorMessage = errorData.error;
+                    } else if (errorData.detail) {
+                        errorMessage = errorData.detail;
+                    }
+                } catch (e) {
+                    // If response is not JSON, use status text
+                }
+                throw new Error(errorMessage);
+            }
             
             const data = await response.json();
             
@@ -116,7 +165,63 @@ class MetadataLoader {
                 throw new Error(data.error || 'Failed to load tables');
             }
         } catch (error) {
+            if (error.name === 'AbortError') {
+                throw new Error('Request timeout: Database may be slow or unreachable');
+            }
             console.error('Error loading tables:', error);
+            throw error;
+        }
+    }
+    
+    /**
+     * Load columns for a table (lazy loading, optional)
+     */
+    async loadColumns(schemaName, tableName, useCache = true) {
+        const url = `/metadata/api/${this.connectionId}/schemas/${encodeURIComponent(schemaName)}/tables/${encodeURIComponent(tableName)}/columns/?use_cache=${useCache}`;
+        
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+            
+            const response = await fetch(url, {
+                method: 'GET',
+                headers: {
+                    'X-CSRFToken': this.csrfToken,
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Accept': 'application/json',
+                },
+                credentials: 'include',
+                signal: controller.signal
+            });
+            
+            clearTimeout(timeoutId);
+            
+            if (!response.ok) {
+                let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                try {
+                    const errorData = await response.json();
+                    if (errorData.error) {
+                        errorMessage = errorData.error;
+                    }
+                } catch (e) {
+                    // If response is not JSON, use status text
+                }
+                throw new Error(errorMessage);
+            }
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                return data.data;
+            } else {
+                throw new Error(data.error || 'Failed to load columns');
+            }
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                throw new Error('Request timeout: Database may be slow or unreachable');
+            }
+            console.error('Error loading columns:', error);
             throw error;
         }
     }

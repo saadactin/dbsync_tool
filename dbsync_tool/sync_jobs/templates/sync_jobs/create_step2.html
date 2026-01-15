@@ -52,16 +52,22 @@
                             <input type="text" id="table-search" class="form-control form-control-sm" placeholder="Search tables..." style="display: inline-block; width: 200px;">
                             <button type="button" class="btn btn-sm btn-primary ms-2" id="select-all-btn">Select All</button>
                             <button type="button" class="btn btn-sm btn-secondary ms-1" id="deselect-all-btn">Deselect All</button>
+                            <button type="button" class="btn btn-sm btn-outline-info ms-1" id="refresh-btn" title="Refresh metadata">
+                                <span>🔄</span> Refresh
+                            </button>
                         </div>
                     </div>
                     <div class="card-body">
                         <form id="table-selection-form" method="post" action="{% url 'sync_jobs:create_step2_submit' %}">
                             {% csrf_token %}
-                            <div id="tables-container">
-                                <!-- Tables will be loaded here via JavaScript -->
+                            <div id="schemas-container">
+                                <!-- Schemas will be loaded here via JavaScript with lazy loading -->
+                            </div>
+                            <div id="no-schemas-message" class="alert alert-info" style="display: none;">
+                                <p>No schemas found in the database. Please check your connection or select a different source connection.</p>
                             </div>
                             <div id="no-tables-message" class="alert alert-info" style="display: none;">
-                                <p>No tables found in the database. Please check your connection or select a different source connection.</p>
+                                <p>No tables found in the selected schema.</p>
                             </div>
                             <div class="mt-3">
                                 <button type="button" class="btn btn-secondary" onclick="window.location.href='{% url 'sync_jobs:create_step1' %}'">Back</button>

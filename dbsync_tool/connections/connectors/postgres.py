@@ -244,6 +244,37 @@ class PostgresConnector(DBConnector):
             cursor.execute(query)
             return cursor.fetchone()[0]
     
+    def get_approximate_row_count(self, schema: str, table: str) -> Optional[int]:
+        """
+        Get approximate row count using pg_class statistics (safe, no table scan)
+        
+        Args:
+            schema: Schema name
+            table: Table name
+            
+        Returns:
+            Optional[int]: Approximate row count or None if unavailable
+        """
+        if not self._connection:
+            self.connect()
+        
+        try:
+            with self._connection.cursor() as cursor:
+                # Use pg_class.reltuples for approximate count (much faster than COUNT(*))
+                cursor.execute("""
+                    SELECT reltuples::bigint AS approx_rows
+                    FROM pg_class
+                    WHERE relname = %s
+                    AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = %s)
+                """, (table, schema))
+                result = cursor.fetchone()
+                if result and result[0] is not None:
+                    return int(result[0])
+                return None
+        except Exception as e:
+            logger.warning(f"Failed to get approximate row count for {schema}.{table}: {str(e)}")
+            return None
+    
     def fetch_batch(self, query: str, batch_size: int, offset: int = 0, order_by: Optional[str] = None) -> List[Tuple]:
         """
         Fetch batch with proper ordering

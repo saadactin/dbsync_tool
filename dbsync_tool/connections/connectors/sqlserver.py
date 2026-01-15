@@ -202,6 +202,38 @@ class SQLServerConnector(DBConnector):
         cursor.close()
         return count
     
+    def get_approximate_row_count(self, schema: str, table: str) -> Optional[int]:
+        """
+        Get approximate row count using sys.dm_db_partition_stats (safe, no table scan)
+        
+        Args:
+            schema: Schema name
+            table: Table name
+            
+        Returns:
+            Optional[int]: Approximate row count or None if unavailable
+        """
+        if not self._connection:
+            self.connect()
+        
+        try:
+            cursor = self._connection.cursor()
+            # Use sys.dm_db_partition_stats for approximate count
+            cursor.execute("""
+                SELECT SUM(row_count)
+                FROM sys.dm_db_partition_stats
+                WHERE object_id = OBJECT_ID(?)
+                AND index_id IN (0, 1)
+            """, (f"{schema}.{table}",))
+            result = cursor.fetchone()
+            cursor.close()
+            if result and result[0] is not None:
+                return int(result[0])
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to get approximate row count for {schema}.{table}: {str(e)}")
+            return None
+    
     def fetch_batch(self, query: str, batch_size: int, offset: int = 0, order_by: Optional[str] = None) -> List[Tuple]:
         """Fetch batch with proper ordering"""
         if not self._connection:

@@ -97,12 +97,20 @@
             <div class="stat-card">
                 <div class="stat-label">Tables Progress</div>
                 <div class="stat-value">
-                    {{ execution.completed_tables }}/{{ execution.total_tables }}
+                    {% with completed_count=completed_logs.count total_count=logs.count %}
+                        {{ completed_count }}/{{ total_count }}
+                    {% endwith %}
                 </div>
                 <div class="progress-bar-container">
-                    <div class="progress-bar-fill" 
-                         style="width: {% widthratio execution.completed_tables execution.total_tables 100 %}%">
-                    </div>
+                    {% with completed_count=completed_logs.count total_count=logs.count %}
+                        {% if total_count > 0 %}
+                            <div class="progress-bar-fill" 
+                                 style="width: {% widthratio completed_count total_count 100 %}%">
+                            </div>
+                        {% else %}
+                            <div class="progress-bar-fill" style="width: 0%"></div>
+                        {% endif %}
+                    {% endwith %}
                 </div>
             </div>
         </div>
