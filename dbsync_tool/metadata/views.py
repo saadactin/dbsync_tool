@@ -5,7 +5,7 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.decorators import login_required
-from django.core.exceptions import ObjectDoesNotExist, PermissionDenied
+from django.core.exceptions import ObjectDoesNotExist, PermissionDenied, ValidationError
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -20,7 +20,9 @@ from metadata.services import (
     get_table_row_count,
     load_all_metadata,
 )
-from core.exceptions import DatabaseConnectionError
+from core.exceptions import DatabaseConnectionError, DatabaseTimeoutError
+from core.error_responses import error_response_from_exception, ErrorCode, create_error_response
+from core.error_handler import ErrorHandler
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,18 @@ def load_schemas_view(request, connection_id):
     
     GET /api/metadata/<connection_id>/schemas/
     """
+    # Path parameter validation
+    try:
+        connection_id = int(connection_id)
+        if connection_id < 1:
+            raise ValueError("Connection ID must be positive")
+    except (ValueError, TypeError):
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            ValidationError("Invalid connection ID format"),
+            trace_id=trace_id
+        )
+    
     try:
         schemas = load_schemas(connection_id, request.user)
         return Response({
@@ -40,26 +54,30 @@ def load_schemas_view(request, connection_id):
             'data': schemas
         }, status=status.HTTP_200_OK)
     except ObjectDoesNotExist as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_404_NOT_FOUND)
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            e,
+            trace_id=trace_id
+        )
     except PermissionDenied as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_403_FORBIDDEN)
-    except DatabaseConnectionError as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            e,
+            trace_id=trace_id
+        )
+    except (DatabaseConnectionError, DatabaseTimeoutError) as e:
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            e,
+            trace_id=trace_id
+        )
     except Exception as e:
-        logger.error(f"Unexpected error in load_schemas_view: {str(e)}")
-        return Response({
-            'success': False,
-            'error': 'An unexpected error occurred'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        trace_id = ErrorHandler.get_trace_id(request)
+        ErrorHandler.log_error(request, e, trace_id)
+        return error_response_from_exception(
+            e,
+            trace_id=trace_id
+        )
 
 
 @api_view(['GET'])
@@ -70,6 +88,34 @@ def load_tables_view(request, connection_id, schema):
     
     GET /api/metadata/<connection_id>/schemas/<schema>/tables/
     """
+    # Path parameter validation
+    try:
+        connection_id = int(connection_id)
+        if connection_id < 1:
+            raise ValueError("Connection ID must be positive")
+    except (ValueError, TypeError):
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            ValidationError("Invalid connection ID format"),
+            trace_id=trace_id
+        )
+    
+    # Schema name validation
+    if not schema or not schema.strip():
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            ValidationError("Schema name is required"),
+            trace_id=trace_id
+        )
+    
+    schema = schema.strip()
+    if len(schema) > 100:
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            ValidationError("Schema name is too long (max 100 characters)"),
+            trace_id=trace_id
+        )
+    
     try:
         tables = load_tables(connection_id, schema, request.user)
         return Response({
@@ -77,26 +123,30 @@ def load_tables_view(request, connection_id, schema):
             'data': tables
         }, status=status.HTTP_200_OK)
     except ObjectDoesNotExist as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_404_NOT_FOUND)
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            e,
+            trace_id=trace_id
+        )
     except PermissionDenied as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_403_FORBIDDEN)
-    except DatabaseConnectionError as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            e,
+            trace_id=trace_id
+        )
+    except (DatabaseConnectionError, DatabaseTimeoutError) as e:
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            e,
+            trace_id=trace_id
+        )
     except Exception as e:
-        logger.error(f"Unexpected error in load_tables_view: {str(e)}")
-        return Response({
-            'success': False,
-            'error': 'An unexpected error occurred'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        trace_id = ErrorHandler.get_trace_id(request)
+        ErrorHandler.log_error(request, e, trace_id)
+        return error_response_from_exception(
+            e,
+            trace_id=trace_id
+        )
 
 
 @api_view(['GET'])
@@ -144,7 +194,38 @@ def load_table_metadata_view(request, connection_id, schema, table):
     
     GET /api/metadata/<connection_id>/schemas/<schema>/tables/<table>/
     """
-    include_row_count = request.GET.get('include_row_count', 'false').lower() == 'true'
+    # Path parameter validation
+    try:
+        connection_id = int(connection_id)
+        if connection_id < 1:
+            raise ValueError("Connection ID must be positive")
+    except (ValueError, TypeError):
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            ValidationError("Invalid connection ID format"),
+            trace_id=trace_id
+        )
+    
+    # Schema and table name validation
+    if not schema or not schema.strip() or not table or not table.strip():
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            ValidationError("Schema and table names are required"),
+            trace_id=trace_id
+        )
+    
+    schema = schema.strip()
+    table = table.strip()
+    
+    # Query parameter validation
+    include_row_count = request.GET.get('include_row_count', 'false').lower()
+    if include_row_count not in ['true', 'false']:
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            ValidationError("include_row_count must be 'true' or 'false'"),
+            trace_id=trace_id
+        )
+    include_row_count = include_row_count == 'true'
     
     try:
         metadata = load_table_metadata(
@@ -159,26 +240,30 @@ def load_table_metadata_view(request, connection_id, schema, table):
             'data': metadata
         }, status=status.HTTP_200_OK)
     except ObjectDoesNotExist as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_404_NOT_FOUND)
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            e,
+            trace_id=trace_id
+        )
     except PermissionDenied as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_403_FORBIDDEN)
-    except DatabaseConnectionError as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            e,
+            trace_id=trace_id
+        )
+    except (DatabaseConnectionError, DatabaseTimeoutError) as e:
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            e,
+            trace_id=trace_id
+        )
     except Exception as e:
-        logger.error(f"Unexpected error in load_table_metadata_view: {str(e)}")
-        return Response({
-            'success': False,
-            'error': 'An unexpected error occurred'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        trace_id = ErrorHandler.get_trace_id(request)
+        ErrorHandler.log_error(request, e, trace_id)
+        return error_response_from_exception(
+            e,
+            trace_id=trace_id
+        )
 
 
 @api_view(['GET'])
@@ -189,6 +274,26 @@ def get_table_row_count_view(request, connection_id, schema, table):
     
     GET /api/metadata/<connection_id>/schemas/<schema>/tables/<table>/row-count/
     """
+    # Path parameter validation
+    try:
+        connection_id = int(connection_id)
+        if connection_id < 1:
+            raise ValueError("Connection ID must be positive")
+    except (ValueError, TypeError):
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            ValidationError("Invalid connection ID format"),
+            trace_id=trace_id
+        )
+    
+    # Schema and table name validation
+    if not schema or not schema.strip() or not table or not table.strip():
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            ValidationError("Schema and table names are required"),
+            trace_id=trace_id
+        )
+    
     try:
         row_count = get_table_row_count(connection_id, schema, table, request.user)
         return Response({
@@ -198,26 +303,30 @@ def get_table_row_count_view(request, connection_id, schema, table):
             }
         }, status=status.HTTP_200_OK)
     except ObjectDoesNotExist as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_404_NOT_FOUND)
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            e,
+            trace_id=trace_id
+        )
     except PermissionDenied as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_403_FORBIDDEN)
-    except DatabaseConnectionError as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            e,
+            trace_id=trace_id
+        )
+    except (DatabaseConnectionError, DatabaseTimeoutError) as e:
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            e,
+            trace_id=trace_id
+        )
     except Exception as e:
-        logger.error(f"Unexpected error in get_table_row_count_view: {str(e)}")
-        return Response({
-            'success': False,
-            'error': 'An unexpected error occurred'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        trace_id = ErrorHandler.get_trace_id(request)
+        ErrorHandler.log_error(request, e, trace_id)
+        return error_response_from_exception(
+            e,
+            trace_id=trace_id
+        )
 
 
 @api_view(['GET'])
@@ -229,7 +338,27 @@ def load_all_metadata_view(request, connection_id):
     GET /api/metadata/<connection_id>/all/
     Query params: include_row_counts=true/false (default: false)
     """
-    include_row_counts = request.GET.get('include_row_counts', 'false').lower() == 'true'
+    # Path parameter validation
+    try:
+        connection_id = int(connection_id)
+        if connection_id < 1:
+            raise ValueError("Connection ID must be positive")
+    except (ValueError, TypeError):
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            ValidationError("Invalid connection ID format"),
+            trace_id=trace_id
+        )
+    
+    # Query parameter validation
+    include_row_counts = request.GET.get('include_row_counts', 'false').lower()
+    if include_row_counts not in ['true', 'false']:
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            ValidationError("include_row_counts must be 'true' or 'false'"),
+            trace_id=trace_id
+        )
+    include_row_counts = include_row_counts == 'true'
     
     try:
         metadata = load_all_metadata(connection_id, request.user, include_row_counts=include_row_counts)
@@ -238,23 +367,27 @@ def load_all_metadata_view(request, connection_id):
             'data': metadata
         }, status=status.HTTP_200_OK)
     except ObjectDoesNotExist as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_404_NOT_FOUND)
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            e,
+            trace_id=trace_id
+        )
     except PermissionDenied as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_403_FORBIDDEN)
-    except DatabaseConnectionError as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            e,
+            trace_id=trace_id
+        )
+    except (DatabaseConnectionError, DatabaseTimeoutError) as e:
+        trace_id = ErrorHandler.get_trace_id(request)
+        return error_response_from_exception(
+            e,
+            trace_id=trace_id
+        )
     except Exception as e:
-        logger.error(f"Unexpected error in load_all_metadata_view: {str(e)}")
-        return Response({
-            'success': False,
-            'error': 'An unexpected error occurred'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        trace_id = ErrorHandler.get_trace_id(request)
+        ErrorHandler.log_error(request, e, trace_id)
+        return error_response_from_exception(
+            e,
+            trace_id=trace_id
+        )

@@ -23,24 +23,87 @@ def login_view(request):
     if request.user.is_authenticated:
         return redirect('core:dashboard')
     
+    def get_client_ip(request):
+        """Get client IP address"""
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0].strip()
+        else:
+            ip = request.META.get('REMOTE_ADDR', 'unknown')
+        return ip
+    
     if request.method == 'POST':
         form = LoginForm(request.POST)
         if form.is_valid():
             username = form.cleaned_data['username']
             password = form.cleaned_data['password']
+            ip_address = get_client_ip(request)
+            
+            # Check rate limiting for failed login attempts
+            from django.core.cache import cache
+            login_attempt_key = f"login_attempts:{username}:{ip_address}"
+            failed_attempts = cache.get(login_attempt_key, 0)
+            
+            if failed_attempts >= 5:
+                retry_after = cache.ttl(login_attempt_key) or 900
+                from core.audit import AuditLogger
+                AuditLogger.log_security_event(
+                    'rate_limit_exceeded',
+                    'high',
+                    f'Too many failed login attempts for {username}',
+                    ip_address=ip_address
+                )
+                messages.error(
+                    request,
+                    f'Too many failed login attempts. Please try again in {retry_after // 60} minutes.'
+                )
+                return render(request, 'accounts/login.html', {'form': form})
+            
             user = authenticate(request, username=username, password=password)
             if user is not None:
                 if user.is_active:
+                    # Successful login - clear failed attempts
+                    cache.delete(login_attempt_key)
                     login(request, user)
+                    
+                    # Audit log
+                    from core.audit import AuditLogger
+                    AuditLogger.log_authentication_event(
+                        'login',
+                        username,
+                        success=True,
+                        ip_address=ip_address
+                    )
+                    
                     messages.success(request, f'Welcome back, {user.username}!')
                     next_url = request.GET.get('next')
                     if next_url:
                         return redirect(next_url)
                     return redirect('core:dashboard')
                 else:
-                    messages.error(request, 'Your account is inactive. Please contact administrator.')
+                    # Account inactive
+                    cache.set(login_attempt_key, failed_attempts + 1, 900)  # 15 minutes
+                    from core.audit import AuditLogger
+                    AuditLogger.log_authentication_event(
+                        'login',
+                        username,
+                        success=False,
+                        ip_address=ip_address,
+                        details={'reason': 'account_inactive'}
+                    )
+                    messages.error(request, 'Account is inactive. Please contact administrator.')
             else:
-                messages.error(request, 'Invalid username or password. Please try again.')
+                # Invalid credentials
+                cache.set(login_attempt_key, failed_attempts + 1, 900)  # 15 minutes
+                from core.audit import AuditLogger
+                AuditLogger.log_authentication_event(
+                    'login',
+                    username,
+                    success=False,
+                    ip_address=ip_address,
+                    details={'reason': 'invalid_credentials'}
+                )
+                messages.error(request, 'Wrong credentials. Please check your username and password.')
         else:
             messages.error(request, 'Please correct the errors below.')
     else:

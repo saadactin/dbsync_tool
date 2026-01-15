@@ -7,7 +7,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.http import JsonResponse, Http404
 from django.views.decorators.http import require_http_methods
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, DatabaseError
 from functools import wraps
 from datetime import datetime, timedelta
@@ -203,20 +203,43 @@ def create_job_step1_view(request):
         source_connection_id = request.POST.get('source_connection')
         target_connection_id = request.POST.get('target_connection')
         
-        # Validation
+        # Enhanced validation
         errors = []
         
-        if not job_name:
-            errors.append('Job name is required.')
+        # Job name validation
+        try:
+            from sync_jobs.validators import validate_job_name
+            job_name = validate_job_name(job_name)
+        except ValidationError as e:
+            errors.extend(e.messages if hasattr(e, 'messages') else [str(e)])
         
+        # Source connection validation
+        source_connection_uuid = None
         if not source_connection_id:
             errors.append('Source connection is required.')
+        else:
+            try:
+                # Validate UUID format (connection IDs are UUIDs)
+                import uuid
+                source_connection_uuid = uuid.UUID(str(source_connection_id))
+            except (ValueError, TypeError, AttributeError):
+                errors.append('Invalid source connection ID.')
         
+        # Target connection validation
+        target_connection_uuid = None
         if not target_connection_id:
             errors.append('Target connection is required.')
+        else:
+            try:
+                # Validate UUID format (connection IDs are UUIDs)
+                import uuid
+                target_connection_uuid = uuid.UUID(str(target_connection_id))
+            except (ValueError, TypeError, AttributeError):
+                errors.append('Invalid target connection ID.')
         
-        if source_connection_id and target_connection_id:
-            if source_connection_id == target_connection_id:
+        # Business rule: Source and target must be different
+        if source_connection_uuid and target_connection_uuid:
+            if source_connection_uuid == target_connection_uuid:
                 errors.append('Source and target connections cannot be the same.')
         
         if errors:
@@ -228,8 +251,8 @@ def create_job_step1_view(request):
             try:
                 conn_qs = DatabaseConnection.objects.filter(is_active=True)
                 user_conns = TenantService.get_queryset_for_user(conn_qs, request.user)
-                source_connection = user_conns.get(id=source_connection_id)
-                target_connection = user_conns.get(id=target_connection_id)
+                source_connection = user_conns.get(id=source_connection_uuid)
+                target_connection = user_conns.get(id=target_connection_uuid)
                 
                 # Store in session for step 2
                 request.session['sync_job_name'] = job_name
@@ -462,17 +485,40 @@ def create_job_step3_submit(request):
     cron_expression = request.POST.get('cron_expression', '').strip()
     start_datetime = request.POST.get('start_datetime', '').strip()
     
-    # Validation
+    # Enhanced validation
     errors = []
     
-    if sync_type not in ['full', 'incremental']:
-        errors.append('Invalid sync type.')
+    # Sync type validation
+    try:
+        from sync_jobs.validators import validate_sync_type
+        sync_type = validate_sync_type(sync_type)
+    except ValidationError as e:
+        errors.extend(e.messages if hasattr(e, 'messages') else [str(e)])
     
-    if schedule_type not in ['once', 'hourly', 'daily', 'weekly', 'custom']:
-        errors.append('Invalid schedule type.')
+    # Schedule type validation
+    try:
+        from sync_jobs.validators import validate_schedule_type
+        schedule_type = validate_schedule_type(schedule_type)
+    except ValidationError as e:
+        errors.extend(e.messages if hasattr(e, 'messages') else [str(e)])
     
-    if schedule_type == 'custom' and not cron_expression:
-        errors.append('Cron expression is required for custom schedules.')
+    # Cron expression validation (if custom schedule)
+    if schedule_type == 'custom':
+        try:
+            from sync_jobs.validators import validate_cron_expression
+            cron_expression = validate_cron_expression(cron_expression)
+        except ValidationError as e:
+            errors.extend(e.messages if hasattr(e, 'messages') else [str(e)])
+    
+    # Start datetime validation
+    try:
+        from sync_jobs.validators import validate_start_datetime
+        start_datetime_obj = validate_start_datetime(start_datetime, schedule_type)
+    except ValidationError as e:
+        errors.extend(e.messages if hasattr(e, 'messages') else [str(e)])
+        start_datetime_obj = None
+    else:
+        start_datetime_obj = start_datetime_obj if start_datetime_obj else None
     
     # Validate incremental columns if incremental sync
     incremental_columns = {}
@@ -480,10 +526,12 @@ def create_job_step3_submit(request):
         for table_info in selected_tables:
             table_key = f"{table_info['schema_name']}.{table_info['table_name']}"
             inc_col = request.POST.get(f'incremental_column_{table_key}', '').strip()
-            if not inc_col:
-                errors.append(f'Incremental column is required for table {table_key}.')
-            else:
+            try:
+                from sync_jobs.validators import validate_incremental_column
+                inc_col = validate_incremental_column(inc_col, table_key)
                 incremental_columns[table_key] = inc_col
+            except ValidationError as e:
+                errors.extend(e.messages if hasattr(e, 'messages') else [str(e)])
     
     if errors:
         for error in errors:
@@ -501,7 +549,10 @@ def create_job_step3_submit(request):
         # Calculate next_run_at based on schedule
         next_run_at = None
         if schedule_type != 'once':
-            if start_datetime:
+            # Use validated datetime object if available
+            if start_datetime_obj:
+                next_run_at = start_datetime_obj
+            elif start_datetime:
                 try:
                     # Parse datetime-local format (YYYY-MM-DDTHH:mm)
                     dt_str = start_datetime.replace('T', ' ')

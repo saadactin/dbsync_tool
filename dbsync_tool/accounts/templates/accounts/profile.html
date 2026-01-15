@@ -3,50 +3,310 @@
 
 {% block title %}My Profile - DB Sync Tool{% endblock %}
 
+{% block extra_css %}
+<style>
+    .profile-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 2rem;
+        border-radius: 10px;
+        margin-bottom: 2rem;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    .profile-header.super-admin {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    }
+    .profile-header.admin {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    }
+    .profile-header.operator {
+        background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+    }
+    .profile-header.viewer {
+        background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+    }
+    .profile-avatar {
+        width: 100px;
+        height: 100px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.2);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 3rem;
+        margin-bottom: 1rem;
+        border: 3px solid rgba(255, 255, 255, 0.3);
+    }
+    .profile-info-card {
+        border: none;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        border-radius: 10px;
+        margin-bottom: 1.5rem;
+    }
+    .profile-info-card .card-header {
+        background-color: #f8f9fa;
+        border-bottom: 2px solid #dee2e6;
+        font-weight: 600;
+        padding: 1rem 1.5rem;
+    }
+    .info-row {
+        padding: 0.75rem 1.5rem;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    .info-row:last-child {
+        border-bottom: none;
+    }
+    .info-label {
+        font-weight: 600;
+        color: #495057;
+        min-width: 150px;
+    }
+    .info-value {
+        color: #212529;
+    }
+    .role-badge-large {
+        font-size: 1.1rem;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+    }
+    .stats-card {
+        background: white;
+        border-radius: 10px;
+        padding: 1.5rem;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        text-align: center;
+    }
+    .stats-number {
+        font-size: 2rem;
+        font-weight: bold;
+        color: #667eea;
+    }
+    .stats-label {
+        color: #6c757d;
+        font-size: 0.9rem;
+        margin-top: 0.5rem;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid">
-    <h1 class="mb-4">My Profile</h1>
-    
-    <div class="card">
-        <div class="card-body">
-            <h5 class="card-title">User Information</h5>
-            <table class="table">
-                <tr>
-                    <th>Username:</th>
-                    <td>{{ user.username }}</td>
-                </tr>
-                <tr>
-                    <th>Email:</th>
-                    <td>{{ user.email|default:"Not provided" }}</td>
-                </tr>
-                <tr>
-                    <th>First Name:</th>
-                    <td>{{ user.first_name|default:"Not provided" }}</td>
-                </tr>
-                <tr>
-                    <th>Last Name:</th>
-                    <td>{{ user.last_name|default:"Not provided" }}</td>
-                </tr>
-                <tr>
-                    <th>Last Login:</th>
-                    <td>{{ user.last_login|date:"F d, Y H:i"|default:"Never" }}</td>
-                </tr>
-                <tr>
-                    <th>Date Joined:</th>
-                    <td>{{ user.date_joined|date:"F d, Y" }}</td>
-                </tr>
-                <tr>
-                    <th>Is Staff:</th>
-                    <td>{% if user.is_staff %}Yes{% else %}No{% endif %}</td>
-                </tr>
-                <tr>
-                    <th>Is Superuser:</th>
-                    <td>{% if user.is_superuser %}Yes{% else %}No{% endif %}</td>
-                </tr>
-            </table>
-            <div class="mt-3">
-                <a href="{% url 'accounts:change_password' %}" class="btn btn-primary">Change Password</a>
+    {% if user.is_authenticated and user.userprofile %}
+        {% if user.userprofile.is_super_admin %}
+            <div class="profile-header super-admin">
+        {% elif user.userprofile.is_admin %}
+            <div class="profile-header admin">
+        {% elif user.userprofile.is_operator %}
+            <div class="profile-header operator">
+        {% else %}
+            <div class="profile-header viewer">
+        {% endif %}
+    {% else %}
+        <div class="profile-header">
+    {% endif %}
+        <div class="d-flex align-items-center">
+            <div class="profile-avatar">
+                {% if user.first_name or user.last_name %}
+                    {{ user.first_name|first|default:"" }}{{ user.last_name|first|default:"" }}
+                {% else %}
+                    {{ user.username|first|upper }}
+                {% endif %}
             </div>
+            <div class="ms-4">
+                <h2 class="mb-2">{{ user.get_full_name|default:user.username }}</h2>
+                <p class="mb-1 opacity-75">{{ user.email|default:"No email provided" }}</p>
+                {% if user.is_authenticated and user.userprofile %}
+                    {% if user.userprofile.is_super_admin %}
+                        <span class="badge bg-danger role-badge-large">Super Admin</span>
+                    {% elif user.userprofile.is_admin %}
+                        <span class="badge bg-primary role-badge-large">Admin</span>
+                    {% elif user.userprofile.is_operator %}
+                        <span class="badge bg-info role-badge-large">Operator</span>
+                    {% else %}
+                        <span class="badge bg-secondary role-badge-large">Viewer</span>
+                    {% endif %}
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card profile-info-card">
+                <div class="card-header">
+                    <h5 class="mb-0">Account Information</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div class="info-row d-flex">
+                        <div class="info-label">Username:</div>
+                        <div class="info-value">{{ user.username }}</div>
+                    </div>
+                    <div class="info-row d-flex">
+                        <div class="info-label">Email:</div>
+                        <div class="info-value">{{ user.email|default:"Not provided" }}</div>
+                    </div>
+                    {% if user.first_name or user.last_name %}
+                    <div class="info-row d-flex">
+                        <div class="info-label">Full Name:</div>
+                        <div class="info-value">{{ user.get_full_name|default:"Not provided" }}</div>
+                    </div>
+                    {% endif %}
+                    <div class="info-row d-flex">
+                        <div class="info-label">Last Login:</div>
+                        <div class="info-value">
+                            {% if user.last_login %}
+                                {{ user.last_login|date:"F d, Y H:i" }}
+                            {% else %}
+                                <span class="text-muted">Never</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="info-row d-flex">
+                        <div class="info-label">Date Joined:</div>
+                        <div class="info-value">{{ user.date_joined|date:"F d, Y" }}</div>
+                    </div>
+                    <div class="info-row d-flex">
+                        <div class="info-label">Account Status:</div>
+                        <div class="info-value">
+                            {% if user.is_active %}
+                                <span class="badge bg-success">Active</span>
+                            {% else %}
+                                <span class="badge bg-danger">Inactive</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            {% if user.is_authenticated and user.userprofile %}
+            <div class="card profile-info-card">
+                <div class="card-header">
+                    <h5 class="mb-0">Role & Permissions</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div class="info-row d-flex">
+                        <div class="info-label">Role:</div>
+                        <div class="info-value">
+                            {% if user.userprofile.is_super_admin %}
+                                <span class="badge bg-danger">Super Admin</span>
+                            {% elif user.userprofile.is_admin %}
+                                <span class="badge bg-primary">Admin</span>
+                            {% elif user.userprofile.is_operator %}
+                                <span class="badge bg-info">Operator</span>
+                            {% else %}
+                                <span class="badge bg-secondary">Viewer</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% if user.userprofile.tenant %}
+                    <div class="info-row d-flex">
+                        <div class="info-label">Tenant:</div>
+                        <div class="info-value">{{ user.userprofile.tenant.username }}</div>
+                    </div>
+                    {% else %}
+                    <div class="info-row d-flex">
+                        <div class="info-label">Tenant:</div>
+                        <div class="info-value">
+                            <span class="badge bg-warning">No Tenant (Super Admin)</span>
+                        </div>
+                    </div>
+                    {% endif %}
+                    <div class="info-row d-flex">
+                        <div class="info-label">Permissions:</div>
+                        <div class="info-value">
+                            {% if user.userprofile.is_super_admin %}
+                                <span class="badge bg-success me-1">Full Access</span>
+                                <span class="badge bg-success me-1">User Management</span>
+                                <span class="badge bg-success me-1">All Tenants</span>
+                            {% elif user.userprofile.is_admin %}
+                                <span class="badge bg-primary me-1">User Management</span>
+                                <span class="badge bg-primary me-1">Connections</span>
+                                <span class="badge bg-primary me-1">Sync Jobs</span>
+                            {% elif user.userprofile.is_operator %}
+                                <span class="badge bg-info me-1">Connections</span>
+                                <span class="badge bg-info me-1">Sync Jobs</span>
+                            {% else %}
+                                <span class="badge bg-secondary me-1">Read Only</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+            
+            <div class="card profile-info-card">
+                <div class="card-header">
+                    <h5 class="mb-0">System Information</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div class="info-row d-flex">
+                        <div class="info-label">Is Staff:</div>
+                        <div class="info-value">
+                            {% if user.is_staff %}
+                                <span class="badge bg-success">Yes</span>
+                            {% else %}
+                                <span class="badge bg-secondary">No</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="info-row d-flex">
+                        <div class="info-label">Is Superuser:</div>
+                        <div class="info-value">
+                            {% if user.is_superuser %}
+                                <span class="badge bg-danger">Yes</span>
+                            {% else %}
+                                <span class="badge bg-secondary">No</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card profile-info-card">
+                <div class="card-body">
+                    <h5 class="card-title mb-4">Quick Actions</h5>
+                    <div class="d-grid gap-2">
+                        <a href="{% url 'accounts:change_password' %}" class="btn btn-primary">
+                            <i class="bi bi-key"></i> Change Password
+                        </a>
+                        {% if user.is_authenticated and user.userprofile and user.userprofile.is_super_admin %}
+                            <a href="{% url 'accounts:user_list' %}" class="btn btn-outline-primary">
+                                <i class="bi bi-people"></i> Manage Users
+                            </a>
+                        {% endif %}
+                        <a href="{% url 'core:dashboard' %}" class="btn btn-outline-secondary">
+                            <i class="bi bi-speedometer2"></i> Go to Dashboard
+                        </a>
+                    </div>
+                </div>
+            </div>
+            
+            {% if user.is_authenticated and user.userprofile %}
+            <div class="card profile-info-card mt-3">
+                <div class="card-body">
+                    <h5 class="card-title mb-3">Account Statistics</h5>
+                    {% if user.userprofile.is_super_admin %}
+                        <div class="stats-card mb-3">
+                            <div class="stats-number text-danger">∞</div>
+                            <div class="stats-label">Unlimited Access</div>
+                        </div>
+                        <p class="text-muted small mb-0">
+                            As Super Admin, you have full access to all features and can manage all users, connections, and sync jobs across all tenants.
+                        </p>
+                    {% else %}
+                        <div class="stats-card mb-3">
+                            <div class="stats-number">{{ user.userprofile.get_role_display }}</div>
+                            <div class="stats-label">Your Role</div>
+                        </div>
+                        <p class="text-muted small mb-0">
+                            Contact your administrator if you need additional permissions or have questions about your account.
+                        </p>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
         </div>
     </div>
 </div>

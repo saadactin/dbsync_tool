@@ -3,25 +3,72 @@ from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
+from django.core.cache import cache
 from accounts.models import Role
+from core.sanitization import sanitize_username
 
 
 class LoginForm(forms.Form):
     username = forms.CharField(
         max_length=150,
+        min_length=3,
         widget=forms.TextInput(attrs={
             'class': 'form-control',
             'placeholder': 'Username',
-            'required': True
-        })
+            'required': True,
+            'autocomplete': 'username'
+        }),
+        help_text="Username must be 3-150 characters"
     )
     password = forms.CharField(
         widget=forms.PasswordInput(attrs={
             'class': 'form-control',
             'placeholder': 'Password',
-            'required': True
+            'required': True,
+            'autocomplete': 'current-password'
         })
     )
+    
+    def clean_username(self):
+        """Validate and sanitize username"""
+        username = self.cleaned_data.get('username')
+        
+        # Null/empty check
+        if not username:
+            raise forms.ValidationError("Username is required.")
+        
+        # Strip whitespace
+        username = username.strip()
+        
+        # Sanitize username
+        username = sanitize_username(username)
+        
+        # Length validation
+        if len(username) < 3:
+            raise forms.ValidationError("Username must be at least 3 characters long.")
+        
+        if len(username) > 150:
+            raise forms.ValidationError("Username must be no more than 150 characters long.")
+        
+        # Format validation (alphanumeric, underscore, hyphen only)
+        if not username.replace('_', '').replace('-', '').isalnum():
+            raise forms.ValidationError("Username can only contain letters, numbers, underscores, and hyphens.")
+        
+        return username
+    
+    def clean_password(self):
+        """Validate password"""
+        password = self.cleaned_data.get('password')
+        
+        # Null/empty check
+        if not password:
+            raise forms.ValidationError("Password is required.")
+        
+        # Length check (basic)
+        if len(password) < 1:
+            raise forms.ValidationError("Password cannot be empty.")
+        
+        return password
 
 
 class UserCreateForm(UserCreationForm):
@@ -76,7 +123,26 @@ class UserCreateForm(UserCreationForm):
                 field.widget.attrs['class'] = 'form-control'
     
     def clean_username(self):
+        """Enhanced username validation with sanitization"""
         username = self.cleaned_data.get('username')
+        
+        # Null/empty check
+        if not username:
+            raise forms.ValidationError("Username is required.")
+        
+        # Strip whitespace
+        username = username.strip()
+        
+        # Sanitize username
+        from core.sanitization import sanitize_username
+        username = sanitize_username(username)
+        
+        # Length validation
+        if len(username) < 3:
+            raise forms.ValidationError("Username must be at least 3 characters long.")
+        
+        if len(username) > 30:
+            raise forms.ValidationError("Username must be no more than 30 characters long.")
         
         # Security: Prevent reserved usernames
         reserved_usernames = ['root', 'admin', 'administrator', 'superuser', 'system']
@@ -87,30 +153,65 @@ class UserCreateForm(UserCreationForm):
         if not username.replace('_', '').replace('-', '').isalnum():
             raise forms.ValidationError("Username can only contain letters, numbers, underscores, and hyphens.")
         
-        if len(username) < 3:
-            raise forms.ValidationError("Username must be at least 3 characters long.")
-        
-        if len(username) > 30:
-            raise forms.ValidationError("Username must be no more than 30 characters long.")
-        
+        # Unique constraint validation
         if User.objects.filter(username=username).exists():
             raise forms.ValidationError("A user with that username already exists.")
         
         return username
     
     def clean_email(self):
+        """Enhanced email validation"""
         email = self.cleaned_data.get('email')
+        
         if email:
+            # Strip whitespace
+            email = email.strip()
+            
+            # Sanitize email
+            from core.sanitization import sanitize_email
+            email = sanitize_email(email)
+            
+            # Email format validation (RFC 5322 compliant)
             try:
                 validate_email(email)
             except ValidationError:
                 raise forms.ValidationError("Enter a valid email address.")
+            
+            # Length validation (max 254 characters per RFC 5321)
+            if len(email) > 254:
+                raise forms.ValidationError("Email address is too long. Maximum length is 254 characters.")
+            
+            # Unique constraint validation
+            if User.objects.filter(email=email).exists():
+                raise forms.ValidationError("A user with that email already exists.")
+        
         return email
     
     def clean(self):
-        """Set is_staff based on role"""
+        """Set is_staff based on role and validate password"""
         cleaned_data = super().clean()
         role = cleaned_data.get('role')
+        password1 = cleaned_data.get('password1')
+        password2 = cleaned_data.get('password2')
+        
+        # Password validation
+        if password1:
+            # Length validation
+            if len(password1) < 8:
+                raise forms.ValidationError({'password1': 'Password must be at least 8 characters long.'})
+            
+            if len(password1) > 128:
+                raise forms.ValidationError({'password1': 'Password must be no more than 128 characters long.'})
+            
+            # Password confirmation match
+            if password1 != password2:
+                raise forms.ValidationError({'password2': 'Password fields must match.'})
+        
+        # Role validation (enum validation)
+        if role:
+            valid_roles = [Role.ADMIN, Role.OPERATOR, Role.VIEWER]
+            if role not in valid_roles:
+                raise forms.ValidationError({'role': 'Invalid role selected.'})
         
         # Set is_staff based on role
         if role == Role.ADMIN:
@@ -198,25 +299,97 @@ class UserUpdateForm(forms.ModelForm):
         return role
     
     def clean_username(self):
+        """Enhanced username validation"""
         username = self.cleaned_data.get('username')
-        if self.instance and self.instance.pk and User.objects.filter(username=username).exclude(pk=self.instance.pk).exists():
-            raise forms.ValidationError("A user with that username already exists.")
+        
+        if not username:
+            raise forms.ValidationError("Username is required.")
+        
+        # Strip and sanitize
+        username = username.strip()
+        from core.sanitization import sanitize_username
+        username = sanitize_username(username)
+        
+        # Length validation
+        if len(username) < 3:
+            raise forms.ValidationError("Username must be at least 3 characters long.")
+        
+        if len(username) > 30:
+            raise forms.ValidationError("Username must be no more than 30 characters long.")
+        
+        # Unique constraint validation (exclude current user)
+        if self.instance and self.instance.pk:
+            if User.objects.filter(username=username).exclude(pk=self.instance.pk).exists():
+                raise forms.ValidationError("A user with that username already exists.")
+        else:
+            if User.objects.filter(username=username).exists():
+                raise forms.ValidationError("A user with that username already exists.")
+        
         return username
     
+    def clean_email(self):
+        """Enhanced email validation"""
+        email = self.cleaned_data.get('email')
+        
+        if email:
+            # Strip and sanitize
+            email = email.strip()
+            from core.sanitization import sanitize_email
+            email = sanitize_email(email)
+            
+            # Email format validation
+            try:
+                validate_email(email)
+            except ValidationError:
+                raise forms.ValidationError("Enter a valid email address.")
+            
+            # Length validation
+            if len(email) > 254:
+                raise forms.ValidationError("Email address is too long. Maximum length is 254 characters.")
+            
+            # Unique constraint validation (exclude current user)
+            if self.instance and self.instance.pk:
+                if User.objects.filter(email=email).exclude(pk=self.instance.pk).exists():
+                    raise forms.ValidationError("A user with that email already exists.")
+        
+        return email
+    
     def clean(self):
+        """Enhanced validation with password and state checks"""
         cleaned_data = super().clean()
         new_password = cleaned_data.get('new_password')
         confirm_password = cleaned_data.get('confirm_password')
+        role = cleaned_data.get('role')
         
+        # Password change validation
         if new_password or confirm_password:
+            if not new_password:
+                raise forms.ValidationError({'new_password': 'New password is required if changing password.'})
+            
+            if not confirm_password:
+                raise forms.ValidationError({'confirm_password': 'Password confirmation is required.'})
+            
             if new_password != confirm_password:
-                raise forms.ValidationError("Password fields must match.")
+                raise forms.ValidationError({'confirm_password': 'Password fields must match.'})
+            
+            # Length validation
+            if len(new_password) < 8:
+                raise forms.ValidationError({'new_password': 'Password must be at least 8 characters long.'})
+            
+            if len(new_password) > 128:
+                raise forms.ValidationError({'new_password': 'Password must be no more than 128 characters long.'})
+            
             # Validate password using Django validators
             from django.contrib.auth.password_validation import validate_password
             try:
-                validate_password(new_password)
+                validate_password(new_password, self.instance if self.instance else None)
             except ValidationError as e:
-                raise forms.ValidationError(list(e.messages))
+                raise forms.ValidationError({'new_password': list(e.messages)})
+        
+        # State validation - cannot deactivate self
+        if self.instance and self.instance.pk:
+            is_active = cleaned_data.get('is_active', True)
+            # This check will be done in the view, but we can add it here too
         
         return cleaned_data
     

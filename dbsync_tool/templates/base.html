@@ -39,65 +39,84 @@
                         <h4>DB Sync Tool</h4>
                     </div>
                     <ul class="nav flex-column">
+                        {% url 'core:dashboard' as dashboard_url %}
                         <li class="nav-item">
-                            <a class="nav-link" href="{% url 'core:dashboard' %}">
+                            <a class="nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{{ dashboard_url }}">
                                 <span>🏠</span> Dashboard
                             </a>
                         </li>
                         {% if user.is_authenticated and user.userprofile %}
                             {% if user.userprofile.is_super_admin or user.userprofile.is_admin %}
+                                {% url 'accounts:user_list' as user_list_url %}
                                 <li class="nav-item">
-                                    <a class="nav-link" href="{% url 'accounts:user_list' %}">
+                                    <a class="nav-link {% if request.resolver_match.url_name == 'user_list' or request.resolver_match.url_name == 'user_create' or request.resolver_match.url_name == 'user_edit' %}active{% endif %}" href="{{ user_list_url }}">
                                         <span>👥</span> User Management
                                     </a>
                                 </li>
                             {% endif %}
                             
                             {% if not user.userprofile.is_viewer %}
+                                {% url 'connections:list' as connections_list_url %}
+                                {% url 'connections:create' as connections_create_url %}
                                 <li class="nav-item">
-                                    <a class="nav-link" href="{% url 'connections:list' %}">
+                                    <a class="nav-link {% if request.resolver_match.url_name == 'list' and request.resolver_match.app_name == 'connections' %}active{% endif %}" href="{{ connections_list_url }}">
                                         <span>🔌</span> Connections
                                     </a>
                                 </li>
                                 <li class="nav-item">
-                                    <a class="nav-link" href="{% url 'connections:create' %}">
+                                    <a class="nav-link {% if request.resolver_match.url_name == 'create' and request.resolver_match.app_name == 'connections' %}active{% endif %}" href="{{ connections_create_url }}">
                                         <span>➕</span> Add Connection
                                     </a>
                                 </li>
+                                {% url 'sync_jobs:list' as sync_jobs_list_url %}
                                 <li class="nav-item">
-                                    <a class="nav-link" href="{% url 'sync_jobs:list' %}">
+                                    <a class="nav-link {% if request.resolver_match.url_name == 'list' and request.resolver_match.app_name == 'sync_jobs' %}active{% endif %}" href="{{ sync_jobs_list_url }}">
                                         <span>🔄</span> Sync Jobs
                                     </a>
                                 </li>
                             {% else %}
+                                {% url 'connections:list' as connections_list_url %}
                                 <li class="nav-item">
-                                    <a class="nav-link" href="{% url 'connections:list' %}">
+                                    <a class="nav-link {% if request.resolver_match.url_name == 'list' and request.resolver_match.app_name == 'connections' %}active{% endif %}" href="{{ connections_list_url }}">
                                         <span>🔌</span> View Connections
                                     </a>
                                 </li>
+                                {% url 'sync_jobs:list' as sync_jobs_list_url %}
                                 <li class="nav-item">
-                                    <a class="nav-link" href="{% url 'sync_jobs:list' %}">
+                                    <a class="nav-link {% if request.resolver_match.url_name == 'list' and request.resolver_match.app_name == 'sync_jobs' %}active{% endif %}" href="{{ sync_jobs_list_url }}">
                                         <span>🔄</span> View Jobs
                                     </a>
                                 </li>
                             {% endif %}
                         {% else %}
+                            {% url 'connections:list' as connections_list_url %}
                             <li class="nav-item">
-                                <a class="nav-link" href="{% url 'connections:list' %}">
+                                <a class="nav-link {% if request.resolver_match.url_name == 'list' and request.resolver_match.app_name == 'connections' %}active{% endif %}" href="{{ connections_list_url }}">
                                     <span>🔌</span> Connections
                                 </a>
                             </li>
+                            {% url 'sync_jobs:list' as sync_jobs_list_url %}
                             <li class="nav-item">
-                                <a class="nav-link" href="{% url 'sync_jobs:list' %}">
+                                <a class="nav-link {% if request.resolver_match.url_name == 'list' and request.resolver_match.app_name == 'sync_jobs' %}active{% endif %}" href="{{ sync_jobs_list_url }}">
                                     <span>🔄</span> Sync Jobs
                                 </a>
                             </li>
                         {% endif %}
-                        <li class="nav-item">
-                            <a class="nav-link" href="{% url 'accounts:profile' %}">
-                                <span>👤</span> My Profile
+                        {% url 'accounts:profile' as profile_url %}
+                        <li class="nav-item profile-nav-item">
+                            <a class="nav-link {% if request.resolver_match.url_name == 'profile' or request.resolver_match.url_name == 'change_password' %}active{% endif %}" href="{{ profile_url }}">
+                                <span>👤</span>
+                                <span class="nav-link-text">My Profile</span>
                                 {% if user.is_authenticated and user.userprofile %}
-                                    <span class="badge bg-secondary ms-2">{{ user.userprofile.get_role_display }}</span>
+                                    {% if user.userprofile.is_super_admin %}
+                                        <span class="badge bg-danger profile-badge">Super Admin</span>
+                                    {% elif user.userprofile.is_admin %}
+                                        <span class="badge bg-primary profile-badge">Admin</span>
+                                    {% elif user.userprofile.is_operator %}
+                                        <span class="badge bg-info profile-badge">Operator</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary profile-badge">Viewer</span>
+                                    {% endif %}
                                 {% endif %}
                             </a>
                         </li>

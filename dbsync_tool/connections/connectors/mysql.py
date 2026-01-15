@@ -18,7 +18,7 @@ class MySQLConnector(DBConnector):
     """MySQL database connector"""
     
     def connect(self):
-        """Establish MySQL connection"""
+        """Establish MySQL connection with enhanced error handling"""
         try:
             # MySQL can connect without database_name parameter
             connect_params = {
@@ -34,12 +34,29 @@ class MySQLConnector(DBConnector):
             self._connection = mysql.connector.connect(**connect_params)
             return self._connection
         except Error as e:
-            raise DatabaseConnectionError(f"Failed to connect to MySQL: {str(e)}")
+            error_msg = str(e).lower()
+            error_code = e.errno if hasattr(e, 'errno') else None
+            
+            # Provide specific error messages
+            if error_code == 2003 or 'timeout' in error_msg or 'timed out' in error_msg:
+                from core.exceptions import DatabaseTimeoutError
+                raise DatabaseTimeoutError(f"Connection timeout: Unable to reach MySQL server at {self.host}:{self.port}")
+            elif error_code == 1045 or 'access denied' in error_msg or 'password' in error_msg:
+                raise DatabaseConnectionError("Connection failed: Invalid credentials. Please check your username and password.")
+            elif error_code == 2002 or 'could not connect' in error_msg or 'connection refused' in error_msg:
+                raise DatabaseConnectionError(f"Connection failed: Host unreachable. Unable to connect to {self.host}:{self.port}")
+            elif error_code == 1049 or ('database' in error_msg and 'does not exist' in error_msg):
+                raise DatabaseConnectionError(f"Connection failed: Database '{self.database_name}' not found.")
+            elif 'port' in error_msg:
+                raise DatabaseConnectionError(f"Connection failed: Port {self.port} is not accessible.")
+            else:
+                raise DatabaseConnectionError(f"Connection failed: {str(e)}")
         except Exception as e:
+            logger.error(f"Unexpected error connecting to MySQL: {str(e)}", exc_info=True)
             raise DatabaseConnectionError(f"Unexpected error connecting to MySQL: {str(e)}")
     
     def test_connection(self) -> bool:
-        """Test MySQL connection"""
+        """Test MySQL connection with timeout handling"""
         try:
             conn = self.connect()
             cursor = conn.cursor()
@@ -48,8 +65,12 @@ class MySQLConnector(DBConnector):
             cursor.close()
             conn.close()
             return True
-        except Exception:
-            return False
+        except DatabaseConnectionError:
+            # Re-raise connection errors
+            raise
+        except Exception as e:
+            logger.error(f"Error testing MySQL connection: {str(e)}", exc_info=True)
+            raise DatabaseConnectionError(f"Connection test failed: {str(e)}")
     
     def get_schemas(self) -> List[str]:
         """Get list of database names (MySQL uses databases like schemas)"""

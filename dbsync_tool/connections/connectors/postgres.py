@@ -18,7 +18,7 @@ class PostgresConnector(DBConnector):
     """PostgreSQL database connector"""
     
     def connect(self):
-        """Establish PostgreSQL connection"""
+        """Establish PostgreSQL connection with enhanced error handling"""
         try:
             # If no database_name specified, connect to 'postgres' database (default)
             db_name = self.database_name if self.database_name else 'postgres'
@@ -32,12 +32,29 @@ class PostgresConnector(DBConnector):
             )
             return self._connection
         except psycopg2.OperationalError as e:
-            raise DatabaseConnectionError(f"Failed to connect to PostgreSQL: {str(e)}")
+            error_msg = str(e).lower()
+            # Provide specific error messages
+            if 'timeout' in error_msg or 'timed out' in error_msg:
+                from core.exceptions import DatabaseTimeoutError
+                raise DatabaseTimeoutError(f"Connection timeout: Unable to reach PostgreSQL server at {self.host}:{self.port}")
+            elif 'authentication failed' in error_msg or 'password' in error_msg:
+                raise DatabaseConnectionError("Connection failed: Invalid credentials. Please check your username and password.")
+            elif 'could not connect' in error_msg or 'connection refused' in error_msg:
+                raise DatabaseConnectionError(f"Connection failed: Host unreachable. Unable to connect to {self.host}:{self.port}")
+            elif 'database' in error_msg and 'does not exist' in error_msg:
+                raise DatabaseConnectionError(f"Connection failed: Database '{db_name}' not found.")
+            elif 'port' in error_msg:
+                raise DatabaseConnectionError(f"Connection failed: Port {self.port} is not accessible.")
+            else:
+                raise DatabaseConnectionError(f"Connection failed: {str(e)}")
+        except psycopg2.InterfaceError as e:
+            raise DatabaseConnectionError(f"Connection interface error: {str(e)}")
         except Exception as e:
+            logger.error(f"Unexpected error connecting to PostgreSQL: {str(e)}", exc_info=True)
             raise DatabaseConnectionError(f"Unexpected error connecting to PostgreSQL: {str(e)}")
     
     def test_connection(self) -> bool:
-        """Test PostgreSQL connection"""
+        """Test PostgreSQL connection with timeout handling"""
         try:
             conn = self.connect()
             with conn.cursor() as cursor:
@@ -45,8 +62,12 @@ class PostgresConnector(DBConnector):
                 cursor.fetchone()
             conn.close()
             return True
-        except Exception:
-            return False
+        except DatabaseConnectionError:
+            # Re-raise connection errors
+            raise
+        except Exception as e:
+            logger.error(f"Error testing PostgreSQL connection: {str(e)}", exc_info=True)
+            raise DatabaseConnectionError(f"Connection test failed: {str(e)}")
     
     def get_schemas(self) -> List[str]:
         """Get list of schema names"""

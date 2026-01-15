@@ -56,7 +56,10 @@ MIDDLEWARE = [
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'core.middleware.error_logging.ErrorLoggingMiddleware',  # Error logging with correlation IDs
+    'core.middleware.request_validation.RequestValidationMiddleware',  # Request validation
+    'django.contrib.auth.middleware.AuthenticationMiddleware',  # Must be before rate_limiting (adds request.user)
+    'core.middleware.rate_limiting.RateLimitingMiddleware',  # Rate limiting (needs request.user)
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -205,6 +208,11 @@ if not DEBUG:
     SECURE_HSTS_PRELOAD = True
     
     # Logging
+    # Ensure logs directory exists
+    import os
+    logs_dir = BASE_DIR.parent / 'logs'
+    os.makedirs(logs_dir, exist_ok=True)
+    
     LOGGING = {
         'version': 1,
         'disable_existing_loggers': False,
@@ -215,6 +223,9 @@ if not DEBUG:
             },
             'json': {
                 'format': '%(asctime)s %(name)s %(levelname)s %(message)s %(pathname)s %(lineno)d',
+            },
+            'structured': {
+                'format': '{"timestamp": "%(asctime)s", "level": "%(levelname)s", "logger": "%(name)s", "message": "%(message)s"}',
             },
         },
         'handlers': {
@@ -233,6 +244,22 @@ if not DEBUG:
                 'maxBytes': 1024 * 1024 * 10,  # 10 MB
                 'backupCount': 5,
                 'formatter': 'json',
+            },
+            'audit': {
+                'level': 'INFO',
+                'class': 'logging.handlers.RotatingFileHandler',
+                'filename': BASE_DIR.parent / 'logs' / 'audit.log',
+                'maxBytes': 1024 * 1024 * 10,  # 10 MB
+                'backupCount': 5,
+                'formatter': 'structured',
+            },
+            'error': {
+                'level': 'ERROR',
+                'class': 'logging.handlers.RotatingFileHandler',
+                'filename': BASE_DIR.parent / 'logs' / 'error.log',
+                'maxBytes': 1024 * 1024 * 10,  # 10 MB
+                'backupCount': 5,
+                'formatter': 'structured',
             },
             'console': {
                 'level': 'DEBUG',
@@ -293,63 +320,5 @@ if not DEBUG:
         },
     }
 else:
-    # Development logging
-    LOGGING = {
-        'version': 1,
-        'disable_existing_loggers': False,
-        'formatters': {
-            'verbose': {
-                'format': '{levelname} {asctime} {module} {message}',
-                'style': '{',
-            },
-        },
-        'handlers': {
-            'file': {
-                'level': 'INFO',
-                'class': 'logging.handlers.RotatingFileHandler',
-                'filename': BASE_DIR / 'logs' / 'dbsync.log',
-                'maxBytes': 1024 * 1024 * 10,  # 10 MB
-                'backupCount': 5,
-                'formatter': 'verbose',
-            },
-            'rbac_audit': {
-                'level': 'INFO',
-                'class': 'logging.handlers.RotatingFileHandler',
-                'filename': BASE_DIR / 'logs' / 'rbac_audit.log',
-                'maxBytes': 1024 * 1024 * 10,  # 10 MB
-                'backupCount': 5,
-                'formatter': 'verbose',
-            },
-            'console': {
-                'level': 'DEBUG',
-                'class': 'logging.StreamHandler',
-                'formatter': 'verbose',
-            },
-        },
-        'loggers': {
-            'accounts': {
-                'handlers': ['file', 'rbac_audit', 'console'],
-                'level': 'INFO',
-                'propagate': False,
-            },
-            'accounts.views': {
-                'handlers': ['file', 'rbac_audit', 'console'],
-                'level': 'INFO',
-                'propagate': False,
-            },
-            'accounts.services': {
-                'handlers': ['file', 'rbac_audit', 'console'],
-                'level': 'INFO',
-                'propagate': False,
-            },
-            'accounts.permissions': {
-                'handlers': ['file', 'rbac_audit', 'console'],
-                'level': 'WARNING',
-                'propagate': False,
-            },
-        },
-        'root': {
-            'handlers': ['file', 'console'],
-            'level': 'INFO',
-        },
-    }
+    # Development logging - use same config as production
+    pass  # Already defined above

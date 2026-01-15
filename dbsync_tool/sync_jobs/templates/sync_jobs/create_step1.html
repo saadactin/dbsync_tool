@@ -11,14 +11,23 @@
         border-radius: 8px;
         padding: 20px;
         margin-bottom: 20px;
-        transition: border-color 0.3s;
+        transition: all 0.3s;
+        cursor: pointer;
+        position: relative;
     }
     .connection-select-card:hover {
         border-color: #007bff;
+        background-color: #f8f9fa;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
     }
     .connection-select-card.selected {
         border-color: #007bff;
-        background-color: #f0f8ff;
+        background-color: #e7f3ff;
+        box-shadow: 0 2px 4px rgba(0, 123, 255, 0.2);
+    }
+    .connection-select-card:active {
+        transform: translateY(0);
     }
     .connection-info {
         display: flex;
@@ -39,6 +48,27 @@
     }
     .radio-wrapper {
         margin-left: 15px;
+        pointer-events: none; /* Allow clicks to pass through to card */
+    }
+    .radio-wrapper input[type="radio"],
+    .radio-wrapper label {
+        pointer-events: auto; /* But allow direct interaction with radio and label */
+        cursor: pointer;
+    }
+    .connection-select-card.disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        background-color: #f5f5f5;
+    }
+    .connection-select-card.disabled:hover {
+        border-color: #e0e0e0;
+        background-color: #f5f5f5;
+        transform: none;
+        box-shadow: none;
+    }
+    .connection-select-card.disabled .radio-wrapper input[type="radio"] {
+        cursor: not-allowed;
+        pointer-events: none;
     }
 </style>
 {% endblock %}
@@ -88,7 +118,7 @@
                         {% if connections %}
                             <div id="source-connections">
                                 {% for connection in connections %}
-                                    <div class="connection-select-card" data-connection-id="{{ connection.id }}">
+                                    <div class="connection-select-card" data-connection-id="{{ connection.id }}" data-db-type="{{ connection.db_type }}">
                                         <div class="connection-info">
                                             <div class="connection-details">
                                                 <h6>{{ connection.name }}</h6>
@@ -130,7 +160,7 @@
                         {% if connections %}
                             <div id="target-connections">
                                 {% for connection in connections %}
-                                    <div class="connection-select-card" data-connection-id="{{ connection.id }}">
+                                    <div class="connection-select-card" data-connection-id="{{ connection.id }}" data-db-type="{{ connection.db_type }}">
                                         <div class="connection-info">
                                             <div class="connection-details">
                                                 <h6>{{ connection.name }}</h6>
@@ -177,41 +207,134 @@
 {% block extra_js %}
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    // Handle connection card selection for source
-    document.querySelectorAll('#source-connections .connection-select-card').forEach(card => {
-        const radio = card.querySelector('input[type="radio"]');
-        radio.addEventListener('change', function() {
-            document.querySelectorAll('#source-connections .connection-select-card').forEach(c => {
-                c.classList.remove('selected');
-            });
-            if (this.checked) {
-                card.classList.add('selected');
-            }
-            validateForm();
+    // Function to update disabled state based on selected database types
+    function updateDisabledConnections() {
+        // Get selected source connection's db_type
+        const selectedSourceRadio = document.querySelector('input[name="source_connection"]:checked');
+        const selectedSourceDbType = selectedSourceRadio ? selectedSourceRadio.closest('.connection-select-card').dataset.dbType : null;
+        
+        // Get selected target connection's db_type
+        const selectedTargetRadio = document.querySelector('input[name="target_connection"]:checked');
+        const selectedTargetDbType = selectedTargetRadio ? selectedTargetRadio.closest('.connection-select-card').dataset.dbType : null;
+        
+        // First, re-enable all connections
+        document.querySelectorAll('.connection-select-card').forEach(card => {
+            const radio = card.querySelector('input[type="radio"]');
+            card.classList.remove('disabled');
+            radio.disabled = false;
         });
         
-        if (radio.checked) {
-            card.classList.add('selected');
+        // Disable target connections with same db_type as selected source
+        if (selectedSourceDbType) {
+            document.querySelectorAll('#target-connections .connection-select-card').forEach(card => {
+                const cardDbType = card.dataset.dbType;
+                const radio = card.querySelector('input[type="radio"]');
+                
+                if (cardDbType === selectedSourceDbType) {
+                    card.classList.add('disabled');
+                    radio.disabled = true;
+                    // If this target is currently selected, automatically uncheck it
+                    if (radio.checked) {
+                        radio.checked = false;
+                        card.classList.remove('selected');
+                    }
+                }
+            });
         }
-    });
+        
+        // Disable source connections with same db_type as selected target
+        if (selectedTargetDbType) {
+            document.querySelectorAll('#source-connections .connection-select-card').forEach(card => {
+                const cardDbType = card.dataset.dbType;
+                const radio = card.querySelector('input[type="radio"]');
+                
+                if (cardDbType === selectedTargetDbType) {
+                    card.classList.add('disabled');
+                    radio.disabled = true;
+                    // If this source is currently selected, automatically uncheck it
+                    if (radio.checked) {
+                        radio.checked = false;
+                        card.classList.remove('selected');
+                    }
+                }
+            });
+        }
+        
+        // Re-validate form after disabling
+        validateForm();
+    }
     
-    // Handle connection card selection for target
-    document.querySelectorAll('#target-connections .connection-select-card').forEach(card => {
-        const radio = card.querySelector('input[type="radio"]');
-        radio.addEventListener('change', function() {
-            document.querySelectorAll('#target-connections .connection-select-card').forEach(c => {
-                c.classList.remove('selected');
+    // Function to handle card click and selection
+    function setupCardSelection(containerId, radioName) {
+        document.querySelectorAll(`#${containerId} .connection-select-card`).forEach(card => {
+            const radio = card.querySelector(`input[type="radio"][name="${radioName}"]`);
+            
+            // Make entire card clickable (only if not disabled)
+            card.addEventListener('click', function(e) {
+                // Don't trigger if clicking directly on the radio or label
+                if (e.target.type === 'radio' || e.target.tagName === 'LABEL') {
+                    return;
+                }
+                
+                // Don't allow selection if card is disabled
+                if (card.classList.contains('disabled')) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return;
+                }
+                
+                // Prevent event bubbling
+                e.preventDefault();
+                e.stopPropagation();
+                
+                // Select the radio button first
+                radio.checked = true;
+                
+                // Update visual selection
+                document.querySelectorAll(`#${containerId} .connection-select-card`).forEach(c => {
+                    c.classList.remove('selected');
+                });
+                card.classList.add('selected');
+                
+                // Trigger change event first to ensure radio state is updated
+                radio.dispatchEvent(new Event('change', { bubbles: true }));
+                
+                // Then update disabled states (this will auto-deselect conflicting selections)
+                updateDisabledConnections();
             });
-            if (this.checked) {
+            
+            // Handle radio button change (for when radio is clicked directly)
+            radio.addEventListener('change', function() {
+                if (this.disabled) {
+                    return;
+                }
+                
+                document.querySelectorAll(`#${containerId} .connection-select-card`).forEach(c => {
+                    c.classList.remove('selected');
+                });
+                if (this.checked) {
+                    card.classList.add('selected');
+                }
+                
+                // Update disabled states (this will auto-deselect conflicting selections)
+                updateDisabledConnections();
+            });
+            
+            // Set initial selected state
+            if (radio.checked) {
                 card.classList.add('selected');
             }
-            validateForm();
         });
-        
-        if (radio.checked) {
-            card.classList.add('selected');
-        }
-    });
+    }
+    
+    // Setup card selection for source connections
+    setupCardSelection('source-connections', 'source_connection');
+    
+    // Setup card selection for target connections
+    setupCardSelection('target-connections', 'target_connection');
+    
+    // Initial update of disabled connections
+    updateDisabledConnections();
     
     // Form validation
     function validateForm() {
@@ -220,24 +343,41 @@ document.addEventListener('DOMContentLoaded', function() {
         const targetConnection = document.querySelector('input[name="target_connection"]:checked');
         const nextBtn = document.getElementById('next-btn');
         
+        // Remove any existing error messages
+        const existingError = document.getElementById('same-connection-error');
+        if (existingError) {
+            existingError.remove();
+        }
+        
         if (jobName && sourceConnection && targetConnection) {
-            // Check if source and target are different
+            // Check if source and target are the same connection
             if (sourceConnection.value === targetConnection.value) {
                 nextBtn.disabled = true;
-                if (!document.getElementById('same-connection-error')) {
-                    const errorDiv = document.createElement('div');
-                    errorDiv.id = 'same-connection-error';
-                    errorDiv.className = 'alert alert-danger mt-3';
-                    errorDiv.textContent = 'Source and target connections cannot be the same.';
-                    document.getElementById('step1-form').insertBefore(errorDiv, document.querySelector('.mb-4:last-of-type'));
-                }
-            } else {
-                nextBtn.disabled = false;
-                const errorDiv = document.getElementById('same-connection-error');
-                if (errorDiv) {
-                    errorDiv.remove();
-                }
+                const errorDiv = document.createElement('div');
+                errorDiv.id = 'same-connection-error';
+                errorDiv.className = 'alert alert-danger mt-3';
+                errorDiv.textContent = 'Source and target connections cannot be the same.';
+                document.getElementById('step1-form').insertBefore(errorDiv, document.querySelector('.mb-4:last-of-type'));
+                return;
             }
+            
+            // Check if source and target have the same database type
+            const sourceCard = sourceConnection.closest('.connection-select-card');
+            const targetCard = targetConnection.closest('.connection-select-card');
+            const sourceDbType = sourceCard ? sourceCard.dataset.dbType : null;
+            const targetDbType = targetCard ? targetCard.dataset.dbType : null;
+            
+            if (sourceDbType && targetDbType && sourceDbType === targetDbType) {
+                nextBtn.disabled = true;
+                const errorDiv = document.createElement('div');
+                errorDiv.id = 'same-connection-error';
+                errorDiv.className = 'alert alert-danger mt-3';
+                errorDiv.textContent = 'Source and target connections cannot have the same database type.';
+                document.getElementById('step1-form').insertBefore(errorDiv, document.querySelector('.mb-4:last-of-type'));
+                return;
+            }
+            
+            nextBtn.disabled = false;
         } else {
             nextBtn.disabled = true;
         }
@@ -264,6 +404,18 @@ document.addEventListener('DOMContentLoaded', function() {
         if (sourceConnection.value === targetConnection.value) {
             e.preventDefault();
             alert('Source and target connections cannot be the same.');
+            return false;
+        }
+        
+        // Check if source and target have the same database type
+        const sourceCard = sourceConnection.closest('.connection-select-card');
+        const targetCard = targetConnection.closest('.connection-select-card');
+        const sourceDbType = sourceCard ? sourceCard.dataset.dbType : null;
+        const targetDbType = targetCard ? targetCard.dataset.dbType : null;
+        
+        if (sourceDbType && targetDbType && sourceDbType === targetDbType) {
+            e.preventDefault();
+            alert('Source and target connections cannot have the same database type.');
             return false;
         }
     });
