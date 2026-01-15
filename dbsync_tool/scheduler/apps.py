@@ -15,7 +15,16 @@ class SchedulerConfig(AppConfig):
     def ready(self):
         """Called when Django starts - Initialize scheduler service"""
         import os
+        import sys
         import threading
+        
+        # Don't start scheduler during management commands (except runserver)
+        # This prevents scheduler logs from interfering with interactive commands
+        if len(sys.argv) > 1:
+            command = sys.argv[1]
+            # Only start scheduler for runserver, not for other commands
+            if command not in ['runserver', 'runserver_plus']:
+                return
         
         # Use threading to delay startup slightly to avoid issues with Django initialization
         def start_scheduler_delayed():

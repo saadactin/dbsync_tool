@@ -21,6 +21,15 @@ class DatabaseConnection(models.Model):
     password = models.TextField(help_text="Encrypted database password")  # Encrypted
     database_name = models.CharField(max_length=255, help_text="Database name")
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='connections')
+    tenant = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='tenant_connections',
+        null=True,  # Nullable initially, will be made required after data migration
+        blank=True,
+        db_index=True,
+        help_text='Tenant (Admin user) who owns this connection'
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     is_active = models.BooleanField(default=True, help_text="Whether this connection is active")
@@ -33,6 +42,8 @@ class DatabaseConnection(models.Model):
         indexes = [
             models.Index(fields=['created_by', 'is_active']),
             models.Index(fields=['db_type', 'is_active']),
+            models.Index(fields=['tenant']),
+            models.Index(fields=['tenant', 'is_active']),
         ]
     
     def __str__(self):

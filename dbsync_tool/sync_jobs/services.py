@@ -19,7 +19,9 @@ class DashboardService:
         Returns:
             dict: Statistics including jobs, executions, success rates, etc.
         """
-        user_jobs = SyncJob.objects.filter(created_by=user)
+        from accounts.services.tenant_service import TenantService
+        all_jobs = SyncJob.objects.all()
+        user_jobs = TenantService.get_queryset_for_user(all_jobs, user)
         
         # Basic counts
         total_jobs = user_jobs.count()
@@ -35,21 +37,21 @@ class DashboardService:
         last_7d = now - timedelta(days=7)
         last_30d = now - timedelta(days=30)
         
-        # Executions in last 24 hours
+        # Executions in last 24 hours (filtered by tenant)
         executions_24h = SyncExecution.objects.filter(
-            job__created_by=user,
+            job__in=user_jobs,
             started_at__gte=last_24h
         )
         
         # Executions in last 7 days
         executions_7d = SyncExecution.objects.filter(
-            job__created_by=user,
+            job__in=user_jobs,
             started_at__gte=last_7d
         )
         
         # Executions in last 30 days
         executions_30d = SyncExecution.objects.filter(
-            job__created_by=user,
+            job__in=user_jobs,
             started_at__gte=last_30d
         )
         
@@ -89,10 +91,11 @@ class DashboardService:
             schedule__is_enabled=True
         ).count()
         
-        # Connections count
-        total_connections = DatabaseConnection.objects.filter(
-            created_by=user
-        ).count()
+        # Connections count (filtered by tenant)
+        from accounts.services.tenant_service import TenantService
+        all_connections = DatabaseConnection.objects.all()
+        user_connections = TenantService.get_queryset_for_user(all_connections, user)
+        total_connections = user_connections.count()
         
         return {
             'jobs': {
@@ -148,8 +151,12 @@ class DashboardService:
         now = timezone.now()
         start_date = now - timedelta(days=days)
         
+        from accounts.services.tenant_service import TenantService
+        all_jobs = SyncJob.objects.all()
+        user_jobs = TenantService.get_queryset_for_user(all_jobs, user)
+        
         executions = SyncExecution.objects.filter(
-            job__created_by=user,
+            job__in=user_jobs,
             started_at__gte=start_date
         ).extra(
             select={'day': "DATE(started_at)"}
@@ -165,7 +172,10 @@ class DashboardService:
     @staticmethod
     def get_top_jobs_by_rows(user, limit=10):
         """Get top jobs by rows synced"""
-        jobs = SyncJob.objects.filter(created_by=user).annotate(
+        from accounts.services.tenant_service import TenantService
+        all_jobs = SyncJob.objects.all()
+        user_jobs = TenantService.get_queryset_for_user(all_jobs, user)
+        jobs = user_jobs.annotate(
             total_rows=Sum('executions__total_rows_synced')
         ).order_by('-total_rows')[:limit]
         
@@ -174,8 +184,11 @@ class DashboardService:
     @staticmethod
     def get_recent_activity(user, limit=20):
         """Get recent activity across all jobs"""
+        from accounts.services.tenant_service import TenantService
+        all_jobs = SyncJob.objects.all()
+        user_jobs = TenantService.get_queryset_for_user(all_jobs, user)
         executions = SyncExecution.objects.filter(
-            job__created_by=user
+            job__in=user_jobs
         ).select_related('job').order_by('-started_at')[:limit]
         
         return executions

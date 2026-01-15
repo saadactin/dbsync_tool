@@ -11,9 +11,11 @@
 <div class="container-fluid">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h1>Database Connections</h1>
-        <a href="{% url 'connections:create' %}" class="btn btn-primary">
-            <span>➕</span> Add New Connection
-        </a>
+        {% if not user.userprofile.is_viewer %}
+            <a href="{% url 'connections:create' %}" class="btn btn-primary">
+                <span>➕</span> Add New Connection
+            </a>
+        {% endif %}
     </div>
 
     {% if grouped_list %}
@@ -50,7 +52,9 @@
                                                     <th>Database</th>
                                                     <th>Status</th>
                                                     <th>Last Test</th>
-                                                    <th>Actions</th>
+                                                    {% if not user.userprofile.is_viewer %}
+                                                        <th>Actions</th>
+                                                    {% endif %}
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -85,22 +89,24 @@
                                                             {% endif %}
                                                         {% endwith %}
                                                     </td>
-                                                    <td>
-                                                        <div class="btn-group" role="group">
-                                                            <a href="{% url 'connections:detail' connection.id %}" class="btn btn-sm btn-outline-primary" title="View">
-                                                                <span>👁️</span>
-                                                            </a>
-                                                            <a href="{% url 'connections:update' connection.id %}" class="btn btn-sm btn-outline-secondary" title="Edit">
-                                                                <span>✏️</span>
-                                                            </a>
-                                                            <button type="button" class="btn btn-sm btn-outline-info test-connection" data-connection-id="{{ connection.id }}" title="Test">
-                                                                <span>🔌</span>
-                                                            </button>
-                                                            <a href="{% url 'connections:delete' connection.id %}" class="btn btn-sm btn-outline-danger" title="Delete">
-                                                                <span>🗑️</span>
-                                                            </a>
-                                                        </div>
-                                                    </td>
+                                                    {% if not user.userprofile.is_viewer %}
+                                                        <td>
+                                                            <div class="btn-group" role="group">
+                                                                <a href="{% url 'connections:detail' connection.id %}" class="btn btn-sm btn-outline-primary" title="View">
+                                                                    <span>👁️</span>
+                                                                </a>
+                                                                <a href="{% url 'connections:update' connection.id %}" class="btn btn-sm btn-outline-secondary" title="Edit">
+                                                                    <span>✏️</span>
+                                                                </a>
+                                                                <button type="button" class="btn btn-sm btn-outline-info test-connection" data-connection-id="{{ connection.id }}" title="Test">
+                                                                    <span>🔌</span>
+                                                                </button>
+                                                                <a href="{% url 'connections:delete' connection.id %}" class="btn btn-sm btn-outline-danger" title="Delete">
+                                                                    <span>🗑️</span>
+                                                                </a>
+                                                            </div>
+                                                        </td>
+                                                    {% endif %}
                                                 </tr>
                                                 {% endfor %}
                                             </tbody>
@@ -117,9 +123,11 @@
                 <div class="card-body text-center py-5">
                     <h5 class="text-muted">No connections found</h5>
                     <p class="text-muted">Get started by adding your first database connection.</p>
-                    <a href="{% url 'connections:create' %}" class="btn btn-primary">
-                        <span>➕</span> Add New Connection
-                    </a>
+                    {% if not user.userprofile.is_viewer %}
+                        <a href="{% url 'connections:create' %}" class="btn btn-primary">
+                            <span>➕</span> Add New Connection
+                        </a>
+                    {% endif %}
                 </div>
             </div>
         {% endif %}
@@ -128,9 +136,11 @@
             <div class="card-body text-center py-5">
                 <h5 class="text-muted">No connections found</h5>
                 <p class="text-muted">Get started by adding your first database connection.</p>
-                <a href="{% url 'connections:create' %}" class="btn btn-primary">
-                    <span>➕</span> Add New Connection
-                </a>
+                {% if not user.userprofile.is_viewer %}
+                    <a href="{% url 'connections:create' %}" class="btn btn-primary">
+                        <span>➕</span> Add New Connection
+                    </a>
+                {% endif %}
             </div>
         </div>
     {% endif %}

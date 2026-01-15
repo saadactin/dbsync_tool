@@ -210,19 +210,32 @@ if not DEBUG:
         'disable_existing_loggers': False,
         'formatters': {
             'verbose': {
-                'format': '{levelname} {asctime} {module} {message}',
+                'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
                 'style': '{',
+            },
+            'json': {
+                'format': '%(asctime)s %(name)s %(levelname)s %(message)s %(pathname)s %(lineno)d',
             },
         },
         'handlers': {
             'file': {
+                'level': 'INFO',
                 'class': 'logging.handlers.RotatingFileHandler',
                 'filename': BASE_DIR / 'logs' / 'dbsync.log',
                 'maxBytes': 1024 * 1024 * 10,  # 10 MB
                 'backupCount': 5,
                 'formatter': 'verbose',
             },
+            'rbac_audit': {
+                'level': 'INFO',
+                'class': 'logging.handlers.RotatingFileHandler',
+                'filename': BASE_DIR / 'logs' / 'rbac_audit.log',
+                'maxBytes': 1024 * 1024 * 10,  # 10 MB
+                'backupCount': 5,
+                'formatter': 'json',
+            },
             'console': {
+                'level': 'DEBUG',
                 'class': 'logging.StreamHandler',
                 'formatter': 'verbose',
             },
@@ -243,6 +256,36 @@ if not DEBUG:
                 'level': 'INFO',
                 'propagate': False,
             },
+            'accounts': {
+                'handlers': ['file', 'rbac_audit', 'console'],
+                'level': 'INFO',
+                'propagate': False,
+            },
+            'accounts.views': {
+                'handlers': ['file', 'rbac_audit', 'console'],
+                'level': 'INFO',
+                'propagate': False,
+            },
+            'accounts.services': {
+                'handlers': ['file', 'rbac_audit', 'console'],
+                'level': 'INFO',
+                'propagate': False,
+            },
+            'accounts.permissions': {
+                'handlers': ['file', 'rbac_audit', 'console'],
+                'level': 'WARNING',
+                'propagate': False,
+            },
+            'connections': {
+                'handlers': ['file', 'rbac_audit', 'console'],
+                'level': 'INFO',
+                'propagate': False,
+            },
+            'sync_jobs': {
+                'handlers': ['file', 'rbac_audit', 'console'],
+                'level': 'INFO',
+                'propagate': False,
+            },
         },
         'root': {
             'handlers': ['file', 'console'],
@@ -254,13 +297,59 @@ else:
     LOGGING = {
         'version': 1,
         'disable_existing_loggers': False,
+        'formatters': {
+            'verbose': {
+                'format': '{levelname} {asctime} {module} {message}',
+                'style': '{',
+            },
+        },
         'handlers': {
+            'file': {
+                'level': 'INFO',
+                'class': 'logging.handlers.RotatingFileHandler',
+                'filename': BASE_DIR / 'logs' / 'dbsync.log',
+                'maxBytes': 1024 * 1024 * 10,  # 10 MB
+                'backupCount': 5,
+                'formatter': 'verbose',
+            },
+            'rbac_audit': {
+                'level': 'INFO',
+                'class': 'logging.handlers.RotatingFileHandler',
+                'filename': BASE_DIR / 'logs' / 'rbac_audit.log',
+                'maxBytes': 1024 * 1024 * 10,  # 10 MB
+                'backupCount': 5,
+                'formatter': 'verbose',
+            },
             'console': {
+                'level': 'DEBUG',
                 'class': 'logging.StreamHandler',
+                'formatter': 'verbose',
+            },
+        },
+        'loggers': {
+            'accounts': {
+                'handlers': ['file', 'rbac_audit', 'console'],
+                'level': 'INFO',
+                'propagate': False,
+            },
+            'accounts.views': {
+                'handlers': ['file', 'rbac_audit', 'console'],
+                'level': 'INFO',
+                'propagate': False,
+            },
+            'accounts.services': {
+                'handlers': ['file', 'rbac_audit', 'console'],
+                'level': 'INFO',
+                'propagate': False,
+            },
+            'accounts.permissions': {
+                'handlers': ['file', 'rbac_audit', 'console'],
+                'level': 'WARNING',
+                'propagate': False,
             },
         },
         'root': {
-            'handlers': ['console'],
+            'handlers': ['file', 'console'],
             'level': 'INFO',
         },
     }

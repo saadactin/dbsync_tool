@@ -42,6 +42,15 @@ class SyncJob(models.Model):
         default='pending'
     )
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sync_jobs')
+    tenant = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='tenant_jobs',
+        null=True,  # Nullable initially
+        blank=True,
+        db_index=True,
+        help_text='Tenant (Admin user) who owns this job'
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     last_run_at = models.DateTimeField(null=True, blank=True)
@@ -53,6 +62,8 @@ class SyncJob(models.Model):
         indexes = [
             models.Index(fields=['status']),
             models.Index(fields=['created_by', 'status']),
+            models.Index(fields=['tenant']),
+            models.Index(fields=['tenant', 'status']),
         ]
     
     def __str__(self):
@@ -103,6 +114,15 @@ class SyncSchedule(models.Model):
         blank=True,
         help_text="Cron expression for custom schedules (e.g., '0 0 * * *' for daily at midnight)"
     )
+    tenant = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='tenant_schedules',
+        null=True,  # Nullable initially
+        blank=True,
+        db_index=True,
+        help_text='Tenant (Admin user) who owns this schedule'
+    )
     is_enabled = models.BooleanField(default=True)
     next_run_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -111,6 +131,16 @@ class SyncSchedule(models.Model):
     class Meta:
         db_table = 'sync_schedules'
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['tenant']),
+            models.Index(fields=['tenant', 'is_enabled']),
+        ]
+    
+    def save(self, *args, **kwargs):
+        """Set tenant from job if not set"""
+        if self.job and not self.tenant:
+            self.tenant = self.job.tenant
+        super().save(*args, **kwargs)
     
     def __str__(self):
         return f"Schedule for {self.job.name if self.job else 'Unknown'} ({self.get_schedule_type_display()})"

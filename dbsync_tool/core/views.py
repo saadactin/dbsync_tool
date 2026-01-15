@@ -2,6 +2,7 @@ from django.shortcuts import render
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
+from django.core.exceptions import PermissionDenied
 from core.monitoring import HealthCheckService, PerformanceMonitor
 
 
@@ -40,4 +41,19 @@ def performance_metrics(request):
     }
     
     return JsonResponse(metrics)
+
+
+def permission_denied_view(request, exception):
+    """Custom 403 error handler"""
+    return render(request, '403.html', {'exception': exception}, status=403)
+
+
+def page_not_found_view(request, exception):
+    """Custom 404 error handler"""
+    return render(request, '404.html', {'exception': exception}, status=404)
+
+
+def server_error_view(request):
+    """Custom 500 error handler"""
+    return render(request, '500.html', status=500)
 

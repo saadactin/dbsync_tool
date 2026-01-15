@@ -7,12 +7,17 @@ from django.urls import reverse_lazy
 from django.contrib import messages
 from django.http import JsonResponse
 from django.core.exceptions import PermissionDenied
+from django.utils import timezone
 import json
+import logging
+from accounts.permissions import ViewerReadOnlyMixin, OperatorOrAboveMixin
 from .models import DatabaseConnection
 from .forms import DatabaseConnectionForm
 from .services import test_database_connection
 from .connectors import get_connector
 from core.exceptions import DatabaseConnectionError, InvalidDatabaseTypeError
+
+logger = logging.getLogger('connections.views')
 
 
 class ConnectionListView(LoginRequiredMixin, ListView):
@@ -22,9 +27,9 @@ class ConnectionListView(LoginRequiredMixin, ListView):
     paginate_by = 20
     
     def get_queryset(self):
-        return DatabaseConnection.objects.filter(
-            created_by=self.request.user
-        ).select_related('created_by')
+        from accounts.services.tenant_service import TenantService
+        qs = DatabaseConnection.objects.all().select_related('created_by', 'tenant')
+        return TenantService.get_queryset_for_user(qs, self.request.user)
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -63,9 +68,9 @@ class ConnectionDetailView(LoginRequiredMixin, DetailView):
     context_object_name = 'connection'
     
     def get_queryset(self):
-        return DatabaseConnection.objects.filter(
-            created_by=self.request.user
-        ).select_related('created_by')
+        from accounts.services.tenant_service import TenantService
+        qs = DatabaseConnection.objects.all().select_related('created_by', 'tenant')
+        return TenantService.get_queryset_for_user(qs, self.request.user)
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -77,14 +82,56 @@ class ConnectionDetailView(LoginRequiredMixin, DetailView):
         return context
 
 
-class ConnectionCreateView(LoginRequiredMixin, CreateView):
+class ConnectionCreateView(ViewerReadOnlyMixin, OperatorOrAboveMixin, CreateView):
     model = DatabaseConnection
     form_class = DatabaseConnectionForm
     template_name = 'connections/connection_form.html'
     success_url = reverse_lazy('connections:list')
     
+    def _get_client_ip(self, request):
+        """Get client IP address from request"""
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0]
+        else:
+            ip = request.META.get('REMOTE_ADDR')
+        return ip
+    
     def form_valid(self, form):
-        form.instance.created_by = self.request.user
+        from accounts.services.tenant_service import TenantService
+        from django.core.exceptions import ValidationError
+        
+        instance = form.save(commit=False)
+        instance.created_by = self.request.user
+        instance.tenant = TenantService.get_user_tenant(self.request.user)
+        
+        # Validate tenant is not None (Super Admin shouldn't create data)
+        if instance.tenant is None:
+            messages.error(
+                self.request,
+                "Super Admin cannot create connections. Please use an Admin account."
+            )
+            return self.form_invalid(form)
+        
+        instance.save()
+        
+        logger.info(
+            'Connection created',
+            extra={
+                'event_type': 'connection_created',
+                'connection_id': instance.id,
+                'connection_name': instance.name,
+                'db_type': instance.db_type,
+                'tenant_id': instance.tenant.id if instance.tenant else None,
+                'tenant_username': instance.tenant.username if instance.tenant else None,
+                'created_by_id': self.request.user.id,
+                'created_by_username': self.request.user.username,
+                'created_by_role': self.request.user.userprofile.role,
+                'timestamp': timezone.now().isoformat(),
+                'ip_address': self._get_client_ip(self.request),
+            }
+        )
+        
         messages.success(self.request, f'Connection "{form.instance.name}" created successfully!')
         return super().form_valid(form)
     
@@ -93,18 +140,84 @@ class ConnectionCreateView(LoginRequiredMixin, CreateView):
         return super().form_invalid(form)
 
 
-class ConnectionUpdateView(LoginRequiredMixin, UpdateView):
+class ConnectionUpdateView(ViewerReadOnlyMixin, OperatorOrAboveMixin, UpdateView):
     model = DatabaseConnection
     form_class = DatabaseConnectionForm
     template_name = 'connections/connection_form.html'
     success_url = reverse_lazy('connections:list')
     
+    def _get_client_ip(self, request):
+        """Get client IP address from request"""
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0]
+        else:
+            ip = request.META.get('REMOTE_ADDR')
+        return ip
+    
     def get_queryset(self):
-        return DatabaseConnection.objects.filter(
-            created_by=self.request.user
-        )
+        from accounts.services.tenant_service import TenantService
+        qs = DatabaseConnection.objects.all().select_related('created_by', 'tenant')
+        return TenantService.get_queryset_for_user(qs, self.request.user)
+    
+    def dispatch(self, request, *args, **kwargs):
+        from accounts.services.tenant_service import TenantService
+        obj = self.get_object()
+        if not TenantService.can_user_manage_tenant(request.user, obj.tenant):
+            logger.warning(
+                'Cross-tenant connection update attempt',
+                extra={
+                    'event_type': 'cross_tenant_update_blocked',
+                    'connection_id': obj.id,
+                    'connection_name': obj.name,
+                    'connection_tenant_id': obj.tenant.id,
+                    'user_id': request.user.id,
+                    'username': request.user.username,
+                    'user_role': request.user.userprofile.role,
+                    'path': request.path,
+                    'ip_address': self._get_client_ip(request),
+                    'timestamp': timezone.now().isoformat(),
+                }
+            )
+            raise PermissionDenied("You don't have permission to modify this connection.")
+        return super().dispatch(request, *args, **kwargs)
     
     def form_valid(self, form):
+        instance = form.save(commit=False)
+        
+        # Double-check: Verify tenant hasn't changed
+        original_tenant = self.get_object().tenant
+        if instance.tenant != original_tenant:
+            logger.warning(
+                'Tenant change attempt blocked',
+                extra={
+                    'event_type': 'tenant_change_blocked',
+                    'connection_id': instance.id,
+                    'original_tenant_id': original_tenant.id,
+                    'attempted_tenant_id': instance.tenant.id if instance.tenant else None,
+                    'user_id': self.request.user.id,
+                    'timestamp': timezone.now().isoformat(),
+                }
+            )
+            messages.error(self.request, 'Cannot change tenant of existing connection.')
+            instance.tenant = original_tenant
+        
+        instance.save()
+        
+        logger.info(
+            'Connection updated',
+            extra={
+                'event_type': 'connection_updated',
+                'connection_id': instance.id,
+                'connection_name': instance.name,
+                'tenant_id': instance.tenant.id if instance.tenant else None,
+                'updated_by_id': self.request.user.id,
+                'updated_by_username': self.request.user.username,
+                'timestamp': timezone.now().isoformat(),
+                'ip_address': self._get_client_ip(self.request),
+            }
+        )
+        
         messages.success(self.request, f'Connection "{form.instance.name}" updated successfully!')
         return super().form_valid(form)
     
@@ -113,29 +226,80 @@ class ConnectionUpdateView(LoginRequiredMixin, UpdateView):
         return super().form_invalid(form)
 
 
-class ConnectionDeleteView(LoginRequiredMixin, DeleteView):
+class ConnectionDeleteView(ViewerReadOnlyMixin, OperatorOrAboveMixin, DeleteView):
     model = DatabaseConnection
     template_name = 'connections/connection_confirm_delete.html'
     success_url = reverse_lazy('connections:list')
     
+    def _get_client_ip(self, request):
+        """Get client IP address from request"""
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0]
+        else:
+            ip = request.META.get('REMOTE_ADDR')
+        return ip
+    
     def get_queryset(self):
-        return DatabaseConnection.objects.filter(
-            created_by=self.request.user
-        )
+        from accounts.services.tenant_service import TenantService
+        qs = DatabaseConnection.objects.all().select_related('created_by', 'tenant')
+        return TenantService.get_queryset_for_user(qs, self.request.user)
+    
+    def dispatch(self, request, *args, **kwargs):
+        from accounts.services.tenant_service import TenantService
+        obj = self.get_object()
+        if not TenantService.can_user_manage_tenant(request.user, obj.tenant):
+            logger.warning(
+                'Cross-tenant connection delete attempt',
+                extra={
+                    'event_type': 'cross_tenant_delete_blocked',
+                    'connection_id': obj.id,
+                    'connection_name': obj.name,
+                    'connection_tenant_id': obj.tenant.id,
+                    'user_id': request.user.id,
+                    'username': request.user.username,
+                    'user_role': request.user.userprofile.role,
+                    'path': request.path,
+                    'ip_address': self._get_client_ip(request),
+                    'timestamp': timezone.now().isoformat(),
+                }
+            )
+            raise PermissionDenied("You don't have permission to delete this connection.")
+        return super().dispatch(request, *args, **kwargs)
     
     def delete(self, request, *args, **kwargs):
         connection = self.get_object()
-        messages.success(request, f'Connection "{connection.name}" deleted successfully!')
-        return super().delete(request, *args, **kwargs)
+        connection_id = connection.id
+        connection_name = connection.name
+        tenant_id = connection.tenant.id if connection.tenant else None
+        
+        result = super().delete(request, *args, **kwargs)
+        
+        logger.info(
+            'Connection deleted',
+            extra={
+                'event_type': 'connection_deleted',
+                'connection_id': connection_id,
+                'connection_name': connection_name,
+                'tenant_id': tenant_id,
+                'deleted_by_id': request.user.id,
+                'deleted_by_username': request.user.username,
+                'timestamp': timezone.now().isoformat(),
+                'ip_address': self._get_client_ip(request),
+            }
+        )
+        
+        messages.success(request, f'Connection "{connection_name}" deleted successfully!')
+        return result
 
 
 class ConnectionTestView(LoginRequiredMixin, View):
     def post(self, request, pk):
+        from accounts.services.tenant_service import TenantService
         try:
-            connection = DatabaseConnection.objects.get(
-                pk=pk,
-                created_by=request.user
-            )
+            qs = DatabaseConnection.objects.filter(pk=pk)
+            qs = TenantService.get_queryset_for_user(qs, request.user)
+            connection = qs.get()
         except DatabaseConnection.DoesNotExist:
             return JsonResponse({
                 'success': False,

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Access Denied{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-danger text-white">
+                    <h4 class="mb-0">Access Denied</h4>
+                </div>
+                <div class="card-body">
+                    <p class="lead">You don't have permission to access this resource.</p>
+                    
+                    {% if user.is_authenticated %}
+                        <p>Your current role: <strong>{{ user.userprofile.get_role_display }}</strong></p>
+                        
+                        {% if user.userprofile.is_viewer %}
+                            <div class="alert alert-info">
+                                <strong>Note:</strong> Viewers have read-only access. You cannot perform write operations (create, update, delete).
+                            </div>
+                        {% endif %}
+                    {% endif %}
+                    
+                    <div class="mt-4">
+                        <a href="{% url 'sync_jobs:dashboard' %}" class="btn btn-primary">Go to Dashboard</a>
+                        <a href="javascript:history.back()" class="btn btn-secondary">Go Back</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

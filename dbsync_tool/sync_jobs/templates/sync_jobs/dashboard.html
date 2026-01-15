@@ -45,6 +45,16 @@
 
 {% block content %}
 <div class="container-fluid">
+    {% if is_super_admin %}
+        <div class="alert alert-info">
+            <strong>Super Admin View:</strong> You are viewing aggregated statistics across all tenants.
+        </div>
+    {% elif is_admin %}
+        <div class="alert alert-info">
+            <strong>Admin View:</strong> You are viewing statistics for your tenant only.
+        </div>
+    {% endif %}
+    
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h1>Dashboard</h1>
         <div class="quick-actions">

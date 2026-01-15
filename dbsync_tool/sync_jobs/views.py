@@ -9,6 +9,7 @@ from django.http import JsonResponse, Http404
 from django.views.decorators.http import require_http_methods
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, DatabaseError
+from functools import wraps
 from datetime import datetime, timedelta
 from django.utils import timezone
 from connections.models import DatabaseConnection
@@ -18,14 +19,48 @@ from .models import SyncJob, SyncJobTable, SyncSchedule, SyncCheckpoint, SyncExe
 logger = logging.getLogger(__name__)
 
 
+def viewer_read_only_required(view_func):
+    """
+    Decorator to prevent Viewer from accessing write operations
+    """
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        if request.user.is_authenticated:
+            try:
+                profile = request.user.userprofile
+                if profile.is_viewer() and request.method in ['POST', 'PUT', 'PATCH', 'DELETE']:
+                    logger.warning(
+                        'Viewer attempted write operation',
+                        extra={
+                            'event_type': 'viewer_write_blocked',
+                            'user_id': request.user.id,
+                            'username': request.user.username,
+                            'method': request.method,
+                            'path': request.path,
+                            'timestamp': timezone.now().isoformat(),
+                        }
+                    )
+                    raise PermissionDenied("Viewers have read-only access. This operation is not allowed.")
+            except AttributeError:
+                pass  # UserProfile doesn't exist, let other decorators handle it
+        
+        return view_func(request, *args, **kwargs)
+    return wrapper
+
+
 @login_required
 def dashboard(request):
     """
     Enhanced dashboard with comprehensive statistics
+    Role-based dashboard display
     """
     from sync_jobs.services import DashboardService
+    from accounts.models import UserProfile
     
     try:
+        # Get user profile for role information
+        profile = request.user.userprofile
+        
         # Get comprehensive statistics
         stats = DashboardService.get_user_statistics(request.user)
         
@@ -44,6 +79,9 @@ def dashboard(request):
             'trends': trends,
             'top_jobs': top_jobs,
             'recent_activity': recent_activity,
+            'user_role': profile.role,  # For template display
+            'is_super_admin': profile.is_super_admin(),
+            'is_admin': profile.is_admin(),
         }
         
         return render(request, 'sync_jobs/dashboard.html', context)
@@ -59,10 +97,12 @@ def job_list(request):
     Enhanced list view with filtering, sorting, and search
     """
     try:
+        from accounts.services.tenant_service import TenantService
         # Get jobs with proper relationships
-        jobs = SyncJob.objects.filter(created_by=request.user).select_related(
-            'source_connection', 'target_connection', 'schedule'
+        jobs = SyncJob.objects.all().select_related(
+            'source_connection', 'target_connection', 'schedule', 'tenant'
         ).prefetch_related('tables')
+        jobs = TenantService.get_queryset_for_user(jobs, request.user)
         
         # Filter by status
         status_filter = request.GET.get('status', '')
@@ -92,10 +132,13 @@ def job_list(request):
         
         # Get statistics
         try:
-            total_jobs = SyncJob.objects.filter(created_by=request.user).count()
-            pending_count = SyncJob.objects.filter(created_by=request.user, status='pending').count()
-            running_count = SyncJob.objects.filter(created_by=request.user, status='running').count()
-            failed_count = SyncJob.objects.filter(created_by=request.user, status='failed').count()
+            from accounts.services.tenant_service import TenantService
+            all_jobs_qs = SyncJob.objects.all()
+            user_jobs_qs = TenantService.get_queryset_for_user(all_jobs_qs, request.user)
+            total_jobs = user_jobs_qs.count()
+            pending_count = user_jobs_qs.filter(status='pending').count()
+            running_count = user_jobs_qs.filter(status='running').count()
+            failed_count = user_jobs_qs.filter(status='failed').count()
         except DatabaseError as e:
             logger.error(f"Database error while fetching job statistics: {str(e)}")
             total_jobs = pending_count = running_count = failed_count = 0
@@ -181,17 +224,12 @@ def create_job_step1_view(request):
                 messages.error(request, error)
         else:
             # Validate connections exist and belong to user
+            from accounts.services.tenant_service import TenantService
             try:
-                source_connection = DatabaseConnection.objects.get(
-                    id=source_connection_id,
-                    created_by=request.user,
-                    is_active=True
-                )
-                target_connection = DatabaseConnection.objects.get(
-                    id=target_connection_id,
-                    created_by=request.user,
-                    is_active=True
-                )
+                conn_qs = DatabaseConnection.objects.filter(is_active=True)
+                user_conns = TenantService.get_queryset_for_user(conn_qs, request.user)
+                source_connection = user_conns.get(id=source_connection_id)
+                target_connection = user_conns.get(id=target_connection_id)
                 
                 # Store in session for step 2
                 request.session['sync_job_name'] = job_name
@@ -205,10 +243,9 @@ def create_job_step1_view(request):
                 messages.error(request, 'Selected connection not found or inactive.')
     
     # Get user's active connections
-    connections = DatabaseConnection.objects.filter(
-        created_by=request.user,
-        is_active=True
-    ).order_by('name')
+    from accounts.services.tenant_service import TenantService
+    connections_qs = DatabaseConnection.objects.filter(is_active=True).order_by('name')
+    connections = TenantService.get_queryset_for_user(connections_qs, request.user)
     
     context = {
         'connections': connections,
@@ -236,12 +273,11 @@ def create_job_step2_view(request):
         messages.error(request, 'Please complete Step 1 first.')
         return redirect('sync_jobs:create_step1')
     
+    from accounts.services.tenant_service import TenantService
     try:
-        source_connection = DatabaseConnection.objects.get(
-            id=source_connection_id,
-            created_by=request.user,
-            is_active=True
-        )
+        conn_qs = DatabaseConnection.objects.filter(is_active=True)
+        user_conns = TenantService.get_queryset_for_user(conn_qs, request.user)
+        source_connection = user_conns.get(id=source_connection_id)
     except DatabaseConnection.DoesNotExist:
         messages.error(request, 'Source connection not found or inactive.')
         return redirect('sync_jobs:create_step1')
@@ -268,12 +304,11 @@ def create_job_step2_load_metadata(request):
             'error': 'Connection ID required'
         }, status=400)
     
+    from accounts.services.tenant_service import TenantService
     try:
-        connection = DatabaseConnection.objects.get(
-            id=source_connection_id,
-            created_by=request.user,
-            is_active=True
-        )
+        conn_qs = DatabaseConnection.objects.filter(is_active=True)
+        user_conns = TenantService.get_queryset_for_user(conn_qs, request.user)
+        connection = user_conns.get(id=source_connection_id)
     except DatabaseConnection.DoesNotExist:
         return JsonResponse({
             'success': False,
@@ -295,6 +330,7 @@ def create_job_step2_load_metadata(request):
 
 
 @login_required
+@viewer_read_only_required
 def create_job_step2_submit(request):
     """
     Handle Step 2 form submission
@@ -348,12 +384,11 @@ def create_job_step3_view(request):
         messages.error(request, 'Please complete previous steps first.')
         return redirect('sync_jobs:create_step1')
     
+    from accounts.services.tenant_service import TenantService
     try:
-        source_connection = DatabaseConnection.objects.get(
-            id=source_connection_id,
-            created_by=request.user,
-            is_active=True
-        )
+        conn_qs = DatabaseConnection.objects.filter(is_active=True)
+        user_conns = TenantService.get_queryset_for_user(conn_qs, request.user)
+        source_connection = user_conns.get(id=source_connection_id)
     except DatabaseConnection.DoesNotExist:
         messages.error(request, 'Source connection not found.')
         return redirect('sync_jobs:create_step1')
@@ -403,6 +438,7 @@ def create_job_step3_view(request):
 
 
 @login_required
+@viewer_read_only_required
 def create_job_step3_submit(request):
     """
     Handle Step 3 form submission and create the sync job
@@ -456,16 +492,11 @@ def create_job_step3_submit(request):
     
     try:
         # Get connections
-        source_connection = DatabaseConnection.objects.get(
-            id=source_connection_id,
-            created_by=request.user,
-            is_active=True
-        )
-        target_connection = DatabaseConnection.objects.get(
-            id=target_connection_id,
-            created_by=request.user,
-            is_active=True
-        )
+        from accounts.services.tenant_service import TenantService
+        conn_qs = DatabaseConnection.objects.filter(is_active=True)
+        user_conns = TenantService.get_queryset_for_user(conn_qs, request.user)
+        source_connection = user_conns.get(id=source_connection_id)
+        target_connection = user_conns.get(id=target_connection_id)
         
         # Calculate next_run_at based on schedule
         next_run_at = None
@@ -504,6 +535,18 @@ def create_job_step3_submit(request):
                     days_until_monday = 0
                 next_run_at += timedelta(days=days_until_monday)
         
+        # Get tenant for the job
+        from accounts.services.tenant_service import TenantService
+        tenant = TenantService.get_user_tenant(request.user)
+        
+        # Validate tenant is not None (Super Admin shouldn't create data)
+        if tenant is None:
+            messages.error(
+                request,
+                "Super Admin cannot create jobs. Please use an Admin account."
+            )
+            return redirect('sync_jobs:create_step1')
+        
         # Create SyncJob
         sync_job = SyncJob.objects.create(
             name=job_name,
@@ -512,6 +555,7 @@ def create_job_step3_submit(request):
             sync_type=sync_type,
             status='pending',
             created_by=request.user,
+            tenant=tenant,
             next_run_at=next_run_at
         )
         
@@ -532,6 +576,7 @@ def create_job_step3_submit(request):
         try:
             schedule = SyncSchedule.objects.create(
                 job=sync_job,
+                tenant=sync_job.tenant,  # Inherit from job
                 schedule_type=schedule_type,
                 cron_expression=cron_expression if schedule_type == 'custom' else None,
                 is_enabled=True,
@@ -636,13 +681,13 @@ def create_job_step3_submit(request):
 @login_required
 def job_detail(request, job_id):
     """Detailed view for a sync job with execution history"""
+    from accounts.services.tenant_service import TenantService
     try:
-        job = SyncJob.objects.select_related(
-            'source_connection', 'target_connection', 'schedule', 'created_by'
-        ).prefetch_related('tables', 'checkpoints').get(
-            id=job_id,
-            created_by=request.user
-        )
+        jobs_qs = SyncJob.objects.select_related(
+            'source_connection', 'target_connection', 'schedule', 'created_by', 'tenant'
+        ).prefetch_related('tables', 'checkpoints')
+        user_jobs = TenantService.get_queryset_for_user(jobs_qs, request.user)
+        job = user_jobs.get(id=job_id)
     except SyncJob.DoesNotExist:
         messages.error(request, 'Sync job not found.')
         logger.warning(f"User {request.user.username} attempted to access non-existent job {job_id}")
@@ -708,16 +753,26 @@ def job_detail(request, job_id):
 
 
 @login_required
+@viewer_read_only_required
 def job_delete(request, job_id):
     """
     Delete a sync job (with confirmation)
     """
+    from accounts.services.tenant_service import TenantService
     try:
-        job = SyncJob.objects.get(id=job_id, created_by=request.user)
+        jobs_qs = SyncJob.objects.all()
+        user_jobs = TenantService.get_queryset_for_user(jobs_qs, request.user)
+        job = user_jobs.get(id=job_id)
+        
+        # Verify tenant ownership
+        if not TenantService.can_user_manage_tenant(request.user, job.tenant):
+            raise PermissionDenied("You don't have permission to delete this job.")
     except SyncJob.DoesNotExist:
         messages.error(request, 'Sync job not found.')
         logger.warning(f"User {request.user.username} attempted to delete non-existent job {job_id}")
         return redirect('sync_jobs:list')
+    except PermissionDenied:
+        raise
     except Exception as e:
         logger.error(f"Error fetching job for deletion: {str(e)}", exc_info=True)
         messages.error(request, 'An error occurred while loading the job.')
@@ -754,12 +809,16 @@ def job_delete(request, job_id):
 
 
 @login_required
+@viewer_read_only_required
 def job_pause(request, job_id):
     """
     Pause a sync job
     """
+    from accounts.services.tenant_service import TenantService
     try:
-        job = SyncJob.objects.get(id=job_id, created_by=request.user)
+        jobs_qs = SyncJob.objects.all()
+        user_jobs = TenantService.get_queryset_for_user(jobs_qs, request.user)
+        job = user_jobs.get(id=job_id)
     except SyncJob.DoesNotExist:
         messages.error(request, 'Sync job not found.')
         logger.warning(f"User {request.user.username} attempted to pause non-existent job {job_id}")
@@ -800,12 +859,16 @@ def job_pause(request, job_id):
 
 
 @login_required
+@viewer_read_only_required
 def job_resume(request, job_id):
     """
     Resume a paused sync job
     """
+    from accounts.services.tenant_service import TenantService
     try:
-        job = SyncJob.objects.get(id=job_id, created_by=request.user)
+        jobs_qs = SyncJob.objects.all()
+        user_jobs = TenantService.get_queryset_for_user(jobs_qs, request.user)
+        job = user_jobs.get(id=job_id)
     except SyncJob.DoesNotExist:
         messages.error(request, 'Sync job not found.')
         logger.warning(f"User {request.user.username} attempted to resume non-existent job {job_id}")
@@ -848,12 +911,16 @@ def job_resume(request, job_id):
 
 
 @login_required
+@viewer_read_only_required
 def update_schedule(request, job_id):
     """
     Update schedule for a sync job
     """
+    from accounts.services.tenant_service import TenantService
     try:
-        job = SyncJob.objects.get(id=job_id, created_by=request.user)
+        jobs_qs = SyncJob.objects.all()
+        user_jobs = TenantService.get_queryset_for_user(jobs_qs, request.user)
+        job = user_jobs.get(id=job_id)
     except SyncJob.DoesNotExist:
         messages.error(request, 'Sync job not found.')
         return redirect('sync_jobs:list')
@@ -915,6 +982,7 @@ def update_schedule(request, job_id):
 
 
 @login_required
+@viewer_read_only_required
 def job_edit(request, job_id):
     """
     Edit sync job configuration
@@ -924,16 +992,22 @@ def job_edit(request, job_id):
     - Schedule configuration
     - Table incremental columns (if incremental)
     """
+    from accounts.services.tenant_service import TenantService
     try:
-        job = SyncJob.objects.select_related(
-            'source_connection', 'target_connection', 'schedule'
-        ).prefetch_related('tables').get(
-            id=job_id,
-            created_by=request.user
-        )
+        jobs_qs = SyncJob.objects.select_related(
+            'source_connection', 'target_connection', 'schedule', 'tenant'
+        ).prefetch_related('tables')
+        user_jobs = TenantService.get_queryset_for_user(jobs_qs, request.user)
+        job = user_jobs.get(id=job_id)
+        
+        # Verify tenant ownership
+        if not TenantService.can_user_manage_tenant(request.user, job.tenant):
+            raise PermissionDenied("You don't have permission to edit this job.")
     except SyncJob.DoesNotExist:
         messages.error(request, 'Sync job not found.')
         return redirect('sync_jobs:list')
+    except PermissionDenied:
+        raise
     
     if job.status == 'running':
         messages.error(request, 'Cannot edit a running job. Please wait for it to complete.')
@@ -1129,10 +1203,14 @@ def job_edit(request, job_id):
 
 
 @login_required
+@viewer_read_only_required
 def job_run_now(request, job_id):
     """Trigger immediate execution of a sync job"""
+    from accounts.services.tenant_service import TenantService
     try:
-        job = SyncJob.objects.get(id=job_id, created_by=request.user)
+        jobs_qs = SyncJob.objects.all()
+        user_jobs = TenantService.get_queryset_for_user(jobs_qs, request.user)
+        job = user_jobs.get(id=job_id)
     except SyncJob.DoesNotExist:
         messages.error(request, 'Sync job not found.')
         logger.warning(f"User {request.user.username} attempted to run non-existent job {job_id}")
@@ -1194,8 +1272,11 @@ def job_run_now(request, job_id):
 @login_required
 def execution_detail(request, job_id, execution_id):
     """Detailed view for a sync execution with per-table logs"""
+    from accounts.services.tenant_service import TenantService
     try:
-        job = SyncJob.objects.get(id=job_id, created_by=request.user)
+        jobs_qs = SyncJob.objects.all()
+        user_jobs = TenantService.get_queryset_for_user(jobs_qs, request.user)
+        job = user_jobs.get(id=job_id)
         execution = SyncExecution.objects.prefetch_related(
             'logs'
         ).select_related('job').get(
@@ -1260,8 +1341,11 @@ def execution_detail(request, job_id, execution_id):
 @require_http_methods(["GET"])
 def execution_status_api(request, job_id, execution_id):
     """API endpoint for real-time execution status updates"""
+    from accounts.services.tenant_service import TenantService
     try:
-        job = SyncJob.objects.get(id=job_id, created_by=request.user)
+        jobs_qs = SyncJob.objects.all()
+        user_jobs = TenantService.get_queryset_for_user(jobs_qs, request.user)
+        job = user_jobs.get(id=job_id)
         execution = SyncExecution.objects.prefetch_related('logs').get(
             id=execution_id,
             job=job
@@ -1328,10 +1412,14 @@ def execution_status_api(request, job_id, execution_id):
 
 
 @login_required
+@viewer_read_only_required
 def reset_checkpoint(request, job_id, schema_name, table_name):
     """Reset checkpoint for a table"""
+    from accounts.services.tenant_service import TenantService
     try:
-        job = SyncJob.objects.get(id=job_id, created_by=request.user)
+        jobs_qs = SyncJob.objects.all()
+        user_jobs = TenantService.get_queryset_for_user(jobs_qs, request.user)
+        job = user_jobs.get(id=job_id)
     except SyncJob.DoesNotExist:
         messages.error(request, 'Sync job not found.')
         logger.warning(f"User {request.user.username} attempted to reset checkpoint for non-existent job {job_id}")
@@ -1362,8 +1450,11 @@ def reset_checkpoint(request, job_id, schema_name, table_name):
 @require_http_methods(["GET"])
 def view_checkpoints(request, job_id):
     """View all checkpoints for a job (API endpoint)"""
+    from accounts.services.tenant_service import TenantService
     try:
-        job = SyncJob.objects.get(id=job_id, created_by=request.user)
+        jobs_qs = SyncJob.objects.all()
+        user_jobs = TenantService.get_queryset_for_user(jobs_qs, request.user)
+        job = user_jobs.get(id=job_id)
     except SyncJob.DoesNotExist:
         return JsonResponse({'error': 'Job not found'}, status=404)
     except Exception as e:
@@ -1389,8 +1480,11 @@ def view_checkpoints(request, job_id):
 @login_required
 def job_report(request, job_id):
     """Generate and display job report"""
+    from accounts.services.tenant_service import TenantService
     try:
-        job = SyncJob.objects.get(id=job_id, created_by=request.user)
+        jobs_qs = SyncJob.objects.all()
+        user_jobs = TenantService.get_queryset_for_user(jobs_qs, request.user)
+        job = user_jobs.get(id=job_id)
     except SyncJob.DoesNotExist:
         messages.error(request, 'Job not found.')
         return redirect('sync_jobs:list')
@@ -1465,6 +1559,7 @@ def user_report(request):
 
 
 @login_required
+@viewer_read_only_required
 @require_http_methods(["POST"])
 def bulk_pause(request):
     """Pause multiple jobs"""
@@ -1473,10 +1568,9 @@ def bulk_pause(request):
         messages.error(request, 'No jobs selected.')
         return redirect('sync_jobs:list')
     
-    jobs = SyncJob.objects.filter(
-        id__in=job_ids,
-        created_by=request.user
-    )
+    from accounts.services.tenant_service import TenantService
+    jobs_qs = SyncJob.objects.filter(id__in=job_ids)
+    jobs = TenantService.get_queryset_for_user(jobs_qs, request.user)
     count = 0
     for job in jobs:
         if job.status != 'paused' and job.status != 'running':
@@ -1493,6 +1587,7 @@ def bulk_pause(request):
 
 
 @login_required
+@viewer_read_only_required
 @require_http_methods(["POST"])
 def bulk_resume(request):
     """Resume multiple jobs"""
@@ -1501,10 +1596,9 @@ def bulk_resume(request):
         messages.error(request, 'No jobs selected.')
         return redirect('sync_jobs:list')
     
-    jobs = SyncJob.objects.filter(
-        id__in=job_ids,
-        created_by=request.user
-    )
+    from accounts.services.tenant_service import TenantService
+    jobs_qs = SyncJob.objects.filter(id__in=job_ids)
+    jobs = TenantService.get_queryset_for_user(jobs_qs, request.user)
     count = 0
     from scheduler.utils import schedule_job_execution
     for job in jobs:
@@ -1526,6 +1620,7 @@ def bulk_resume(request):
 
 
 @login_required
+@viewer_read_only_required
 @require_http_methods(["POST"])
 def bulk_delete(request):
     """Delete multiple jobs"""
@@ -1534,10 +1629,9 @@ def bulk_delete(request):
         messages.error(request, 'No jobs selected.')
         return redirect('sync_jobs:list')
     
-    jobs = SyncJob.objects.filter(
-        id__in=job_ids,
-        created_by=request.user
-    )
+    from accounts.services.tenant_service import TenantService
+    jobs_qs = SyncJob.objects.filter(id__in=job_ids)
+    jobs = TenantService.get_queryset_for_user(jobs_qs, request.user)
     count = jobs.count()
     jobs.delete()
     
