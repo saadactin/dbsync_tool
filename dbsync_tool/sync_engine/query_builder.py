@@ -1,7 +1,7 @@
 """
 Query building utilities for different database types
 """
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict
 from connections.connectors.base import DBConnector
 from sync_engine.exceptions import QueryBuilderError
 import logging
@@ -41,7 +41,8 @@ class QueryBuilder:
         order_by: Optional[str] = None,
         where_clause: Optional[str] = None,
         limit: Optional[int] = None,
-        offset: Optional[int] = None
+        offset: Optional[int] = None,
+        column_transformations: Optional[Dict[str, str]] = None
     ) -> str:
         """
         Build SELECT query based on database type
@@ -55,6 +56,7 @@ class QueryBuilder:
             where_clause: WHERE clause
             limit: LIMIT value
             offset: OFFSET value
+            column_transformations: Optional dict mapping column_name -> transformation_type
             
         Returns:
             SQL query string
@@ -71,16 +73,21 @@ class QueryBuilder:
         else:
             schema_part = f'{schema}.{table}'
         
-        # Build column list
+        # Build column list with transformations if provided
         if columns:
-            if db_type == 'postgres':
-                col_list = ', '.join(f'"{col}"' for col in columns)
-            elif db_type == 'mysql':
-                col_list = ', '.join(f'`{col}`' for col in columns)
-            elif db_type == 'sqlserver':
-                col_list = ', '.join(f'[{col}]' for col in columns)
+            if column_transformations:
+                col_list = QueryBuilder.apply_column_transformations(
+                    columns, column_transformations, db_type
+                )
             else:
-                col_list = ', '.join(columns)
+                if db_type == 'postgres':
+                    col_list = ', '.join(f'"{col}"' for col in columns)
+                elif db_type == 'mysql':
+                    col_list = ', '.join(f'`{col}`' for col in columns)
+                elif db_type == 'sqlserver':
+                    col_list = ', '.join(f'[{col}]' for col in columns)
+                else:
+                    col_list = ', '.join(columns)
         else:
             col_list = '*'
         
@@ -312,4 +319,86 @@ class QueryBuilder:
             col = column
         
         return f'SELECT MAX({col}) FROM {schema_part}'
+    
+    @staticmethod
+    def apply_column_transformations(
+        columns: List[str],
+        transformations: Dict[str, str],
+        db_type: str
+    ) -> str:
+        """
+        Apply column transformations to column list for SELECT clause
+        
+        Args:
+            columns: List of column names
+            transformations: Dict mapping column_name -> transformation_type
+            db_type: Database type ('postgres', 'mysql', 'sqlserver')
+            
+        Returns:
+            Formatted SELECT clause with transformations applied
+            
+        Example:
+            columns = ['name', 'email']
+            transformations = {'name': 'TRIM', 'email': 'UPPER'}
+            db_type = 'postgres'
+            Returns: 'TRIM("name") AS "name", UPPER("email") AS "email"'
+        """
+        ALLOWED_TRANSFORMATIONS = {'TRIM', 'UPPER', 'LOWER'}
+        
+        transformed_cols = []
+        for col in columns:
+            if col in transformations:
+                transformation = transformations[col].upper()
+                if transformation not in ALLOWED_TRANSFORMATIONS:
+                    # Invalid transformation, use original column
+                    logger.warning(f"Invalid transformation '{transformation}' for column '{col}', using original")
+                    if db_type == 'postgres':
+                        transformed_cols.append(f'"{col}"')
+                    elif db_type == 'mysql':
+                        transformed_cols.append(f'`{col}`')
+                    elif db_type == 'sqlserver':
+                        transformed_cols.append(f'[{col}]')
+                    else:
+                        transformed_cols.append(col)
+                    continue
+                
+                # Quote column based on DB type
+                if db_type == 'postgres':
+                    quoted_col = f'"{col}"'
+                elif db_type == 'mysql':
+                    quoted_col = f'`{col}`'
+                elif db_type == 'sqlserver':
+                    quoted_col = f'[{col}]'
+                else:
+                    quoted_col = col
+                
+                # Apply transformation
+                if transformation == 'TRIM':
+                    if db_type == 'sqlserver':
+                        # SQL Server uses LTRIM(RTRIM())
+                        transformed = f'LTRIM(RTRIM({quoted_col}))'
+                    else:
+                        # PostgreSQL and MySQL use TRIM()
+                        transformed = f'TRIM({quoted_col})'
+                elif transformation == 'UPPER':
+                    transformed = f'UPPER({quoted_col})'
+                elif transformation == 'LOWER':
+                    transformed = f'LOWER({quoted_col})'
+                else:
+                    transformed = quoted_col
+                
+                # Add AS clause to preserve column name
+                transformed_cols.append(f'{transformed} AS {quoted_col}')
+            else:
+                # No transformation, use original with proper quoting
+                if db_type == 'postgres':
+                    transformed_cols.append(f'"{col}"')
+                elif db_type == 'mysql':
+                    transformed_cols.append(f'`{col}`')
+                elif db_type == 'sqlserver':
+                    transformed_cols.append(f'[{col}]')
+                else:
+                    transformed_cols.append(col)
+        
+        return ', '.join(transformed_cols)
 

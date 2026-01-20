@@ -169,3 +169,4 @@ class ExecutionViewsTestCase(TestCase):
         self.assertIn('Duration', response.content.decode())
 
 
+

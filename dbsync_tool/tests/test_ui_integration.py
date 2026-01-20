@@ -105,3 +105,4 @@ class EndToEndUITests(UserManagementUITestCase):
         connection_names = [conn.name for conn in connections]
         self.assertIn('Admin A Private Connection', connection_names)
 
+

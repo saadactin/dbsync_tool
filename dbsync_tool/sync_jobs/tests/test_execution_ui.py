@@ -143,3 +143,4 @@ class ExecutionUITestCase(TestCase):
             self.assertNotIn('initializeExecutionUpdates', content)
 
 
+

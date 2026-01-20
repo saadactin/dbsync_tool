@@ -83,6 +83,19 @@ class SyncJobTable(models.Model):
     is_enabled = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     
+    # Transformation fields (Phase 1)
+    transformation_query = models.TextField(
+        null=True,
+        blank=True,
+        help_text="WHERE clause for data filtering (e.g., \"date_col >= '2010-01-01'\")"
+    )
+    column_transformations = models.JSONField(
+        default=dict,
+        null=True,
+        blank=True,
+        help_text="Column-level transformations (e.g., {\"name\": \"TRIM\", \"email\": \"UPPER\"})"
+    )
+    
     class Meta:
         db_table = 'sync_job_tables'
         unique_together = [['job', 'schema_name', 'table_name']]

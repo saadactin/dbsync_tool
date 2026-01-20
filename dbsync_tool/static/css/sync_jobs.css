@@ -49,6 +49,40 @@
     background-color: #e9ecef !important;
 }
 
+/* Transformation panel styles */
+.transformation-panel {
+    margin-left: 30px;
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+}
+
+.transformation-panel h6 {
+    color: #495057;
+    font-weight: 600;
+}
+
+.transform-row {
+    padding: 8px;
+    background-color: white;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+}
+
+.transform-btn {
+    font-size: 12px;
+    padding: 2px 8px;
+}
+
+.transform-message {
+    font-size: 13px;
+}
+
+.column-transforms-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
 .expand-icon {
     display: inline-block;
     transition: transform 0.2s;

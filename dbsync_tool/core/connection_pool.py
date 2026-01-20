@@ -24,9 +24,9 @@ class ConnectionPool:
     def __init__(
         self,
         max_size: int = 10,
-        connection_timeout: int = 3,
+        connection_timeout: int = 30,  # Increased from 3 to 30 seconds
         idle_timeout: int = 60,
-        query_timeout: int = 5
+        query_timeout: int = 30  # Increased from 5 to 30 seconds for slow databases
     ):
         """
         Initialize connection pool

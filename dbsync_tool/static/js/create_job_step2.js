@@ -52,8 +52,12 @@ document.addEventListener('DOMContentLoaded', function() {
     // Get connection ID from global variable set in template
     const connectionId = typeof SOURCE_CONNECTION_ID !== 'undefined' ? SOURCE_CONNECTION_ID : null;
     
+    console.log('Step 2: Initializing...');
+    console.log('Step 2: SOURCE_CONNECTION_ID =', typeof SOURCE_CONNECTION_ID !== 'undefined' ? SOURCE_CONNECTION_ID : 'UNDEFINED');
+    console.log('Step 2: connectionId =', connectionId);
+    
     if (!connectionId) {
-        console.error('Source connection ID not found');
+        console.error('[ERROR] Source connection ID not found');
         const errorMsg = document.getElementById('error-message');
         const loadingIndicator = document.getElementById('loading-indicator');
         if (loadingIndicator) {
@@ -67,6 +71,8 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         return;
     }
+    
+    console.log('[OK] Connection ID found:', connectionId);
     
     // Get CSRF token
     const csrfInput = document.querySelector('[name=csrfmiddlewaretoken]');
@@ -155,10 +161,33 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    // Initial load: Load schemas only (with a small delay to ensure DOM is ready)
+    // Initial load: Load schemas - try multiple approaches to ensure it runs
+    console.log('Step 2: Setting up schema load...');
+    
+    // Method 1: Immediate call if DOM is ready
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        console.log('Step 2: DOM ready, calling loadSchemas immediately...');
+        setTimeout(() => loadSchemas(), 0);
+    }
+    
+    // Method 2: setTimeout as backup
     setTimeout(() => {
+        console.log('Step 2: Timeout fired, calling loadSchemas...');
         loadSchemas();
     }, 100);
+    
+    // Method 3: Event-based fallback
+    window.addEventListener('load', () => {
+        console.log('Step 2: Window load event fired, ensuring loadSchemas called...');
+        setTimeout(() => {
+            // Check if schemas already loaded
+            const schemasContainer = document.getElementById('schemas-container');
+            if (schemasContainer && schemasContainer.children.length === 0) {
+                console.log('Step 2: No schemas loaded yet, calling loadSchemas from window.load event...');
+                loadSchemas();
+            }
+        }, 200);
+    });
     
     /**
      * Load schemas (lazy loading - step 1)
@@ -185,17 +214,43 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         try {
-            console.log('Loading schemas for connection:', connectionId);
+            console.log('Step 2: Starting schema load for connection:', connectionId);
+            const loadStartTime = Date.now();
+            
+            // Load schemas with timeout protection
             const schemas = await loader.loadSchemas(useCache);
-            console.log('Schemas loaded successfully:', schemas?.length || 0);
+            
+            const loadDuration = Date.now() - loadStartTime;
+            console.log(`Step 2: Schemas loaded successfully in ${loadDuration}ms:`, schemas?.length || 0, 'schemas');
             
             if (!schemas || schemas.length === 0) {
-                throw new Error('No schemas found in the database.');
+                console.warn('Step 2: No schemas found in database');
+                // Show no-schemas message instead of error
+                const noSchemasMsg = document.getElementById('no-schemas-message');
+                if (noSchemasMsg) {
+                    noSchemasMsg.style.display = 'block';
+                }
+                loadingIndicator.style.display = 'none';
+                tableSelectionArea.style.display = 'block';
+                return;
             }
             
+            console.log('Step 2: Displaying schemas...');
+            
+            // Get fresh element references
+            const currentLoadingIndicator2 = document.getElementById('loading-indicator');
+            const currentTableSelectionArea2 = document.getElementById('table-selection-area');
+            const currentErrorMessage2 = document.getElementById('error-message');
+            
             displaySchemas(schemas);
-            loadingIndicator.style.display = 'none';
-            tableSelectionArea.style.display = 'block';
+            console.log('Step 2: Schemas displayed successfully');
+            
+            if (currentLoadingIndicator2) {
+                currentLoadingIndicator2.style.display = 'none';
+            }
+            if (currentTableSelectionArea2) {
+                currentTableSelectionArea2.style.display = 'block';
+            }
             
             // Hide no-schemas message
             const noSchemasMsg = document.getElementById('no-schemas-message');
@@ -203,8 +258,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 noSchemasMsg.style.display = 'none';
             }
         } catch (error) {
-            if (loadingIndicator) {
-                loadingIndicator.style.display = 'none';
+            console.error('Step 2: Error in loadSchemas:', error);
+            console.error('Step 2: Error type:', error.constructor.name);
+            console.error('Step 2: Error message:', error.message);
+            console.error('Step 2: Error stack:', error.stack);
+            
+            // Get fresh element references for error handling
+            const currentLoadingIndicator3 = document.getElementById('loading-indicator');
+            const currentErrorMessage3 = document.getElementById('error-message');
+            
+            if (currentLoadingIndicator3) {
+                currentLoadingIndicator3.style.display = 'none';
             }
             console.error('Error loading schemas:', error);
             
@@ -218,18 +282,17 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             
             // Use textContent instead of innerHTML to avoid any issues
-            // Re-check errorMessage in case it became null
-            const currentErrorMessage = document.getElementById('error-message');
-            if (currentErrorMessage && currentErrorMessage.nodeType === 1) {
+            // Use the error message element we already got
+            if (currentErrorMessage3 && currentErrorMessage3.nodeType === 1) {
                 try {
                     // Clear any existing content first
-                    while (currentErrorMessage.firstChild) {
-                        currentErrorMessage.removeChild(currentErrorMessage.firstChild);
+                    while (currentErrorMessage3.firstChild) {
+                        currentErrorMessage3.removeChild(currentErrorMessage3.firstChild);
                     }
                     
                     // Create and add error text node
                     const errorTextNode = document.createTextNode(`Error loading schemas: ${errorText}`);
-                    currentErrorMessage.appendChild(errorTextNode);
+                    currentErrorMessage3.appendChild(errorTextNode);
                     
                     // Add buttons using DOM methods (safer than innerHTML)
                     try {
@@ -245,22 +308,22 @@ document.addEventListener('DOMContentLoaded', function() {
                         connectionsLink.href = '/connections/';
                         connectionsLink.textContent = 'Go to Connections';
                         
-                        currentErrorMessage.appendChild(br1);
-                        currentErrorMessage.appendChild(br2);
-                        currentErrorMessage.appendChild(retryBtn);
-                        currentErrorMessage.appendChild(connectionsLink);
+                        currentErrorMessage3.appendChild(br1);
+                        currentErrorMessage3.appendChild(br2);
+                        currentErrorMessage3.appendChild(retryBtn);
+                        currentErrorMessage3.appendChild(connectionsLink);
                     } catch (e) {
                         console.error('Error adding buttons to error message:', e);
                         // Continue without buttons - error text is already displayed
                     }
                     
-                    currentErrorMessage.style.display = 'block';
+                    currentErrorMessage3.style.display = 'block';
                 } catch (e) {
-                    console.error('Error setting error message:', e, 'Element:', currentErrorMessage);
+                    console.error('Error setting error message:', e, 'Element:', currentErrorMessage3);
                     alert(`Error loading schemas: ${errorText}`);
                 }
             } else {
-                console.error('Error message element not found or invalid. Error:', errorText, 'Element:', currentErrorMessage);
+                console.error('Error message element not found or invalid. Error:', errorText, 'Element:', currentErrorMessage3);
                 alert(`Error loading schemas: ${errorText}`);
             }
         }
@@ -453,8 +516,30 @@ document.addEventListener('DOMContentLoaded', function() {
                 label.htmlFor = checkbox.id;
                 label.textContent = `${schemaName}.${tableName}`;
                 
+                // Add transformation button
+                const transformBtn = document.createElement('button');
+                transformBtn.type = 'button';
+                transformBtn.className = 'btn btn-sm btn-outline-info ms-2 transform-btn';
+                transformBtn.textContent = '⚙️ Transform';
+                transformBtn.dataset.tableKey = tableKey;
+                transformBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    toggleTransformationPanel(tableKey, schemaName, tableName);
+                });
+                
+                const labelWrapper = document.createElement('span');
+                labelWrapper.className = 'd-flex align-items-center';
+                labelWrapper.appendChild(label);
+                labelWrapper.appendChild(transformBtn);
+                
                 tableItem.appendChild(checkbox);
-                tableItem.appendChild(label);
+                tableItem.appendChild(labelWrapper);
+                
+                // Add transformation panel (hidden by default)
+                const transformPanel = createTransformationPanel(tableKey, schemaName, tableName);
+                tableItem.appendChild(transformPanel);
+                
                 tablesContainer.appendChild(tableItem);
                 
                 // Track table
@@ -673,8 +758,262 @@ document.addEventListener('DOMContentLoaded', function() {
             input.value = JSON.stringify({schema: schema, table: table});
             this.appendChild(input);
         });
+        
+        // Store transformation data
+        const transformationsInput = document.createElement('input');
+        transformationsInput.type = 'hidden';
+        transformationsInput.name = 'table_transformations';
+        transformationsInput.value = JSON.stringify(window.tableTransformations || {});
+        this.appendChild(transformationsInput);
     });
     }
+    
+    // Transformation management
+    window.tableTransformations = window.tableTransformations || {};
+    
+    function createTransformationPanel(tableKey, schema, table) {
+        const panel = document.createElement('div');
+        panel.className = 'transformation-panel mt-2 mb-3 p-3 border rounded bg-light';
+        panel.id = `transform-panel-${tableKey.replace(/[\.\s]/g, '-')}`;
+        panel.style.display = 'none';
+        
+        // Build panel HTML with proper escaping
+        const sanitizedTableKey = tableKey.replace(/[\.\s]/g, '-');
+        panel.innerHTML = 
+            '<h6 class="mb-3">Transformations for ' + schema + '.' + table + '</h6>' +
+            '<div class="mb-3">' +
+            '<label for="where-' + sanitizedTableKey + '" class="form-label">WHERE Clause</label>' +
+            '<textarea class="form-control" id="where-' + sanitizedTableKey + '" rows="2" placeholder="e.g., age >= 30 AND status = \'active\'"></textarea>' +
+            '<small class="form-text text-muted">Enter SQL WHERE clause without the WHERE keyword</small>' +
+            '</div>' +
+            '<div class="mb-3">' +
+            '<label class="form-label">Column Transformations</label>' +
+            '<div id="column-transforms-' + sanitizedTableKey + '" class="column-transforms-list mb-2"></div>' +
+            '<button type="button" class="btn btn-sm btn-secondary add-column-transform" data-table-key="' + tableKey + '">+ Add Column Transformation</button>' +
+            '</div>' +
+            '<div class="d-flex gap-2">' +
+            '<button type="button" class="btn btn-sm btn-primary validate-transform" data-table-key="' + tableKey + '">Validate</button>' +
+            '<button type="button" class="btn btn-sm btn-outline-secondary clear-transform" data-table-key="' + tableKey + '">Clear</button>' +
+            '</div>' +
+            '<div class="transform-message mt-2" id="transform-msg-' + sanitizedTableKey + '"></div>';
+        
+        // Add event listeners
+        panel.querySelector('.add-column-transform').addEventListener('click', function() {
+            addColumnTransformation(tableKey, schema, table);
+        });
+        
+        panel.querySelector('.validate-transform').addEventListener('click', function() {
+            validateTransformation(tableKey, schema, table);
+        });
+        
+        panel.querySelector('.clear-transform').addEventListener('click', function() {
+            clearTransformation(tableKey);
+        });
+        
+        return panel;
+    }
+    
+    function toggleTransformationPanel(tableKey, schema, table) {
+        const panelId = `transform-panel-${tableKey.replace(/[\.\s]/g, '-')}`;
+        const panel = document.getElementById(panelId);
+        if (!panel) return;
+        
+        if (panel.style.display === 'none') {
+            panel.style.display = 'block';
+            loadTableColumnsForTransform(tableKey, schema, table);
+        } else {
+            panel.style.display = 'none';
+        }
+    }
+    
+    function addColumnTransformation(tableKey, schema, table) {
+        const containerId = `column-transforms-${tableKey.replace(/[\.\s]/g, '-')}`;
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        
+        const row = document.createElement('div');
+        row.className = 'transform-row mb-2 d-flex gap-2 align-items-center';
+        
+        // Get columns for this table (load if not cached)
+        const columns = window.tableColumnsCache?.[tableKey] || [];
+        
+        const columnSelect = document.createElement('select');
+        columnSelect.className = 'form-select form-select-sm';
+        columnSelect.style.width = '200px';
+        columnSelect.innerHTML = '<option value="">Select Column</option>';
+        columns.forEach(col => {
+            const option = document.createElement('option');
+            option.value = col.name;
+            option.textContent = col.name;
+            columnSelect.appendChild(option);
+        });
+        
+        const transformSelect = document.createElement('select');
+        transformSelect.className = 'form-select form-select-sm';
+        transformSelect.style.width = '150px';
+        transformSelect.innerHTML = `
+            <option value="">None</option>
+            <option value="TRIM">TRIM</option>
+            <option value="UPPER">UPPER</option>
+            <option value="LOWER">LOWER</option>
+        `;
+        
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'btn btn-sm btn-outline-danger';
+        removeBtn.textContent = 'Remove';
+        removeBtn.addEventListener('click', function() {
+            row.remove();
+            updateTransformationsForTable(tableKey);
+        });
+        
+        row.appendChild(columnSelect);
+        row.appendChild(transformSelect);
+        row.appendChild(removeBtn);
+        
+        columnSelect.addEventListener('change', function() {
+            updateTransformationsForTable(tableKey);
+        });
+        transformSelect.addEventListener('change', function() {
+            updateTransformationsForTable(tableKey);
+        });
+        
+        container.appendChild(row);
+    }
+    
+    function loadTableColumnsForTransform(tableKey, schema, table) {
+        // Check if already loaded
+        if (window.tableColumnsCache && window.tableColumnsCache[tableKey]) {
+            return;
+        }
+        
+        // Load columns via API
+        const connectionId = SOURCE_CONNECTION_ID;
+        if (!connectionId) return;
+        
+        fetch(`/sync-jobs/api/table-columns/?connection_id=${connectionId}&schema=${encodeURIComponent(schema)}&table=${encodeURIComponent(table)}`, {
+            headers: {
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            }
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.columns) {
+                    if (!window.tableColumnsCache) window.tableColumnsCache = {};
+                    window.tableColumnsCache[tableKey] = data.columns;
+                }
+            })
+            .catch(err => console.error('Error loading columns:', err));
+    }
+    
+    function updateTransformationsForTable(tableKey) {
+        if (!window.tableTransformations) window.tableTransformations = {};
+        
+        const whereTextarea = document.getElementById(`where-${tableKey.replace(/[\.\s]/g, '-')}`);
+        const containerId = `column-transforms-${tableKey.replace(/[\.\s]/g, '-')}`;
+        const container = document.getElementById(containerId);
+        
+        const whereClause = whereTextarea ? whereTextarea.value.trim() : '';
+        
+        const columnTransforms = {};
+        if (container) {
+            container.querySelectorAll('.transform-row').forEach(row => {
+                const colSelect = row.querySelector('select:first-child');
+                const transformSelect = row.querySelector('select:last-of-type');
+                if (colSelect && transformSelect && colSelect.value && transformSelect.value) {
+                    columnTransforms[colSelect.value] = transformSelect.value;
+                }
+            });
+        }
+        
+        if (whereClause || Object.keys(columnTransforms).length > 0) {
+            window.tableTransformations[tableKey] = {
+                where_clause: whereClause,
+                column_transformations: columnTransforms
+            };
+        } else {
+            delete window.tableTransformations[tableKey];
+        }
+    }
+    
+    function validateTransformation(tableKey, schema, table) {
+        const connectionId = SOURCE_CONNECTION_ID;
+        if (!connectionId) {
+            showTransformMessage(tableKey, 'Error: Connection ID not available', 'danger');
+            return;
+        }
+        
+        const whereTextarea = document.getElementById(`where-${tableKey.replace(/[\.\s]/g, '-')}`);
+        const whereClause = whereTextarea ? whereTextarea.value.trim() : '';
+        
+        const containerId = `column-transforms-${tableKey.replace(/[\.\s]/g, '-')}`;
+        const container = document.getElementById(containerId);
+        const columnTransforms = {};
+        
+        if (container) {
+            container.querySelectorAll('.transform-row').forEach(row => {
+                const colSelect = row.querySelector('select:first-child');
+                const transformSelect = row.querySelector('select:last-of-type');
+                if (colSelect && transformSelect && colSelect.value && transformSelect.value) {
+                    columnTransforms[colSelect.value] = transformSelect.value;
+                }
+            });
+        }
+        
+        showTransformMessage(tableKey, 'Validating...', 'info');
+        
+        const formData = new FormData();
+        formData.append('connection_id', connectionId);
+        formData.append('schema', schema);
+        formData.append('table', table);
+        formData.append('where_clause', whereClause);
+        formData.append('column_transformations', JSON.stringify(columnTransforms));
+        
+        fetch('/sync-jobs/api/validate-transformation-query/', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            },
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.valid) {
+                showTransformMessage(tableKey, data.message || '✓ Transformation is valid', 'success');
+                updateTransformationsForTable(tableKey);
+            } else {
+                showTransformMessage(tableKey, '✗ ' + (data.error || 'Validation failed'), 'danger');
+            }
+        })
+        .catch(err => {
+            console.error('Validation error:', err);
+            showTransformMessage(tableKey, '✗ Validation error: ' + err.message, 'danger');
+        });
+    }
+    
+    function clearTransformation(tableKey) {
+        const whereTextarea = document.getElementById(`where-${tableKey.replace(/[\.\s]/g, '-')}`);
+        if (whereTextarea) whereTextarea.value = '';
+        
+        const containerId = `column-transforms-${tableKey.replace(/[\.\s]/g, '-')}`;
+        const container = document.getElementById(containerId);
+        if (container) container.innerHTML = '';
+        
+        delete window.tableTransformations[tableKey];
+        
+        const msgEl = document.getElementById(`transform-msg-${tableKey.replace(/[\.\s]/g, '-')}`);
+        if (msgEl) msgEl.innerHTML = '';
+    }
+    
+    function showTransformMessage(tableKey, message, type) {
+        const msgId = `transform-msg-${tableKey.replace(/[\.\s]/g, '-')}`;
+        const msgEl = document.getElementById(msgId);
+        if (!msgEl) return;
+        
+        msgEl.className = `transform-message mt-2 alert alert-${type}`;
+        msgEl.textContent = message;
+    }
+    
     } catch (error) {
         console.error('Fatal error in create_job_step2.js:', error);
         const errorMsg = document.getElementById('error-message');

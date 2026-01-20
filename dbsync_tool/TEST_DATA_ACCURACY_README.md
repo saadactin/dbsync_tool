@@ -197,3 +197,4 @@ Test 2: MySQL → PostgreSQL Data Accuracy
 - The test compares **every single row and column** - not just a sample
 
 
+

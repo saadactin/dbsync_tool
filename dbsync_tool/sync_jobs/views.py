@@ -368,6 +368,156 @@ def create_job_step2_load_metadata(request):
 
 
 @login_required
+@require_http_methods(["GET"])
+def get_table_columns_api(request):
+    """
+    API endpoint to get table columns for transformation UI
+    """
+    try:
+        connection_id = request.GET.get('connection_id')
+        schema = request.GET.get('schema')
+        table = request.GET.get('table')
+        
+        if not all([connection_id, schema, table]):
+            return JsonResponse({
+                'success': False,
+                'error': 'Missing required parameters: connection_id, schema, table'
+            }, status=400)
+        
+        # Get connection
+        from accounts.services.tenant_service import TenantService
+        conn_qs = DatabaseConnection.objects.filter(is_active=True, id=connection_id)
+        user_conns = TenantService.get_queryset_for_user(conn_qs, request.user)
+        
+        try:
+            connection = user_conns.get(id=connection_id)
+        except DatabaseConnection.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'Connection not found or access denied'
+            }, status=404)
+        
+        # Load columns
+        columns = load_table_columns(
+            str(connection.id),
+            schema,
+            table,
+            request.user
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'columns': columns
+        })
+        
+    except Exception as e:
+        logger.error(f"Error loading table columns: {str(e)}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': f'Error loading columns: {str(e)}'
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+def validate_transformation_query(request):
+    """
+    API endpoint to validate transformation query syntax
+    """
+    try:
+        connection_id = request.POST.get('connection_id')
+        schema = request.POST.get('schema')
+        table = request.POST.get('table')
+        where_clause = request.POST.get('where_clause', '').strip()
+        column_transformations_json = request.POST.get('column_transformations', '{}')
+        
+        if not all([connection_id, schema, table]):
+            return JsonResponse({
+                'valid': False,
+                'error': 'Missing required parameters: connection_id, schema, table'
+            }, status=400)
+        
+        # Parse column transformations
+        import json
+        try:
+            column_transformations = json.loads(column_transformations_json) if column_transformations_json else {}
+        except:
+            column_transformations = {}
+        
+        # Get connection
+        from accounts.services.tenant_service import TenantService
+        conn_qs = DatabaseConnection.objects.filter(is_active=True, id=connection_id)
+        user_conns = TenantService.get_queryset_for_user(conn_qs, request.user)
+        
+        try:
+            connection = user_conns.get(id=connection_id)
+        except DatabaseConnection.DoesNotExist:
+            return JsonResponse({
+                'valid': False,
+                'error': 'Connection not found or access denied'
+            }, status=404)
+        
+        # Get connector
+        from connections.connectors.factory import get_connector
+        connector_config = {
+            'host': connection.host,
+            'port': connection.port,
+            'username': connection.username,
+            'password': connection.get_decrypted_password(),
+            'database_name': connection.database_name
+        }
+        connector = get_connector(connection.db_type, **connector_config)
+        
+        # Validate transformations
+        from sync_engine.transformation_validator import TransformationValidator
+        validator = TransformationValidator()
+        
+        validation_errors = []
+        
+        # Validate WHERE clause if provided
+        if where_clause:
+            is_valid, error = validator.validate_where_clause(
+                where_clause=where_clause,
+                schema=schema,
+                table=table,
+                connector=connector
+            )
+            if not is_valid:
+                validation_errors.append(f"WHERE clause: {error}")
+        
+        # Validate column transformations if provided
+        if column_transformations:
+            is_valid, error = validator.validate_column_transformations(
+                transformations=column_transformations,
+                schema=schema,
+                table=table,
+                connector=connector
+            )
+            if not is_valid:
+                validation_errors.append(f"Column transformations: {error}")
+        
+        connector.close()
+        
+        if validation_errors:
+            return JsonResponse({
+                'valid': False,
+                'error': '; '.join(validation_errors)
+            })
+        
+        return JsonResponse({
+            'valid': True,
+            'message': 'Transformation query is valid'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error validating transformation query: {str(e)}", exc_info=True)
+        return JsonResponse({
+            'valid': False,
+            'error': f'Validation error: {str(e)}'
+        }, status=500)
+
+
+@login_required
 @viewer_read_only_required
 def create_job_step2_submit(request):
     """
@@ -401,6 +551,15 @@ def create_job_step2_submit(request):
     
     # Store in session for step 3
     request.session['sync_job_selected_tables'] = tables
+    
+    # Store transformation data in session if provided
+    table_transformations_json = request.POST.get('table_transformations', '{}')
+    try:
+        import json
+        table_transformations = json.loads(table_transformations_json)
+        request.session['sync_job_table_transformations'] = table_transformations
+    except:
+        request.session['sync_job_table_transformations'] = {}
     
     # Redirect to step 3
     messages.success(request, f'Selected {len(tables)} table(s).')
@@ -625,16 +784,26 @@ def create_job_step3_submit(request):
             next_run_at=next_run_at
         )
         
+        # Get transformation data from session
+        table_transformations = request.session.get('sync_job_table_transformations', {})
+        
         # Create SyncJobTable entries
         for table_info in selected_tables:
             table_key = f"{table_info['schema_name']}.{table_info['table_name']}"
             incremental_column = incremental_columns.get(table_key)
+            
+            # Get transformation data for this table
+            transformation_data = table_transformations.get(table_key, {})
+            transformation_query = transformation_data.get('where_clause', None)
+            column_transformations = transformation_data.get('column_transformations', {})
             
             SyncJobTable.objects.create(
                 job=sync_job,
                 schema_name=table_info['schema_name'],
                 table_name=table_info['table_name'],
                 incremental_column=incremental_column,
+                transformation_query=transformation_query if transformation_query else None,
+                column_transformations=column_transformations if column_transformations else {},
                 is_enabled=True
             )
         

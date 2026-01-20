@@ -69,9 +69,18 @@ class MetadataLoader {
     async loadSchemas(useCache = true) {
         const url = `/metadata/api/${this.connectionId}/schemas/?use_cache=${useCache}`;
         
+        console.log('MetadataLoader: Loading schemas from URL:', url);
+        console.log('MetadataLoader: Connection ID:', this.connectionId);
+        
         try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+            const timeoutId = setTimeout(() => {
+                console.error('MetadataLoader: Request timeout after 30 seconds');
+                controller.abort();
+            }, 30000); // Increased to 30 seconds for slow databases
+            
+            console.log('MetadataLoader: Sending fetch request...');
+            const fetchStartTime = Date.now();
             
             const response = await fetch(url, {
                 method: 'GET',
@@ -85,35 +94,66 @@ class MetadataLoader {
                 signal: controller.signal
             });
             
+            const fetchDuration = Date.now() - fetchStartTime;
+            console.log(`MetadataLoader: Fetch completed in ${fetchDuration}ms, status: ${response.status}`);
+            
             clearTimeout(timeoutId);
             
             if (!response.ok) {
                 let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
                 try {
                     const errorData = await response.json();
+                    console.error('MetadataLoader: Error response data:', errorData);
                     if (errorData.error) {
                         errorMessage = errorData.error;
                     } else if (errorData.detail) {
                         errorMessage = errorData.detail;
+                    } else if (errorData.message) {
+                        errorMessage = errorData.message;
                     }
                 } catch (e) {
-                    // If response is not JSON, use status text
+                    console.error('MetadataLoader: Failed to parse error response as JSON:', e);
+                    // Try to get text response
+                    try {
+                        const text = await response.text();
+                        console.error('MetadataLoader: Error response text:', text);
+                        if (text) {
+                            errorMessage = text.substring(0, 500); // Limit length
+                        }
+                    } catch (e2) {
+                        console.error('MetadataLoader: Failed to read error response text:', e2);
+                    }
                 }
                 throw new Error(errorMessage);
             }
             
+            console.log('MetadataLoader: Parsing JSON response...');
             const data = await response.json();
+            console.log('MetadataLoader: Response data received:', data);
             
             if (data.success) {
+                console.log(`MetadataLoader: Successfully loaded ${data.data?.length || 0} schemas`);
                 return data.data;
             } else {
-                throw new Error(data.error || 'Failed to load schemas');
+                const errorMsg = data.error || data.message || 'Failed to load schemas';
+                console.error('MetadataLoader: API returned success=false:', errorMsg);
+                throw new Error(errorMsg);
             }
         } catch (error) {
             if (error.name === 'AbortError') {
-                throw new Error('Request timeout: Database may be slow or unreachable');
+                const timeoutError = new Error(
+                    'Request timeout: The database may be slow or unreachable. ' +
+                    'Please check:\n' +
+                    '1. Database server is running\n' +
+                    '2. Network connectivity to database\n' +
+                    '3. Connection credentials are correct\n' +
+                    '4. Firewall allows connections'
+                );
+                console.error('MetadataLoader: Request aborted (timeout)');
+                throw timeoutError;
             }
-            console.error('Error loading schemas:', error);
+            console.error('MetadataLoader: Error loading schemas:', error);
+            console.error('MetadataLoader: Error stack:', error.stack);
             throw error;
         }
     }

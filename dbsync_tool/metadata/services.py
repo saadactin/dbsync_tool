@@ -101,30 +101,51 @@ def load_schemas_lazy(connection_id: str, user, use_cache: bool = True) -> List[
     connector = None
     
     try:
+        logger.info(f"Loading schemas for connection {connection_id} ({connection.name})")
+        
         # Get connection from pool (read-only mode)
+        logger.debug(f"Getting connection from pool for {connection_id}")
         connector = pool.get_connection(connection, read_only=True)
+        logger.debug(f"Connection obtained from pool for {connection_id}")
         
         # Execute query with timeout
-        with _query_timeout(pool.query_timeout):
-            schema_names = connector.get_schemas()
+        logger.debug(f"Calling get_schemas() for {connection_id}")
+        try:
+            with _query_timeout(pool.query_timeout):
+                schema_names = connector.get_schemas()
+            logger.info(f"Successfully retrieved {len(schema_names)} schemas for connection {connection_id}")
+        except DatabaseTimeoutError as e:
+            logger.error(f"Timeout loading schemas for connection {connection_id}: {str(e)}")
+            raise DatabaseTimeoutError("Query timeout: Database may be slow or unreachable. Please check database connection and try again.")
+        except Exception as e:
+            logger.error(f"Error calling get_schemas() for connection {connection_id}: {str(e)}", exc_info=True)
+            raise
         
         result = [{'name': schema} for schema in schema_names]
         
         # Cache result
         if use_cache:
             cache.set(cache_key, result, SCHEMA_CACHE_TTL)
+            logger.debug(f"Cached schemas for connection {connection_id}")
         
         return result
         
-    except DatabaseTimeoutError:
-        logger.error(f"Timeout loading schemas for connection {connection_id}")
-        raise DatabaseConnectionError("Query timeout: Database may be slow or unreachable")
+    except DatabaseTimeoutError as e:
+        logger.error(f"Timeout loading schemas for connection {connection_id}: {str(e)}")
+        raise
+    except DatabaseConnectionError as e:
+        logger.error(f"Database connection error loading schemas for connection {connection_id}: {str(e)}")
+        raise
     except Exception as e:
-        logger.error(f"Error loading schemas for connection {connection_id}: {str(e)}")
+        logger.error(f"Unexpected error loading schemas for connection {connection_id}: {str(e)}", exc_info=True)
         raise DatabaseConnectionError(f"Failed to load schemas: {str(e)}")
     finally:
         if connector:
-            pool.return_connection(str(connection.id), connector)
+            try:
+                pool.return_connection(str(connection.id), connector)
+                logger.debug(f"Returned connection to pool for {connection_id}")
+            except Exception as e:
+                logger.error(f"Error returning connection to pool: {str(e)}")
 
 
 def load_tables_lazy(connection_id: str, schema_name: str, user, use_cache: bool = True) -> List[Dict]:

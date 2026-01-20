@@ -32,26 +32,54 @@ class SQLServerConnector(DBConnector):
                 # Test if driver exists
                 available_drivers = pyodbc.drivers()
                 if driver in available_drivers:
+                    # Handle named instances (host\instance format)
+                    server = self.host
+                    port_str = ""
+                    
+                    # If host contains backslash, it's a named instance
+                    if '\\' in server:
+                        # Named instance format: SERVER\INSTANCE
+                        # Port is usually not needed for named instances
+                        server_port = server
+                    elif self.port:
+                        # Default instance with explicit port
+                        server_port = f"{server},{self.port}"
+                    else:
+                        # Default instance, use default port 1433
+                        server_port = f"{server},1433"
+                    
                     conn_str = (
                         f"DRIVER={{{driver}}};"
-                        f"SERVER={self.host},{self.port};"
+                        f"SERVER={server_port};"
                         f"DATABASE={db_name};"
                         f"UID={self.username};"
                         f"PWD={self.password};"
                         f"TrustServerCertificate=yes;"
+                        f"Connection Timeout=30;"
+                        f"Login Timeout=30;"
                     )
                     return conn_str
             except:
                 continue
         
         # Fallback to first driver
+        server = self.host
+        if '\\' in server:
+            server_port = server
+        elif self.port:
+            server_port = f"{server},{self.port}"
+        else:
+            server_port = f"{server},1433"
+        
         return (
             f"DRIVER={{{drivers[0]}}};"
-            f"SERVER={self.host},{self.port};"
+            f"SERVER={server_port};"
             f"DATABASE={db_name};"
             f"UID={self.username};"
             f"PWD={self.password};"
             f"TrustServerCertificate=yes;"
+            f"Connection Timeout=30;"
+            f"Login Timeout=30;"
         )
     
     def connect(self):
@@ -60,10 +88,34 @@ class SQLServerConnector(DBConnector):
             # Use database_name if provided, otherwise connect to 'master'
             db_name = self.database_name if self.database_name else 'master'
             conn_str = self._get_connection_string(db_name)
-            self._connection = pyodbc.connect(conn_str, timeout=10)
+            # Increased timeout to 30 seconds for slow networks
+            self._connection = pyodbc.connect(conn_str, timeout=30)
             return self._connection
         except pyodbc.Error as e:
-            raise DatabaseConnectionError(f"Failed to connect to SQL Server: {str(e)}")
+            error_msg = str(e)
+            # Provide more helpful error messages
+            if 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower():
+                raise DatabaseConnectionError(
+                    f"Connection timeout to SQL Server '{self.host}'. "
+                    f"Please check:\n"
+                    f"1. SQL Server is running and accessible\n"
+                    f"2. Firewall allows port {self.port or 1433}\n"
+                    f"3. TCP/IP is enabled in SQL Server Configuration Manager\n"
+                    f"4. Network connectivity: Test-NetConnection {self.host} -Port {self.port or 1433}\n"
+                    f"Original error: {error_msg}"
+                )
+            elif 'server is not found' in error_msg.lower() or 'not accessible' in error_msg.lower():
+                raise DatabaseConnectionError(
+                    f"SQL Server '{self.host}' is not found or not accessible. "
+                    f"Please check:\n"
+                    f"1. Server hostname/IP is correct\n"
+                    f"2. SQL Server service is running\n"
+                    f"3. Remote connections are enabled\n"
+                    f"4. SQL Server Browser is running (for named instances)\n"
+                    f"Original error: {error_msg}"
+                )
+            else:
+                raise DatabaseConnectionError(f"Failed to connect to SQL Server: {error_msg}")
         except Exception as e:
             raise DatabaseConnectionError(f"Unexpected error connecting to SQL Server: {str(e)}")
     
