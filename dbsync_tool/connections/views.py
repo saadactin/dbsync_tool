@@ -321,6 +321,7 @@ class ConnectionTestAndListDatabasesView(LoginRequiredMixin, View):
     Accepts credentials without database_name and returns list of databases
     """
     def post(self, request):
+        connector = None
         try:
             data = json.loads(request.body)
             db_type = data.get('db_type')
@@ -351,15 +352,15 @@ class ConnectionTestAndListDatabasesView(LoginRequiredMixin, View):
                 }, status=400)
             
             # Create connector without database_name
-            connector = None
             try:
+                # Use get_connector from connectors module (takes individual params)
                 connector = get_connector(
                     db_type=db_type,
                     host=host,
                     port=port,
                     username=username,
                     password=password,
-                    database_name=None  # No database specified
+                    database_name=None  # No database specified - will connect to 'master' for SQL Server
                 )
                 
                 # Try to connect and list databases in one go
@@ -374,26 +375,31 @@ class ConnectionTestAndListDatabasesView(LoginRequiredMixin, View):
                     })
                 except DatabaseConnectionError as e:
                     # Connection failed
+                    error_msg = str(e)
+                    logger.error(f"Connection test failed: {error_msg}")
                     return JsonResponse({
                         'success': False,
-                        'message': f'Connection failed: {str(e)}'
+                        'message': f'Connection failed: {error_msg}'
                     }, status=200)
                 
             except InvalidDatabaseTypeError as e:
+                logger.error(f"Invalid database type: {str(e)}")
                 return JsonResponse({
                     'success': False,
                     'message': str(e)
                 }, status=400)
             except DatabaseConnectionError as e:
+                logger.error(f"Database connection error: {str(e)}")
                 return JsonResponse({
                     'success': False,
                     'message': f'Connection failed: {str(e)}'
                 }, status=200)
             except Exception as e:
                 # Log the full error for debugging
-                import logging
-                logger = logging.getLogger(__name__)
+                import traceback
+                error_trace = traceback.format_exc()
                 logger.exception('Error in ConnectionTestAndListDatabasesView')
+                logger.error(f'Full traceback: {error_trace}')
                 return JsonResponse({
                     'success': False,
                     'message': f'Unexpected error: {str(e)}'
@@ -405,12 +411,17 @@ class ConnectionTestAndListDatabasesView(LoginRequiredMixin, View):
                     except Exception:
                         pass  # Ignore errors when closing
                     
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error: {str(e)}")
             return JsonResponse({
                 'success': False,
                 'message': 'Invalid JSON in request body'
             }, status=400)
         except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            logger.exception('Unexpected error in ConnectionTestAndListDatabasesView')
+            logger.error(f'Full traceback: {error_trace}')
             return JsonResponse({
                 'success': False,
                 'message': f'Unexpected error: {str(e)}'

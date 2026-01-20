@@ -376,6 +376,11 @@ class FullSyncExecutor:
             if schema.lower() == 'dbo':
                 target_schema = 'public'
                 logger.info(f"Mapping SQL Server schema 'dbo' to PostgreSQL schema 'public'")
+        elif self.table_handler.target_db_type == 'sqlserver' and self.table_handler.source_db_type == 'postgres':
+            # Map PostgreSQL 'public' schema to SQL Server 'dbo' schema
+            if schema.lower() == 'public':
+                target_schema = 'dbo'
+                logger.info(f"Mapping PostgreSQL schema 'public' to SQL Server schema 'dbo'")
         
         # Create execution log
         log = SyncExecutionLog.objects.create(
@@ -400,11 +405,32 @@ class FullSyncExecutor:
             
             # Truncate target table (use target_schema for MySQL)
             try:
-                self.target_connector.truncate_table(target_schema, table)
+                # Check if table exists before truncating (some databases fail if table doesn't exist)
+                try:
+                    target_tables = self.target_connector.get_tables(target_schema)
+                    # For case-insensitive databases (like SQL Server), check case-insensitively
+                    if self.target_db_type == 'sqlserver':
+                        table_exists = any(t.lower() == table.lower() for t in target_tables)
+                    else:
+                        table_exists = table in target_tables
+                    
+                    if table_exists:
+                        self.target_connector.truncate_table(target_schema, table)
+                    else:
+                        logger.info(f"Target table {target_schema}.{table} does not exist yet, skipping truncate")
+                except Exception as check_error:
+                    # If we can't check table existence, try truncate anyway (might work)
+                    logger.debug(f"Could not check table existence: {check_error}, trying truncate anyway")
+                    self.target_connector.truncate_table(target_schema, table)
             except Exception as e:
-                error_msg = f"Failed to truncate target table: {str(e)}"
-                logger.error(f"Table truncate error for {schema}.{table}: {error_msg}", exc_info=True)
-                raise TableSyncError(error_msg) from e
+                # If truncate fails, log warning but continue (table might not exist yet or be empty)
+                error_str = str(e)
+                if 'does not exist' in error_str or 'Cannot find the object' in error_str:
+                    logger.warning(f"Target table {target_schema}.{table} may not exist yet, skipping truncate: {error_str}")
+                else:
+                    error_msg = f"Failed to truncate target table: {error_str}"
+                    logger.error(f"Table truncate error for {schema}.{table}: {error_msg}", exc_info=True)
+                    raise TableSyncError(error_msg) from e
             
             # Get primary key for ordering
             try:

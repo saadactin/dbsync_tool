@@ -5,6 +5,7 @@ from typing import Optional, List, Any, Dict
 from connections.connectors.base import DBConnector
 from sync_engine.exceptions import QueryBuilderError
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,10 @@ class QueryBuilder:
         query = f'SELECT {col_list} FROM {schema_part}'
         
         if where_clause:
-            query += f' WHERE {where_clause}'
+            # Normalize WHERE clause column names to match database type
+            # Users might enter PostgreSQL-style quotes ("column") but source might be MySQL (needs `column`)
+            normalized_where = QueryBuilder._normalize_where_clause_column_quotes(where_clause, db_type)
+            query += f' WHERE {normalized_where}'
         
         if order_by:
             # Format order_by columns with proper quoting for the database type
@@ -156,7 +160,9 @@ class QueryBuilder:
         query = f'SELECT COUNT(*) FROM {schema_part}'
         
         if where_clause:
-            query += f' WHERE {where_clause}'
+            # Normalize WHERE clause column quotes to match database type
+            normalized_where = QueryBuilder._normalize_where_clause_column_quotes(where_clause, db_type)
+            query += f' WHERE {normalized_where}'
         
         return query
     
@@ -401,4 +407,43 @@ class QueryBuilder:
                     transformed_cols.append(col)
         
         return ', '.join(transformed_cols)
+    
+    @staticmethod
+    def _normalize_where_clause_column_quotes(where_clause: str, db_type: str) -> str:
+        """
+        Normalize column name quotes in WHERE clause to match database type
+        
+        Users might enter PostgreSQL-style quotes ("column") but source might be MySQL (needs `column`)
+        or SQL Server (needs [column]). This function converts quotes to match the target database.
+        
+        Args:
+            where_clause: WHERE clause string (e.g., "price" > 20 or price > 20)
+            db_type: Target database type ('postgres', 'mysql', 'sqlserver')
+            
+        Returns:
+            Normalized WHERE clause with correct quotes for the database type
+            
+        Examples:
+            Input: "price" > 20, db_type: 'mysql'  -> Output: `price` > 20
+            Input: "price" > 20, db_type: 'sqlserver'  -> Output: [price] > 20
+            Input: `price` > 20, db_type: 'postgres'  -> Output: "price" > 20
+        """
+        if not where_clause:
+            return where_clause
+        
+        # Replace PostgreSQL-style quotes (") with target database quotes
+        if db_type == 'postgres':
+            # Replace backticks and brackets with double quotes
+            where_clause = re.sub(r'`([^`]+)`', r'"\1"', where_clause)  # `col` -> "col"
+            where_clause = re.sub(r'\[([^\]]+)\]', r'"\1"', where_clause)  # [col] -> "col"
+        elif db_type == 'mysql':
+            # Replace double quotes and brackets with backticks
+            where_clause = re.sub(r'"([^"]+)"', r'`\1`', where_clause)  # "col" -> `col`
+            where_clause = re.sub(r'\[([^\]]+)\]', r'`\1`', where_clause)  # [col] -> `col`
+        elif db_type == 'sqlserver':
+            # Replace double quotes and backticks with brackets
+            where_clause = re.sub(r'"([^"]+)"', r'[\1]', where_clause)  # "col" -> [col]
+            where_clause = re.sub(r'`([^`]+)`', r'[\1]', where_clause)  # `col` -> [col]
+        
+        return where_clause
 

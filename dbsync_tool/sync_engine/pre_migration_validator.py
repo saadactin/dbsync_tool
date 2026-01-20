@@ -329,14 +329,23 @@ class PreMigrationValidator:
             count_query = f'SELECT COUNT(*) FROM {schema_part}'
             
             if where_clause:
-                count_query += f' WHERE {where_clause}'
+                # Normalize WHERE clause column quotes to match database type
+                normalized_where = QueryBuilder._normalize_where_clause_column_quotes(where_clause, db_type)
+                count_query += f' WHERE {normalized_where}'
             
             # Execute COUNT query
-            result = self.source_connector.fetch_batch(
-                query=count_query,
-                batch_size=1,
-                offset=0
-            )
+            # COUNT queries shouldn't use LIMIT/OFFSET - execute directly
+            if not self.source_connector._connection:
+                self.source_connector.connect()
+            
+            # For SQL Server, COUNT queries don't support OFFSET...FETCH
+            # Execute COUNT query directly without fetch_batch
+            with self.source_connector._connection.cursor() as cursor:
+                cursor.execute(count_query)
+                result = cursor.fetchall()
+            
+            if not result:
+                result = [(0,)]
             
             if result and len(result) > 0 and len(result[0]) > 0:
                 count = result[0][0]

@@ -7,6 +7,7 @@ from .base import DBConnector, ColumnInfo
 from core.exceptions import DatabaseConnectionError, TableNotFoundError
 from core.type_mapping import map_data_type
 import logging
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -152,9 +153,20 @@ class SQLServerConnector(DBConnector):
     
     def list_databases(self) -> List[str]:
         """Get list of all databases on the SQL Server"""
+        # Close any existing connection
+        if self._connection:
+            try:
+                self.close()
+            except:
+                pass
+        
+        # Temporarily set database_name to master for connection
+        original_db = self.database_name
+        self.database_name = 'master'
+        
         try:
-            if not self._connection:
-                self.connect()
+            # Connect to master database
+            self.connect()
             
             cursor = self._connection.cursor()
             cursor.execute("""
@@ -167,9 +179,22 @@ class SQLServerConnector(DBConnector):
             cursor.close()
             return databases
         except pyodbc.Error as e:
-            raise DatabaseConnectionError(f"Failed to list databases: {str(e)}")
+            error_msg = str(e)
+            logger.error(f"SQL Server list_databases pyodbc error: {error_msg}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise DatabaseConnectionError(f"Failed to list databases: {error_msg}")
         except Exception as e:
-            raise DatabaseConnectionError(f"Unexpected error listing databases: {str(e)}")
+            error_msg = str(e)
+            logger.error(f"SQL Server list_databases unexpected error: {error_msg}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise DatabaseConnectionError(f"Unexpected error listing databases: {error_msg}")
+        finally:
+            # Restore original database_name and close connection
+            self.database_name = original_db
+            try:
+                self.close()
+            except:
+                pass
     
     def get_tables(self, schema: str) -> List[str]:
         """Get list of table names in a schema"""
@@ -597,15 +622,55 @@ class SQLServerConnector(DBConnector):
         
         cursor = self._connection.cursor()
         try:
-            # Build column names
-            col_names = ', '.join(f"[{col}]" for col in columns)
-            placeholders = ', '.join(['?'] * len(columns))
+            # Check if any column is an IDENTITY column by querying sys.identity_columns
+            identity_columns = []
+            try:
+                cursor_check = self._connection.cursor()
+                cursor_check.execute("""
+                    SELECT COLUMN_NAME
+                    FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+                    AND COLUMNPROPERTY(OBJECT_ID(TABLE_SCHEMA + '.' + TABLE_NAME), COLUMN_NAME, 'IsIdentity') = 1
+                """, (schema, table))
+                identity_columns = [row[0] for row in cursor_check.fetchall()]
+                cursor_check.close()
+            except:
+                # Fallback: try sys.identity_columns
+                try:
+                    cursor_check = self._connection.cursor()
+                    cursor_check.execute("""
+                        SELECT c.name
+                        FROM sys.columns c
+                        INNER JOIN sys.tables t ON c.object_id = t.object_id
+                        INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+                        WHERE s.name = ? AND t.name = ? AND c.is_identity = 1
+                    """, (schema, table))
+                    identity_columns = [row[0] for row in cursor_check.fetchall()]
+                    cursor_check.close()
+                except:
+                    pass  # If we can't check, proceed without IDENTITY_INSERT
             
-            insert_query = f"INSERT INTO [{schema}].[{table}] ({col_names}) VALUES ({placeholders})"
+            # If we have identity columns and we're inserting explicit values, enable IDENTITY_INSERT
+            enable_identity_insert = False
+            if identity_columns and any(col in columns for col in identity_columns):
+                enable_identity_insert = True
             
-            # Use executemany for batch insert
-            cursor.executemany(insert_query, rows)
-            self._connection.commit()
+            if enable_identity_insert:
+                cursor.execute(f"SET IDENTITY_INSERT [{schema}].[{table}] ON")
+            
+            try:
+                # Build column names
+                col_names = ', '.join(f"[{col}]" for col in columns)
+                placeholders = ', '.join(['?'] * len(columns))
+                
+                insert_query = f"INSERT INTO [{schema}].[{table}] ({col_names}) VALUES ({placeholders})"
+                
+                # Use executemany for batch insert
+                cursor.executemany(insert_query, rows)
+                self._connection.commit()
+            finally:
+                if enable_identity_insert:
+                    cursor.execute(f"SET IDENTITY_INSERT [{schema}].[{table}] OFF")
         except Exception as e:
             self._connection.rollback()
             raise DatabaseConnectionError(f"Failed to bulk insert into SQL Server: {str(e)}")
