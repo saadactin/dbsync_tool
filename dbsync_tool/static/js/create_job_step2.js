@@ -783,8 +783,8 @@ document.addEventListener('DOMContentLoaded', function() {
             '<h6 class="mb-3">Transformations for ' + schema + '.' + table + '</h6>' +
             '<div class="mb-3">' +
             '<label for="where-' + sanitizedTableKey + '" class="form-label">WHERE Clause</label>' +
-            '<textarea class="form-control" id="where-' + sanitizedTableKey + '" rows="2" placeholder="e.g., age >= 30 AND status = \'active\'"></textarea>' +
-            '<small class="form-text text-muted">Enter SQL WHERE clause without the WHERE keyword</small>' +
+            '<textarea class="form-control" id="where-' + sanitizedTableKey + '" rows="2" placeholder="Price > 20 AND Status = \'Active\'"></textarea>' +
+            '<small class="form-text text-muted"><strong>IMPORTANT:</strong> Enter only the WHERE condition (e.g., &quot;Price &gt; 20&quot;). DO NOT include SELECT, FROM, or WHERE keywords. The system will add them automatically.</small>' +
             '</div>' +
             '<div class="mb-3">' +
             '<label class="form-label">Column Transformations</label>' +

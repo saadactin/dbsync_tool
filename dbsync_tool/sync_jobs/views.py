@@ -457,16 +457,9 @@ def validate_transformation_query(request):
                 'error': 'Connection not found or access denied'
             }, status=404)
         
-        # Get connector
+        # Get connector - use the connection object directly
         from connections.connectors.factory import get_connector
-        connector_config = {
-            'host': connection.host,
-            'port': connection.port,
-            'username': connection.username,
-            'password': connection.get_decrypted_password(),
-            'database_name': connection.database_name
-        }
-        connector = get_connector(connection.db_type, **connector_config)
+        connector = get_connector(connection)
         
         # Validate transformations
         from sync_engine.transformation_validator import TransformationValidator
@@ -797,12 +790,23 @@ def create_job_step3_submit(request):
             transformation_query = transformation_data.get('where_clause', None)
             column_transformations = transformation_data.get('column_transformations', {})
             
+            # Ensure column_transformations is a dict or None
+            if column_transformations and not isinstance(column_transformations, dict):
+                logger.warning(f"Invalid column_transformations format for {table_key}, converting to dict")
+                column_transformations = {}
+            
+            # Clean up transformation_query - remove None/empty strings
+            if transformation_query:
+                transformation_query = transformation_query.strip()
+                if not transformation_query:
+                    transformation_query = None
+            
             SyncJobTable.objects.create(
                 job=sync_job,
                 schema_name=table_info['schema_name'],
                 table_name=table_info['table_name'],
                 incremental_column=incremental_column,
-                transformation_query=transformation_query if transformation_query else None,
+                transformation_query=transformation_query,
                 column_transformations=column_transformations if column_transformations else {},
                 is_enabled=True
             )
@@ -904,8 +908,17 @@ def create_job_step3_submit(request):
         messages.error(request, 'Error creating sync job. A job with this configuration may already exist.')
         return redirect('sync_jobs:create_step3')
     except DatabaseError as e:
-        logger.error(f"Database error creating sync job: {str(e)}", exc_info=True)
-        messages.error(request, 'Database error occurred while creating the job. Please try again.')
+        import traceback
+        error_detail = str(e)
+        logger.error(f"Database error creating sync job: {error_detail}", exc_info=True)
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        
+        # Check if it's a unique constraint violation
+        if 'unique' in error_detail.lower() or 'duplicate' in error_detail.lower():
+            messages.error(request, 'A job with this configuration already exists. Please use a different name or configuration.')
+        else:
+            messages.error(request, f'Database error occurred: {error_detail}. Please check server logs for details.')
+        
         return redirect('sync_jobs:create_step3')
     except Exception as e:
         logger.error(f"Unexpected error creating sync job: {str(e)}", exc_info=True)

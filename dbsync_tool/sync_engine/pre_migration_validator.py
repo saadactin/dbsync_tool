@@ -16,6 +16,7 @@ from sync_engine.query_builder import QueryBuilder
 from sync_engine.transformation_engine import TransformationEngine
 from sync_jobs.models import SyncJobTable
 import logging
+import re
 import time
 
 logger = logging.getLogger(__name__)
@@ -85,19 +86,12 @@ class PreMigrationValidator:
             try:
                 # Execute validation query with LIMIT 1 to test syntax
                 db_type = QueryBuilder.get_db_type(self.source_connector)
-                query_upper = transformed_query.upper()
                 
-                validation_query = transformed_query
-                if db_type == 'postgres' and 'LIMIT' not in query_upper:
-                    validation_query += ' LIMIT 1'
-                elif db_type == 'mysql' and 'LIMIT' not in query_upper:
-                    validation_query += ' LIMIT 1'
-                elif db_type == 'sqlserver':
-                    # SQL Server uses TOP - check if already present
-                    if 'TOP' not in query_upper:
-                        # Try to execute as-is first
-                        pass
+                # Remove existing LIMIT/OFFSET clauses to avoid duplicates
+                # fetch_batch will add LIMIT/OFFSET automatically, so don't add it here
+                validation_query = self._remove_limit_clauses(transformed_query, db_type)
                 
+                # fetch_batch will add LIMIT/OFFSET automatically, so just pass the clean query
                 result = self.source_connector.fetch_batch(
                     query=validation_query,
                     batch_size=1,
@@ -142,30 +136,32 @@ class PreMigrationValidator:
                 db_type = QueryBuilder.get_db_type(self.source_connector)
                 query_upper = transformed_query.upper()
                 
+                # Remove existing LIMIT/OFFSET clauses to avoid duplicates
+                clean_query = self._remove_limit_clauses(transformed_query, db_type)
+                
                 if use_full_query:
                     # Use full query if expected row count is within limit
-                    sample_query = transformed_query
+                    sample_query = clean_query
                     logger.info(
                         f"Executing full query for {schema}.{table}: "
                         f"expected {expected_row_count} rows (within limit)"
                     )
                 else:
                     # For large tables, sample first N rows
-                    sample_query = transformed_query
-                    if db_type == 'postgres' and 'LIMIT' not in query_upper:
-                        sample_query = f"{transformed_query} LIMIT {max_sample_size}"
-                    elif db_type == 'mysql' and 'LIMIT' not in query_upper:
-                        sample_query = f"{transformed_query} LIMIT {max_sample_size}"
-                    elif db_type == 'sqlserver' and 'TOP' not in query_upper:
+                    if db_type in ['postgres', 'mysql']:
+                        sample_query = f"{clean_query} LIMIT {max_sample_size}"
+                    elif db_type == 'sqlserver':
                         # SQL Server uses TOP - insert after SELECT
-                        select_idx = query_upper.find('SELECT')
+                        select_idx = clean_query.upper().find('SELECT')
                         if select_idx != -1:
                             insert_pos = select_idx + 6  # After "SELECT"
                             sample_query = (
-                                transformed_query[:insert_pos] +
+                                clean_query[:insert_pos] +
                                 f' TOP {max_sample_size}' +
-                                transformed_query[insert_pos:]
+                                clean_query[insert_pos:]
                             )
+                        else:
+                            sample_query = clean_query
                     logger.info(
                         f"Executing sampled query for {schema}.{table}: "
                         f"expected {expected_row_count} rows, sampling {max_sample_size} rows"
@@ -265,6 +261,33 @@ class PreMigrationValidator:
             error_msg = f"Unexpected error during pre-migration validation: {str(e)}"
             logger.error(f"Pre-migration validation error for {schema}.{table}: {error_msg}", exc_info=True)
             return False, error_msg, validation_report
+    
+    def _remove_limit_clauses(self, query: str, db_type: str) -> str:
+        """
+        Remove LIMIT/OFFSET/TOP clauses from query to avoid duplicates
+        
+        Args:
+            query: SQL query string
+            db_type: Database type ('postgres', 'mysql', 'sqlserver')
+            
+        Returns:
+            Query with LIMIT/OFFSET/TOP clauses removed
+        """
+        if db_type in ['postgres', 'mysql']:
+            # Remove LIMIT clause (with optional OFFSET) - match more flexibly
+            # Pattern matches: LIMIT n, LIMIT n OFFSET m, LIMIT n OFFSET m, etc.
+            query = re.sub(r'\s+LIMIT\s+\d+(\s+OFFSET\s+\d+)?\s*', ' ', query, flags=re.IGNORECASE)
+            # Remove standalone OFFSET if any (must come after ORDER BY)
+            query = re.sub(r'\s+OFFSET\s+\d+\s*', ' ', query, flags=re.IGNORECASE)
+        elif db_type == 'sqlserver':
+            # Remove TOP clause
+            query = re.sub(r'\s+TOP\s+\d+\s+', ' ', query, flags=re.IGNORECASE)
+            # Remove OFFSET...FETCH clause
+            query = re.sub(r'\s+OFFSET\s+\d+\s+ROWS\s+FETCH\s+NEXT\s+\d+\s+ROWS\s+ONLY\s*', ' ', query, flags=re.IGNORECASE)
+        
+        # Clean up any double spaces
+        query = re.sub(r'\s+', ' ', query)
+        return query.strip()
     
     def _get_expected_row_count(
         self,

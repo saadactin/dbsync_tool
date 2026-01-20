@@ -276,9 +276,24 @@ class DataIntegrityVerifier:
                 )
                 return False, error_msg, comparison_report
             
+            # Log query details for debugging
+            logger.debug(
+                f"Comparing rows: source_query={source_query}, target_query={target_query}, "
+                f"source_rows_count={len(source_rows)}, target_rows_count={len(target_rows)}, "
+                f"column_names={column_names}"
+            )
+            
             # Compare each row
             mismatched_count = 0
             for row_idx, (source_row, target_row) in enumerate(zip(source_rows, target_rows)):
+                # Log first row for debugging
+                if row_idx == 0:
+                    logger.debug(
+                        f"First row comparison: source={source_row}, target={target_row}, "
+                        f"source_types={[type(v).__name__ for v in source_row]}, "
+                        f"target_types={[type(v).__name__ for v in target_row]}"
+                    )
+                
                 matches, error = self._compare_row_values(
                     source_row=source_row,
                     target_row=target_row,
@@ -290,8 +305,21 @@ class DataIntegrityVerifier:
                     mismatched_count += 1
                     comparison_report['mismatched_rows'].append({
                         'row_index': row_idx,
-                        'error': error
+                        'error': error,
+                        'source_row': str(source_row),
+                        'target_row': str(target_row)
                     })
+                    
+                    # Log first mismatch in detail
+                    if mismatched_count == 1:
+                        logger.error(
+                            f"First mismatch at row {row_idx}: {error}\n"
+                            f"Source row: {source_row}\n"
+                            f"Target row: {target_row}\n"
+                            f"Source types: {[type(v).__name__ for v in source_row]}\n"
+                            f"Target types: {[type(v).__name__ for v in target_row]}\n"
+                            f"Columns: {column_names}"
+                        )
                     
                     # Limit number of mismatched rows reported
                     if mismatched_count >= 10:
@@ -302,6 +330,14 @@ class DataIntegrityVerifier:
                         break
             
             if mismatched_count > 0:
+                # Log first few mismatches for debugging
+                for mismatch in comparison_report['mismatched_rows'][:3]:
+                    logger.error(
+                        f"Mismatch details: {mismatch.get('error', 'Unknown error')}, "
+                        f"row_index: {mismatch.get('row_index', 'unknown')}, "
+                        f"source: {mismatch.get('source_row', 'N/A')}, "
+                        f"target: {mismatch.get('target_row', 'N/A')}"
+                    )
                 error_msg = f"Found {mismatched_count} mismatched row(s)"
                 return False, error_msg, comparison_report
             
@@ -356,6 +392,13 @@ class DataIntegrityVerifier:
             
             # Compare normalized values
             if not self._values_equal(normalized_source, normalized_target):
+                # Log detailed mismatch for debugging
+                logger.warning(
+                    f"Value mismatch in column '{col_name}': "
+                    f"source={source_val!r} (type={type(source_val).__name__}), "
+                    f"target={target_val!r} (type={type(target_val).__name__}), "
+                    f"normalized_source={normalized_source!r}, normalized_target={normalized_target!r}"
+                )
                 error_msg = (
                     f"Column '{col_name}' mismatch: "
                     f"source={source_val!r}, target={target_val!r}"
@@ -426,20 +469,84 @@ class DataIntegrityVerifier:
         if val1 is None or val2 is None:
             return False
         
-        # Handle numeric types
+        # Convert both to same type for comparison
+        # Try numeric conversion first (handles cross-database type differences)
+        try:
+            # If either is numeric, try to compare as numbers
+            val1_num = None
+            val2_num = None
+            
+            if isinstance(val1, (int, float, Decimal)) or (isinstance(val1, str) and val1.replace('.', '', 1).replace('-', '', 1).isdigit()):
+                try:
+                    val1_num = float(val1)
+                except (ValueError, TypeError):
+                    pass
+            
+            if isinstance(val2, (int, float, Decimal)) or (isinstance(val2, str) and val2.replace('.', '', 1).replace('-', '', 1).isdigit()):
+                try:
+                    val2_num = float(val2)
+                except (ValueError, TypeError):
+                    pass
+            
+            # If both are numeric, compare as numbers
+            if val1_num is not None and val2_num is not None:
+                # Use tolerance for floating point comparison
+                if abs(val1_num - val2_num) < 0.0001:
+                    return True
+                return abs(val1_num - val2_num) < 0.0001
+        except (ValueError, TypeError, AttributeError):
+            pass
+        
+        # Handle numeric types (same database type)
         if isinstance(val1, (int, float, Decimal)) and isinstance(val2, (int, float, Decimal)):
             try:
                 return abs(float(val1) - float(val2)) < 0.0001  # Allow small floating point differences
             except:
                 return val1 == val2
         
-        # Handle string types
+        # Handle string types - normalize whitespace
         if isinstance(val1, str) and isinstance(val2, str):
+            # Normalize whitespace for comparison
+            val1_clean = val1.strip() if val1 else val1
+            val2_clean = val2.strip() if val2 else val2
+            if val1_clean == val2_clean:
+                return True
+            # Also try byte comparison (for binary strings)
+            try:
+                if val1.encode('utf-8') == val2.encode('utf-8'):
+                    return True
+            except:
+                pass
+        
+        # Handle bytes types
+        if isinstance(val1, bytes) and isinstance(val2, bytes):
             return val1 == val2
+        
+        # Convert bytes to string for comparison if one is string and other is bytes
+        if isinstance(val1, bytes) and isinstance(val2, str):
+            try:
+                return val1.decode('utf-8') == val2
+            except:
+                return False
+        if isinstance(val1, str) and isinstance(val2, bytes):
+            try:
+                return val1 == val2.decode('utf-8')
+            except:
+                return False
         
         # Handle datetime types
         if isinstance(val1, (datetime, date)) and isinstance(val2, (datetime, date)):
             return val1 == val2
+        
+        # Handle cross-type conversions (e.g., MySQL returns Decimal, PostgreSQL returns float)
+        # Try converting both to strings and comparing
+        try:
+            str1 = str(val1).strip()
+            str2 = str(val2).strip()
+            if str1 == str2:
+                return True
+        except:
+            pass
         
         # Default comparison
         return val1 == val2
