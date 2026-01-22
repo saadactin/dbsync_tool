@@ -244,18 +244,22 @@ class IncrementalSyncExecutor:
         self._validate_incremental_column(schema, table, incremental_column)
         
         # Determine target schema
-        # For MySQL targets with PostgreSQL/SQL Server sources: use target database name
-        # For PostgreSQL targets with SQL Server sources: map dbo to public
-        target_schema = schema
-        if self.table_handler.target_db_type == 'mysql' and \
-           self.table_handler.source_db_type in ['postgres', 'sqlserver']:
+        # For databases WITH schemas (PostgreSQL, SQL Server): always use target's default schema
+        # For databases WITHOUT schemas (MySQL): use database name directly
+        if self.table_handler.target_db_type == 'mysql':
+            # MySQL: Use database name directly (no schema concept)
             target_schema = self.target_connector.database_name
-        elif self.table_handler.target_db_type == 'postgres' and \
-             self.table_handler.source_db_type == 'sqlserver':
-            # Map SQL Server 'dbo' schema to PostgreSQL 'public' schema
-            if schema.lower() == 'dbo':
-                target_schema = 'public'
-                logger.info(f"Mapping SQL Server schema 'dbo' to PostgreSQL schema 'public'")
+            logger.info(f"Using MySQL database '{target_schema}' for source schema '{schema}' (no schema concept)")
+        elif self.table_handler.target_db_type == 'postgres':
+            # PostgreSQL: Always use 'public' schema regardless of source schema
+            target_schema = 'public'
+            logger.info(f"Mapping source schema '{schema}' to PostgreSQL schema 'public' (all tables in public schema)")
+        elif self.table_handler.target_db_type == 'sqlserver':
+            # SQL Server: Always use 'dbo' schema regardless of source schema
+            target_schema = 'dbo'
+            logger.info(f"Mapping source schema '{schema}' to SQL Server schema 'dbo' (all tables in dbo schema)")
+        else:
+            target_schema = schema
         
         # Create execution log
         log = SyncExecutionLog.objects.create(

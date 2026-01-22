@@ -48,18 +48,25 @@ class TableHandler:
             SchemaCreationError: If schema creation fails
         """
         try:
-            # For MySQL targets, if source is PostgreSQL/SQL Server, use the target database
-            # instead of creating a new database for each schema
-            if self.target_db_type == 'mysql' and self.source_db_type in ['postgres', 'sqlserver']:
-                # Use the target database that's already connected
-                # Don't try to create a database for each PostgreSQL schema
-                logger.info(f"Using target MySQL database for schema {schema}")
+            # For MySQL targets: no schema concept, skip schema creation
+            if self.target_db_type == 'mysql':
+                logger.info(f"MySQL doesn't use schemas - skipping schema creation for {schema}")
                 return
             
-            self.target_connector.ensure_schema_exists(schema)
-            logger.info(f"Schema {schema} ensured in target database")
+            # For PostgreSQL and SQL Server: ensure the target schema exists
+            # PostgreSQL: always use 'public'
+            # SQL Server: always use 'dbo'
+            if self.target_db_type == 'postgres':
+                target_schema = 'public'
+            elif self.target_db_type == 'sqlserver':
+                target_schema = 'dbo'
+            else:
+                target_schema = schema
+            
+            self.target_connector.ensure_schema_exists(target_schema)
+            logger.info(f"Schema {target_schema} ensured in target database")
         except Exception as e:
-            raise SchemaCreationError(f"Failed to create schema {schema}: {str(e)}")
+            raise SchemaCreationError(f"Failed to create schema {target_schema}: {str(e)}")
     
     def create_table_if_not_exists(
         self,
@@ -85,16 +92,21 @@ class TableHandler:
             source_schema = schema
         
         # Schema mapping for different database combinations
+        # For databases WITH schemas (PostgreSQL, SQL Server): always use target's default schema
+        # For databases WITHOUT schemas (MySQL): use database name directly
         target_schema = schema
-        if self.target_db_type == 'mysql' and self.source_db_type in ['postgres', 'sqlserver']:
-            # Use the target database name instead of the PostgreSQL schema
+        if self.target_db_type == 'mysql':
+            # MySQL doesn't have schemas - use database name directly
             target_schema = self.target_connector.database_name
-            logger.info(f"Mapping PostgreSQL schema '{schema}' to MySQL database '{target_schema}'")
-        elif self.target_db_type == 'postgres' and self.source_db_type == 'sqlserver':
-            # Map SQL Server 'dbo' schema to PostgreSQL 'public' schema
-            if schema.lower() == 'dbo':
-                target_schema = 'public'
-                logger.info(f"Mapping SQL Server schema 'dbo' to PostgreSQL schema 'public'")
+            logger.info(f"Mapping source schema '{schema}' to MySQL database '{target_schema}' (no schema concept in MySQL)")
+        elif self.target_db_type == 'postgres':
+            # PostgreSQL: Always use 'public' schema regardless of source schema
+            target_schema = 'public'
+            logger.info(f"Mapping source schema '{schema}' to PostgreSQL schema 'public' (all tables in public schema)")
+        elif self.target_db_type == 'sqlserver':
+            # SQL Server: Always use 'dbo' schema regardless of source schema
+            target_schema = 'dbo'
+            logger.info(f"Mapping source schema '{schema}' to SQL Server schema 'dbo' (all tables in dbo schema)")
         
         # Check if table exists (with error handling for transaction issues)
         try:
