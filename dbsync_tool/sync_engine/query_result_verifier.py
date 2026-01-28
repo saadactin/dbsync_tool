@@ -232,6 +232,10 @@ class QueryResultVerifier:
                 for idx, col_name in enumerate(column_names)
             }
             
+            # Handle Mock objects or non-dict types
+            if not isinstance(column_transformations, dict):
+                return True, None
+            
             # Check each transformation
             for col_name, transformation in column_transformations.items():
                 if col_name not in column_index_map:

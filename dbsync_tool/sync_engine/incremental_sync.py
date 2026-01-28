@@ -245,11 +245,16 @@ class IncrementalSyncExecutor:
         
         # Determine target schema
         # For databases WITH schemas (PostgreSQL, SQL Server): always use target's default schema
-        # For databases WITHOUT schemas (MySQL): use database name directly
+        # For databases WITHOUT schemas (MySQL, ClickHouse): use database name directly
         if self.table_handler.target_db_type == 'mysql':
             # MySQL: Use database name directly (no schema concept)
             target_schema = self.target_connector.database_name
             logger.info(f"Using MySQL database '{target_schema}' for source schema '{schema}' (no schema concept)")
+        elif self.table_handler.target_db_type == 'clickhouse':
+            # ClickHouse: Use database name directly (ClickHouse uses databases, not schemas)
+            # Map source schema to ClickHouse database name
+            target_schema = schema  # Use source schema as ClickHouse database name
+            logger.info(f"Mapping source schema '{schema}' to ClickHouse database '{target_schema}' (ClickHouse uses databases, not schemas)")
         elif self.table_handler.target_db_type == 'postgres':
             # PostgreSQL: Always use 'public' schema regardless of source schema
             target_schema = 'public'
@@ -293,6 +298,14 @@ class IncrementalSyncExecutor:
                 columns = self.source_connector.get_columns(schema, table)
                 inc_col_info = next((col for col in columns if col.name == incremental_column), None)
                 col_type = inc_col_info.data_type.lower() if inc_col_info else 'timestamp'
+                
+                # Handle ClickHouse DateTime64 precision (edge case)
+                # DateTime64 can have high precision, ensure checkpoint comparison works
+                if 'datetime64' in col_type:
+                    logger.debug(f"ClickHouse DateTime64 detected for incremental column {incremental_column}")
+                    # ClickHouse handles DateTime64 precision correctly, but ensure parsing works
+                    # The timezone handler should handle this, but verify format
+                
                 checkpoint_value = self.timezone_handler.parse_checkpoint_value(
                     checkpoint_value, col_type
                 )
@@ -767,11 +780,20 @@ class IncrementalSyncExecutor:
             )
             if column_info:
                 col_type = column_info.data_type.lower()
+                # Get database type to check ClickHouse-specific types
+                db_type = QueryBuilder.get_db_type(self.source_connector)
                 valid_types = [
                     'timestamp', 'datetime', 'date', 'timestamptz',
                     'int', 'integer', 'bigint', 'serial', 'int4', 'int8',
                     'float', 'double', 'numeric', 'decimal'
                 ]
+                # Add ClickHouse-specific types
+                if db_type == 'clickhouse':
+                    valid_types.extend([
+                        'datetime', 'datetime64', 'date',
+                        'int32', 'int64', 'uint32', 'uint64',
+                        'int8', 'int16', 'uint8', 'uint16'
+                    ])
                 if not any(vt in col_type for vt in valid_types):
                     logger.warning(
                         f"Incremental column '{incremental_column}' has type "

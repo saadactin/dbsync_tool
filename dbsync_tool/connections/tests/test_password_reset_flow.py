@@ -17,6 +17,13 @@ class PasswordResetFlowTestCase(TestCase):
             email='test@example.com',
             password='testpass123'
         )
+
+        # RBAC/Tenant setup: Admin user is their own tenant
+        from accounts.models import UserProfile, Role
+        UserProfile.objects.update_or_create(
+            user=self.user,
+            defaults={'role': Role.ADMIN, 'tenant': None}
+        )
         
         # Create a connection with corrupted password
         self.conn = DatabaseConnection.objects.create(
@@ -27,7 +34,9 @@ class PasswordResetFlowTestCase(TestCase):
             username='test',
             password='RESET_REQUIRED',  # Corrupted password marker
             database_name='test_db',
-            created_by=self.user
+            created_by=self.user,
+            tenant=self.user,
+            is_active=True
         )
     
     def test_connection_edit_shows_password_required(self):

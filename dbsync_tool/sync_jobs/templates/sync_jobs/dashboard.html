@@ -201,56 +201,9 @@
         </div>
     </div>
     
-    <!-- Top Jobs and Recent Activity -->
+    <!-- Recent Activity -->
     <div class="row mb-4">
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-header">
-                    <h5 class="mb-0">Top Jobs by Rows Synced</h5>
-                </div>
-                <div class="card-body">
-                    {% if top_jobs %}
-                        <div class="table-responsive">
-                            <table class="table table-sm">
-                                <thead>
-                                    <tr>
-                                        <th>Job Name</th>
-                                        <th>Total Rows</th>
-                                        <th>Status</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {% for job in top_jobs %}
-                                    <tr>
-                                        <td>
-                                            <a href="{% url 'sync_jobs:job_detail' job_id=job.id %}">
-                                                {{ job.name }}
-                                            </a>
-                                        </td>
-                                        <td>{{ job.total_rows|default:0|intcomma }}</td>
-                                        <td>
-                                            {% if job.status == 'completed' %}
-                                                <span class="badge bg-success">{{ job.get_status_display }}</span>
-                                            {% elif job.status == 'running' %}
-                                                <span class="badge bg-primary">{{ job.get_status_display }}</span>
-                                            {% elif job.status == 'failed' %}
-                                                <span class="badge bg-danger">{{ job.get_status_display }}</span>
-                                            {% else %}
-                                                <span class="badge bg-secondary">{{ job.get_status_display }}</span>
-                                            {% endif %}
-                                        </td>
-                                    </tr>
-                                    {% endfor %}
-                                </tbody>
-                            </table>
-                        </div>
-                    {% else %}
-                        <p class="text-muted text-center py-4">No jobs with synced data yet.</p>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-        <div class="col-md-6">
+        <div class="col-md-12">
             <div class="card">
                 <div class="card-header">
                     <h5 class="mb-0">Recent Activity</h5>

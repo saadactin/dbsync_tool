@@ -74,8 +74,11 @@ class FullSyncExecutor:
         # Different databases have different optimal batch sizes
         # PostgreSQL can handle larger batches
         # MySQL and SQL Server may need smaller batches
+        # ClickHouse can handle larger batches similar to PostgreSQL
         if source_type == 'postgres' and target_type == 'postgres':
             return min(MAX_BATCH_SIZE, DEFAULT_BATCH_SIZE * 2)  # 10000
+        elif source_type == 'clickhouse' or target_type == 'clickhouse':
+            return min(MAX_BATCH_SIZE, DEFAULT_BATCH_SIZE * 2)  # 10000 - ClickHouse handles large batches well
         elif source_type == 'mysql' or target_type == 'mysql':
             return min(DEFAULT_BATCH_SIZE, 3000)  # Smaller for MySQL
         elif source_type == 'sqlserver' or target_type == 'sqlserver':
@@ -92,6 +95,8 @@ class FullSyncExecutor:
             return 'mysql'
         elif 'SQLServer' in class_name:
             return 'sqlserver'
+        elif 'ClickHouse' in class_name:
+            return 'clickhouse'
         else:
             return 'unknown'
     
@@ -181,6 +186,10 @@ class FullSyncExecutor:
                 elif db_type == 'sqlserver':
                     # Remove square brackets
                     cols = [col.strip().strip('[').strip(']') for col in order_by_part.split(',')]
+                    order_by_part = ', '.join(cols)
+                elif db_type == 'clickhouse':
+                    # Remove backticks (ClickHouse uses backticks like MySQL)
+                    cols = [col.strip().strip('`') for col in order_by_part.split(',')]
                     order_by_part = ', '.join(cols)
                 
                 order_by = order_by_part
@@ -365,11 +374,20 @@ class FullSyncExecutor:
         
         # Determine target schema
         # For databases WITH schemas (PostgreSQL, SQL Server): always use target's default schema
-        # For databases WITHOUT schemas (MySQL): use database name directly
+        # For databases WITHOUT schemas (MySQL, ClickHouse): use database name directly
         if self.table_handler.target_db_type == 'mysql':
             # MySQL: Use database name directly (no schema concept)
             target_schema = self.target_connector.database_name
             logger.info(f"Using MySQL database '{target_schema}' for source schema '{schema}' (no schema concept)")
+        elif self.table_handler.target_db_type == 'clickhouse':
+            # ClickHouse: Prefer the database specified in the connection.
+            # If no database was specified on the connection, fall back to the
+            # source schema name (e.g. 'public').
+            target_schema = getattr(self.target_connector, 'database_name', None) or schema
+            logger.info(
+                f"Mapping source schema '{schema}' to ClickHouse database '{target_schema}' "
+                f"(connection database overrides schema when provided)"
+            )
         elif self.table_handler.target_db_type == 'postgres':
             # PostgreSQL: Always use 'public' schema regardless of source schema
             target_schema = 'public'
@@ -408,7 +426,8 @@ class FullSyncExecutor:
                 try:
                     target_tables = self.target_connector.get_tables(target_schema)
                     # For case-insensitive databases (like SQL Server), check case-insensitively
-                    if self.target_db_type == 'sqlserver':
+                    target_db_type = self.table_handler.target_db_type
+                    if target_db_type == 'sqlserver':
                         table_exists = any(t.lower() == table.lower() for t in target_tables)
                     else:
                         table_exists = table in target_tables
@@ -737,6 +756,8 @@ class FullSyncExecutor:
                                 cols = [col.strip().strip('`') for col in order_by_part.split(',')]
                             elif db_type == 'sqlserver':
                                 cols = [col.strip().strip('[').strip(']') for col in order_by_part.split(',')]
+                            elif db_type == 'clickhouse':
+                                cols = [col.strip().strip('`') for col in order_by_part.split(',')]
                             else:
                                 cols = [col.strip() for col in order_by_part.split(',')]
                             # Use the extracted order_by to ensure consistency

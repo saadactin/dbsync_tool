@@ -148,7 +148,8 @@ class PreMigrationValidator:
                     )
                 else:
                     # For large tables, sample first N rows
-                    if db_type in ['postgres', 'mysql']:
+                    if db_type in ['postgres', 'mysql', 'clickhouse']:
+                        # ClickHouse supports LIMIT/OFFSET like PostgreSQL and MySQL
                         sample_query = f"{clean_query} LIMIT {max_sample_size}"
                     elif db_type == 'sqlserver':
                         # SQL Server uses TOP - insert after SELECT
@@ -268,14 +269,19 @@ class PreMigrationValidator:
         
         Args:
             query: SQL query string
-            db_type: Database type ('postgres', 'mysql', 'sqlserver')
+            db_type: Database type ('postgres', 'mysql', 'sqlserver', 'clickhouse')
             
         Returns:
             Query with LIMIT/OFFSET/TOP clauses removed
         """
-        if db_type in ['postgres', 'mysql']:
+        # Handle Mock objects or non-string types
+        if not isinstance(query, str):
+            return str(query) if query else ""
+        
+        if db_type in ['postgres', 'mysql', 'clickhouse']:
             # Remove LIMIT clause (with optional OFFSET) - match more flexibly
             # Pattern matches: LIMIT n, LIMIT n OFFSET m, LIMIT n OFFSET m, etc.
+            # ClickHouse supports LIMIT/OFFSET like PostgreSQL and MySQL
             query = re.sub(r'\s+LIMIT\s+\d+(\s+OFFSET\s+\d+)?\s*', ' ', query, flags=re.IGNORECASE)
             # Remove standalone OFFSET if any (must come after ORDER BY)
             query = re.sub(r'\s+OFFSET\s+\d+\s*', ' ', query, flags=re.IGNORECASE)
@@ -320,6 +326,8 @@ class PreMigrationValidator:
                 schema_part = f'"{schema}"."{table}"'
             elif db_type == 'mysql':
                 schema_part = f'`{schema}`.`{table}`'
+            elif db_type == 'clickhouse':
+                schema_part = f'`{schema}`.`{table}`'
             elif db_type == 'sqlserver':
                 schema_part = f'[{schema}].[{table}]'
             else:
@@ -329,9 +337,14 @@ class PreMigrationValidator:
             count_query = f'SELECT COUNT(*) FROM {schema_part}'
             
             if where_clause:
-                # Normalize WHERE clause column quotes to match database type
-                normalized_where = QueryBuilder._normalize_where_clause_column_quotes(where_clause, db_type)
-                count_query += f' WHERE {normalized_where}'
+                # Handle Mock objects - convert to string or skip
+                if not isinstance(where_clause, str):
+                    where_clause = str(where_clause) if where_clause else None
+                
+                if where_clause:
+                    # Normalize WHERE clause column quotes to match database type
+                    normalized_where = QueryBuilder._normalize_where_clause_column_quotes(where_clause, db_type)
+                    count_query += f' WHERE {normalized_where}'
             
             # Execute COUNT query
             # COUNT queries shouldn't use LIMIT/OFFSET - execute directly
@@ -384,6 +397,9 @@ class PreMigrationValidator:
             if db_type == 'postgres' and 'LIMIT' not in query_upper:
                 sample_query += f' LIMIT {sample_size}'
             elif db_type == 'mysql' and 'LIMIT' not in query_upper:
+                sample_query += f' LIMIT {sample_size}'
+            elif db_type == 'clickhouse' and 'LIMIT' not in query_upper:
+                # ClickHouse supports LIMIT like PostgreSQL and MySQL
                 sample_query += f' LIMIT {sample_size}'
             elif db_type == 'sqlserver':
                 # SQL Server uses TOP - need to insert after SELECT

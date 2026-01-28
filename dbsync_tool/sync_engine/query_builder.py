@@ -21,7 +21,7 @@ class QueryBuilder:
             connector: Database connector instance
             
         Returns:
-            Database type string ('postgres', 'mysql', 'sqlserver')
+            Database type string ('postgres', 'mysql', 'sqlserver', 'clickhouse')
         """
         class_name = connector.__class__.__name__
         if 'Postgres' in class_name:
@@ -30,6 +30,8 @@ class QueryBuilder:
             return 'mysql'
         elif 'SQLServer' in class_name:
             return 'sqlserver'
+        elif 'ClickHouse' in class_name:
+            return 'clickhouse'
         else:
             raise QueryBuilderError(f"Unknown connector type: {class_name}")
     
@@ -71,6 +73,8 @@ class QueryBuilder:
             schema_part = f'`{schema}`.`{table}`'
         elif db_type == 'sqlserver':
             schema_part = f'[{schema}].[{table}]'
+        elif db_type == 'clickhouse':
+            schema_part = f'`{schema}`.`{table}`'
         else:
             schema_part = f'{schema}.{table}'
         
@@ -87,6 +91,8 @@ class QueryBuilder:
                     col_list = ', '.join(f'`{col}`' for col in columns)
                 elif db_type == 'sqlserver':
                     col_list = ', '.join(f'[{col}]' for col in columns)
+                elif db_type == 'clickhouse':
+                    col_list = ', '.join(f'`{col}`' for col in columns)
                 else:
                     col_list = ', '.join(columns)
         else:
@@ -109,6 +115,8 @@ class QueryBuilder:
                 order_cols = ', '.join(f'`{col.strip()}`' for col in order_by.split(','))
             elif db_type == 'sqlserver':
                 order_cols = ', '.join(f'[{col.strip()}]' for col in order_by.split(','))
+            elif db_type == 'clickhouse':
+                order_cols = ', '.join(f'`{col.strip()}`' for col in order_by.split(','))
             else:
                 order_cols = order_by
             query += f' ORDER BY {order_cols}'
@@ -120,6 +128,7 @@ class QueryBuilder:
             elif limit is not None:
                 query += f' OFFSET 0 ROWS FETCH NEXT {limit} ROWS ONLY'
         else:
+            # PostgreSQL, MySQL, and ClickHouse all support LIMIT/OFFSET
             if limit is not None:
                 query += f' LIMIT {limit}'
             if offset is not None:
@@ -154,6 +163,8 @@ class QueryBuilder:
             schema_part = f'`{schema}`.`{table}`'
         elif db_type == 'sqlserver':
             schema_part = f'[{schema}].[{table}]'
+        elif db_type == 'clickhouse':
+            schema_part = f'`{schema}`.`{table}`'
         else:
             schema_part = f'{schema}.{table}'
         
@@ -211,6 +222,9 @@ class QueryBuilder:
         elif db_type == 'sqlserver':
             schema_part = f'[{schema}].[{table}]'
             col_identifier = lambda c: f'[{c}]'
+        elif db_type == 'clickhouse':
+            schema_part = f'`{schema}`.`{table}`'
+            col_identifier = lambda c: f'`{c}`'
         else:
             schema_part = f'{schema}.{table}'
             col_identifier = lambda c: c
@@ -231,10 +245,19 @@ class QueryBuilder:
             formatted_value = QueryBuilder._format_checkpoint_value(
                 checkpoint_value, db_type
             )
-            query += f' WHERE {inc_col} > {formatted_value}'
+            # For ClickHouse, explicitly filter out NULL values in incremental column
+            # This ensures NULL values don't interfere with incremental sync
+            if db_type == 'clickhouse':
+                query += f' WHERE {inc_col} > {formatted_value} AND {inc_col} IS NOT NULL'
+            else:
+                query += f' WHERE {inc_col} > {formatted_value}'
         else:
             # First sync - get all rows (WHERE 1=1 allows ORDER BY)
-            query += ' WHERE 1=1'
+            # For ClickHouse, filter out NULL values in incremental column
+            if db_type == 'clickhouse':
+                query += f' WHERE {inc_col} IS NOT NULL'
+            else:
+                query += ' WHERE 1=1'
         
         # Add ORDER BY
         if order_by:
@@ -245,6 +268,8 @@ class QueryBuilder:
                 order_cols = ', '.join(f'`{col.strip()}`' for col in order_by.split(','))
             elif db_type == 'sqlserver':
                 order_cols = ', '.join(f'[{col.strip()}]' for col in order_by.split(','))
+            elif db_type == 'clickhouse':
+                order_cols = ', '.join(f'`{col.strip()}`' for col in order_by.split(','))
             else:
                 order_cols = order_by
             query += f' ORDER BY {order_cols}'
@@ -261,7 +286,7 @@ class QueryBuilder:
         
         Args:
             value: Checkpoint value (int, float, str, datetime)
-            db_type: Database type ('postgres', 'mysql', 'sqlserver')
+            db_type: Database type ('postgres', 'mysql', 'sqlserver', 'clickhouse')
             
         Returns:
             Formatted string for SQL query
@@ -278,6 +303,9 @@ class QueryBuilder:
                 escaped = value.replace("'", "''")
                 if db_type == 'postgres':
                     return f"'{escaped}'::timestamp"
+                elif db_type == 'clickhouse':
+                    # ClickHouse uses toDateTime() for timestamp conversion
+                    return f"toDateTime('{escaped}')"
                 else:
                     return f"'{escaped}'"
         else:
@@ -320,6 +348,9 @@ class QueryBuilder:
         elif db_type == 'sqlserver':
             schema_part = f'[{schema}].[{table}]'
             col = f'[{column}]'
+        elif db_type == 'clickhouse':
+            schema_part = f'`{schema}`.`{table}`'
+            col = f'`{column}`'
         else:
             schema_part = f'{schema}.{table}'
             col = column
@@ -364,6 +395,8 @@ class QueryBuilder:
                         transformed_cols.append(f'`{col}`')
                     elif db_type == 'sqlserver':
                         transformed_cols.append(f'[{col}]')
+                    elif db_type == 'clickhouse':
+                        transformed_cols.append(f'`{col}`')
                     else:
                         transformed_cols.append(col)
                     continue
@@ -375,6 +408,8 @@ class QueryBuilder:
                     quoted_col = f'`{col}`'
                 elif db_type == 'sqlserver':
                     quoted_col = f'[{col}]'
+                elif db_type == 'clickhouse':
+                    quoted_col = f'`{col}`'
                 else:
                     quoted_col = col
                 
@@ -384,7 +419,7 @@ class QueryBuilder:
                         # SQL Server uses LTRIM(RTRIM())
                         transformed = f'LTRIM(RTRIM({quoted_col}))'
                     else:
-                        # PostgreSQL and MySQL use TRIM()
+                        # PostgreSQL, MySQL, and ClickHouse use TRIM()
                         transformed = f'TRIM({quoted_col})'
                 elif transformation == 'UPPER':
                     transformed = f'UPPER({quoted_col})'
@@ -403,6 +438,8 @@ class QueryBuilder:
                     transformed_cols.append(f'`{col}`')
                 elif db_type == 'sqlserver':
                     transformed_cols.append(f'[{col}]')
+                elif db_type == 'clickhouse':
+                    transformed_cols.append(f'`{col}`')
                 else:
                     transformed_cols.append(col)
         
@@ -431,6 +468,10 @@ class QueryBuilder:
         if not where_clause:
             return where_clause
         
+        # Handle Mock objects or non-string types
+        if not isinstance(where_clause, str):
+            return str(where_clause) if where_clause else ""
+        
         # Replace PostgreSQL-style quotes (") with target database quotes
         if db_type == 'postgres':
             # Replace backticks and brackets with double quotes
@@ -444,6 +485,10 @@ class QueryBuilder:
             # Replace double quotes and backticks with brackets
             where_clause = re.sub(r'"([^"]+)"', r'[\1]', where_clause)  # "col" -> [col]
             where_clause = re.sub(r'`([^`]+)`', r'[\1]', where_clause)  # `col` -> [col]
+        elif db_type == 'clickhouse':
+            # Replace double quotes and brackets with backticks
+            where_clause = re.sub(r'"([^"]+)"', r'`\1`', where_clause)  # "col" -> `col`
+            where_clause = re.sub(r'\[([^\]]+)\]', r'`\1`', where_clause)  # [col] -> `col`
         
         return where_clause
 

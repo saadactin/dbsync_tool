@@ -96,6 +96,10 @@ class ConnectionPool:
                     elif connection.db_type == 'sqlserver':
                         # SQL Server doesn't support session-level read-only, but we can use hints
                         pass
+                    elif connection.db_type == 'clickhouse':
+                        # ClickHouse doesn't support session-level read-only transactions
+                        # Read-only is enforced at user/role level in ClickHouse
+                        pass
                 except Exception as e:
                     logger.warning(f"Failed to set read-only mode: {str(e)}")
                     # Continue anyway - read-only is a best practice, not required
@@ -169,6 +173,9 @@ class ConnectionPool:
                             cursor = connector._connection.cursor()
                             cursor.execute("SELECT 1")
                             cursor.close()
+                        elif connection.db_type == 'clickhouse':
+                            # ClickHouse uses query() method
+                            connector._connection.query("SELECT 1")
                         
                         # Connection is valid, return it
                         return connector

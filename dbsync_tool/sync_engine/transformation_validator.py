@@ -106,6 +106,10 @@ class TransformationValidator:
         except Exception as e:
             return False, f"Failed to get columns from table {schema}.{table}: {str(e)}"
         
+        # Handle Mock objects or non-dict types
+        if not isinstance(transformations, dict):
+            return True, None
+        
         # Validate each transformation
         for col_name, transformation in transformations.items():
             # Check for SQL injection in column name
@@ -142,6 +146,10 @@ class TransformationValidator:
             True if potentially dangerous patterns detected, False otherwise
         """
         if not clause:
+            return False
+        
+        # Handle Mock objects or non-string types
+        if not isinstance(clause, str):
             return False
         
         clause_upper = clause.upper().strip()

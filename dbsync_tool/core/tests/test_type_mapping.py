@@ -211,6 +211,194 @@ class TestTypeMapping(unittest.TestCase):
     def test_invalid_target_db(self):
         with self.assertRaises(ValueError):
             map_data_type('INT', 'mysql', 'invalid')
+    
+    # ClickHouse type mapping tests - PostgreSQL to ClickHouse
+    def test_postgres_to_clickhouse_int4(self):
+        result = map_data_type('int4', 'postgres', 'clickhouse')
+        self.assertEqual(result, 'Int32')
+    
+    def test_postgres_to_clickhouse_bigint(self):
+        result = map_data_type('bigint', 'postgres', 'clickhouse')
+        self.assertEqual(result, 'Int64')
+    
+    def test_postgres_to_clickhouse_smallint(self):
+        result = map_data_type('smallint', 'postgres', 'clickhouse')
+        self.assertEqual(result, 'Int16')
+    
+    def test_postgres_to_clickhouse_varchar(self):
+        result = map_data_type('varchar', 'postgres', 'clickhouse')
+        self.assertEqual(result, 'String')
+    
+    def test_postgres_to_clickhouse_text(self):
+        result = map_data_type('text', 'postgres', 'clickhouse')
+        self.assertEqual(result, 'String')
+    
+    def test_postgres_to_clickhouse_timestamp(self):
+        result = map_data_type('timestamp', 'postgres', 'clickhouse')
+        self.assertEqual(result, 'DateTime')
+    
+    def test_postgres_to_clickhouse_date(self):
+        result = map_data_type('date', 'postgres', 'clickhouse')
+        self.assertEqual(result, 'Date')
+    
+    def test_postgres_to_clickhouse_boolean(self):
+        result = map_data_type('boolean', 'postgres', 'clickhouse')
+        self.assertEqual(result, 'UInt8')
+    
+    def test_postgres_to_clickhouse_numeric(self):
+        result = map_data_type('numeric', 'postgres', 'clickhouse', precision=10, scale=2)
+        self.assertEqual(result, 'Decimal(10,2)')
+    
+    def test_postgres_to_clickhouse_uuid(self):
+        result = map_data_type('uuid', 'postgres', 'clickhouse')
+        self.assertEqual(result, 'UUID')
+    
+    def test_postgres_to_clickhouse_json(self):
+        result = map_data_type('json', 'postgres', 'clickhouse')
+        self.assertEqual(result, 'String')
+    
+    # MySQL to ClickHouse tests
+    def test_mysql_to_clickhouse_int(self):
+        result = map_data_type('INT', 'mysql', 'clickhouse')
+        self.assertEqual(result, 'Int32')
+    
+    def test_mysql_to_clickhouse_bigint(self):
+        result = map_data_type('BIGINT', 'mysql', 'clickhouse')
+        self.assertEqual(result, 'Int64')
+    
+    def test_mysql_to_clickhouse_varchar(self):
+        result = map_data_type('VARCHAR', 'mysql', 'clickhouse')
+        self.assertEqual(result, 'String')
+    
+    def test_mysql_to_clickhouse_datetime(self):
+        result = map_data_type('DATETIME', 'mysql', 'clickhouse')
+        self.assertEqual(result, 'DateTime')
+    
+    def test_mysql_to_clickhouse_decimal(self):
+        result = map_data_type('DECIMAL', 'mysql', 'clickhouse', precision=10, scale=2)
+        self.assertEqual(result, 'Decimal(10,2)')
+    
+    def test_mysql_to_clickhouse_tinyint_boolean(self):
+        result = map_data_type('TINYINT(1)', 'mysql', 'clickhouse')
+        self.assertEqual(result, 'UInt8')
+    
+    # SQL Server to ClickHouse tests
+    def test_sqlserver_to_clickhouse_int(self):
+        result = map_data_type('INT', 'sqlserver', 'clickhouse')
+        self.assertEqual(result, 'Int32')
+    
+    def test_sqlserver_to_clickhouse_nvarchar(self):
+        result = map_data_type('NVARCHAR', 'sqlserver', 'clickhouse')
+        self.assertEqual(result, 'String')
+    
+    def test_sqlserver_to_clickhouse_datetime2(self):
+        result = map_data_type('DATETIME2', 'sqlserver', 'clickhouse')
+        self.assertEqual(result, 'DateTime64')
+    
+    def test_sqlserver_to_clickhouse_bit(self):
+        result = map_data_type('BIT', 'sqlserver', 'clickhouse')
+        self.assertEqual(result, 'UInt8')
+    
+    def test_sqlserver_to_clickhouse_uniqueidentifier(self):
+        result = map_data_type('UNIQUEIDENTIFIER', 'sqlserver', 'clickhouse')
+        self.assertEqual(result, 'UUID')
+    
+    # ClickHouse to PostgreSQL tests
+    def test_clickhouse_to_postgres_int32(self):
+        result = map_data_type('Int32', 'clickhouse', 'postgres')
+        self.assertEqual(result, 'INTEGER')
+    
+    def test_clickhouse_to_postgres_int64(self):
+        result = map_data_type('Int64', 'clickhouse', 'postgres')
+        self.assertEqual(result, 'BIGINT')
+    
+    def test_clickhouse_to_postgres_string(self):
+        result = map_data_type('String', 'clickhouse', 'postgres')
+        self.assertEqual(result, 'TEXT')
+    
+    def test_clickhouse_to_postgres_datetime(self):
+        result = map_data_type('DateTime', 'clickhouse', 'postgres')
+        self.assertEqual(result, 'TIMESTAMP')
+    
+    def test_clickhouse_to_postgres_date(self):
+        result = map_data_type('Date', 'clickhouse', 'postgres')
+        self.assertEqual(result, 'DATE')
+    
+    def test_clickhouse_to_postgres_decimal(self):
+        result = map_data_type('Decimal', 'clickhouse', 'postgres', precision=10, scale=2)
+        self.assertEqual(result, 'NUMERIC(10,2)')
+    
+    def test_clickhouse_to_postgres_uuid(self):
+        result = map_data_type('UUID', 'clickhouse', 'postgres')
+        self.assertEqual(result, 'UUID')
+    
+    # ClickHouse to MySQL tests
+    def test_clickhouse_to_mysql_int32(self):
+        result = map_data_type('Int32', 'clickhouse', 'mysql')
+        self.assertEqual(result, 'INT')
+    
+    def test_clickhouse_to_mysql_int64(self):
+        result = map_data_type('Int64', 'clickhouse', 'mysql')
+        self.assertEqual(result, 'BIGINT')
+    
+    def test_clickhouse_to_mysql_string(self):
+        result = map_data_type('String', 'clickhouse', 'mysql')
+        self.assertEqual(result, 'TEXT')
+    
+    def test_clickhouse_to_mysql_datetime(self):
+        result = map_data_type('DateTime', 'clickhouse', 'mysql')
+        self.assertEqual(result, 'DATETIME')
+    
+    def test_clickhouse_to_mysql_uint8(self):
+        result = map_data_type('UInt8', 'clickhouse', 'mysql')
+        self.assertEqual(result, 'TINYINT')
+    
+    # ClickHouse to SQL Server tests
+    def test_clickhouse_to_sqlserver_int32(self):
+        result = map_data_type('Int32', 'clickhouse', 'sqlserver')
+        self.assertEqual(result, 'INT')
+    
+    def test_clickhouse_to_sqlserver_string(self):
+        result = map_data_type('String', 'clickhouse', 'sqlserver')
+        self.assertEqual(result, 'NVARCHAR(MAX)')
+    
+    def test_clickhouse_to_sqlserver_datetime(self):
+        result = map_data_type('DateTime', 'clickhouse', 'sqlserver')
+        self.assertEqual(result, 'DATETIME2')
+    
+    def test_clickhouse_to_sqlserver_uuid(self):
+        result = map_data_type('UUID', 'clickhouse', 'sqlserver')
+        self.assertEqual(result, 'UNIQUEIDENTIFIER')
+    
+    # ClickHouse same database type test
+    def test_clickhouse_to_clickhouse(self):
+        result = map_data_type('Int32', 'clickhouse', 'clickhouse')
+        self.assertEqual(result, 'Int32')
+    
+    # ClickHouse Nullable type handling
+    def test_clickhouse_nullable_type(self):
+        result = map_data_type('Nullable(Int32)', 'clickhouse', 'postgres')
+        self.assertEqual(result, 'INTEGER')
+    
+    def test_clickhouse_nullable_string(self):
+        result = map_data_type('Nullable(String)', 'clickhouse', 'mysql')
+        self.assertEqual(result, 'TEXT')
+    
+    # ClickHouse FixedString handling
+    def test_clickhouse_fixedstring(self):
+        result = map_data_type('FixedString', 'clickhouse', 'postgres', max_length=100)
+        self.assertEqual(result, 'CHAR(100)')  # Should include length when max_length is provided
+    
+    # ClickHouse Decimal precision/scale handling
+    def test_clickhouse_decimal_with_precision_scale(self):
+        result = map_data_type('Decimal', 'clickhouse', 'mysql', precision=19, scale=4)
+        self.assertEqual(result, 'DECIMAL(19,4)')
+    
+    # ClickHouse fallback test
+    def test_clickhouse_unknown_type_fallback(self):
+        # When mapping FROM ClickHouse to other DBs, fallback should be target DB's fallback
+        result = map_data_type('UNKNOWN_TYPE', 'clickhouse', 'postgres')
+        self.assertEqual(result, 'TEXT')  # Postgres fallback is TEXT
 
 
 if __name__ == '__main__':

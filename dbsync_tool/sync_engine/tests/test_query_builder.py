@@ -20,6 +20,9 @@ class TestQueryBuilder(unittest.TestCase):
         
         self.sqlserver_connector = Mock()
         self.sqlserver_connector.__class__.__name__ = 'SQLServerConnector'
+        
+        self.clickhouse_connector = Mock()
+        self.clickhouse_connector.__class__.__name__ = 'ClickHouseConnector'
     
     def test_get_db_type_postgres(self):
         """Test database type detection for PostgreSQL"""
@@ -35,6 +38,11 @@ class TestQueryBuilder(unittest.TestCase):
         """Test database type detection for SQL Server"""
         db_type = QueryBuilder.get_db_type(self.sqlserver_connector)
         self.assertEqual(db_type, 'sqlserver')
+    
+    def test_get_db_type_clickhouse(self):
+        """Test database type detection for ClickHouse"""
+        db_type = QueryBuilder.get_db_type(self.clickhouse_connector)
+        self.assertEqual(db_type, 'clickhouse')
     
     def test_get_db_type_unknown(self):
         """Test database type detection for unknown connector"""
@@ -79,6 +87,18 @@ class TestQueryBuilder(unittest.TestCase):
         self.assertIn('[id]', query)
         self.assertIn('[name]', query)
     
+    def test_build_select_query_clickhouse(self):
+        """Test SELECT query building for ClickHouse"""
+        query = QueryBuilder.build_select_query(
+            self.clickhouse_connector,
+            'test_db',
+            'users',
+            columns=['id', 'name']
+        )
+        self.assertIn('`test_db`.`users`', query)
+        self.assertIn('`id`', query)
+        self.assertIn('`name`', query)
+    
     def test_build_select_query_with_order_by(self):
         """Test SELECT query with ORDER BY"""
         query = QueryBuilder.build_select_query(
@@ -87,7 +107,7 @@ class TestQueryBuilder(unittest.TestCase):
             'users',
             order_by='id'
         )
-        self.assertIn('ORDER BY id', query)
+        self.assertIn('ORDER BY "id"', query)  # PostgreSQL quotes column names
     
     def test_build_select_query_with_where(self):
         """Test SELECT query with WHERE clause"""
@@ -122,6 +142,18 @@ class TestQueryBuilder(unittest.TestCase):
         )
         self.assertIn('OFFSET 20 ROWS FETCH NEXT 10 ROWS ONLY', query)
     
+    def test_build_select_query_with_limit_offset_clickhouse(self):
+        """Test SELECT query with LIMIT/OFFSET for ClickHouse"""
+        query = QueryBuilder.build_select_query(
+            self.clickhouse_connector,
+            'test_db',
+            'users',
+            limit=10,
+            offset=20
+        )
+        self.assertIn('LIMIT 10', query)
+        self.assertIn('OFFSET 20', query)
+    
     def test_build_count_query(self):
         """Test COUNT query building"""
         query = QueryBuilder.build_count_query(
@@ -141,6 +173,16 @@ class TestQueryBuilder(unittest.TestCase):
             where_clause='id > 10'
         )
         self.assertIn('WHERE id > 10', query)
+    
+    def test_build_count_query_clickhouse(self):
+        """Test COUNT query for ClickHouse"""
+        query = QueryBuilder.build_count_query(
+            self.clickhouse_connector,
+            'test_db',
+            'users'
+        )
+        self.assertIn('COUNT(*)', query)
+        self.assertIn('`test_db`.`users`', query)
     
     def test_build_incremental_query_postgres(self):
         """Test incremental query for PostgreSQL"""
@@ -188,6 +230,19 @@ class TestQueryBuilder(unittest.TestCase):
         )
         self.assertIn('WHERE [updated_at]', query)
         self.assertIn('ORDER BY [updated_at]', query)
+    
+    def test_build_incremental_query_clickhouse(self):
+        """Test incremental query for ClickHouse"""
+        query = QueryBuilder.build_incremental_query(
+            connector=self.clickhouse_connector,
+            schema='test_db',
+            table='users',
+            incremental_column='updated_at',
+            checkpoint_value='2024-01-01 00:00:00'
+        )
+        self.assertIn('WHERE `updated_at`', query)
+        self.assertIn('ORDER BY `updated_at`', query)
+        self.assertIn('toDateTime', query)  # ClickHouse uses toDateTime() for timestamp conversion
     
     def test_build_incremental_query_with_columns(self):
         """Test incremental query with specific columns"""
@@ -244,6 +299,16 @@ class TestQueryBuilder(unittest.TestCase):
         )
         self.assertEqual(query, 'SELECT MAX([id]) FROM [dbo].[users]')
     
+    def test_build_max_value_query_clickhouse(self):
+        """Test max value query for ClickHouse"""
+        query = QueryBuilder.build_max_value_query(
+            connector=self.clickhouse_connector,
+            schema='test_db',
+            table='users',
+            column='id'
+        )
+        self.assertEqual(query, 'SELECT MAX(`id`) FROM `test_db`.`users`')
+    
     def test_format_checkpoint_value_integer(self):
         """Test formatting integer checkpoint value"""
         value = QueryBuilder._format_checkpoint_value(100, 'postgres')
@@ -266,6 +331,12 @@ class TestQueryBuilder(unittest.TestCase):
         self.assertIn("'2024-01-01'", value)
         self.assertNotIn('::timestamp', value)
     
+    def test_format_checkpoint_value_string_clickhouse(self):
+        """Test formatting string checkpoint value for ClickHouse"""
+        value = QueryBuilder._format_checkpoint_value('2024-01-01 00:00:00', 'clickhouse')
+        self.assertIn("toDateTime", value)
+        self.assertIn("'2024-01-01 00:00:00'", value)
+    
     def test_format_checkpoint_value_numeric_string(self):
         """Test formatting numeric string checkpoint value"""
         value = QueryBuilder._format_checkpoint_value('100', 'postgres')
@@ -281,9 +352,11 @@ class TestQueryBuilder(unittest.TestCase):
             incremental_column='name',
             checkpoint_value=malicious_value
         )
-        # Should escape quotes properly
-        self.assertNotIn("DROP TABLE", query)
-        self.assertIn("''", query)  # Escaped quote
+        # Should escape quotes properly - the escaped string will contain the text but it's safe
+        self.assertIn("''", query)  # Escaped quote (single quote becomes two single quotes)
+        # The query should not execute DROP TABLE because the value is properly escaped as a string
+        # The text "DROP TABLE" will appear in the escaped string, but it's safe because it's in quotes
+        self.assertIn('"name"', query)  # Column name should be quoted (PostgreSQL uses double quotes)
     
     def test_build_incremental_query_missing_params(self):
         """Test incremental query with missing parameters"""

@@ -34,6 +34,8 @@ class TableHandler:
             return 'mysql'
         elif 'SQLServer' in class_name:
             return 'sqlserver'
+        elif 'ClickHouse' in class_name:
+            return 'clickhouse'
         else:
             raise ValueError(f"Unknown connector type: {class_name}")
     
@@ -53,10 +55,40 @@ class TableHandler:
                 logger.info(f"MySQL doesn't use schemas - skipping schema creation for {schema}")
                 return
             
+            # For ClickHouse targets: use database name (ClickHouse uses databases, not schemas)
+            if self.target_db_type == 'clickhouse':
+                # Prefer the database specified on the connection. If none is
+                # specified, fall back to the source schema (e.g. 'public').
+                preferred_db = getattr(self.target_connector, 'database_name', None) or schema
+                target_schema = preferred_db
+                logger.info(
+                    f"ClickHouse uses databases - preferring connection database "
+                    f"'{preferred_db}' (source schema '{schema}')"
+                )
+                
+                # Check if the preferred database actually exists; if not, try the
+                # original schema as a fallback (e.g. 'public').
+                try:
+                    databases = self.target_connector.list_databases()
+                    if preferred_db in databases:
+                        logger.info(f"ClickHouse database '{preferred_db}' already exists")
+                        return  # Database already exists, no need to create
+                    elif schema in databases:
+                        target_schema = schema
+                        logger.info(
+                            f"Preferred ClickHouse database '{preferred_db}' not found; "
+                            f"falling back to existing database '{schema}'"
+                        )
+                    # If neither exists, we'll attempt to create the preferred_db
+                except Exception as e:
+                    logger.warning(
+                        f"Could not check database existence for ClickHouse databases "
+                        f"('{preferred_db}' / '{schema}'): {e}. Will attempt to create."
+                    )
             # For PostgreSQL and SQL Server: ensure the target schema exists
             # PostgreSQL: always use 'public'
             # SQL Server: always use 'dbo'
-            if self.target_db_type == 'postgres':
+            elif self.target_db_type == 'postgres':
                 target_schema = 'public'
             elif self.target_db_type == 'sqlserver':
                 target_schema = 'dbo'
@@ -93,12 +125,21 @@ class TableHandler:
         
         # Schema mapping for different database combinations
         # For databases WITH schemas (PostgreSQL, SQL Server): always use target's default schema
-        # For databases WITHOUT schemas (MySQL): use database name directly
+        # For databases WITHOUT schemas (MySQL, ClickHouse): use database name directly
         target_schema = schema
         if self.target_db_type == 'mysql':
             # MySQL doesn't have schemas - use database name directly
             target_schema = self.target_connector.database_name
             logger.info(f"Mapping source schema '{schema}' to MySQL database '{target_schema}' (no schema concept in MySQL)")
+        elif self.target_db_type == 'clickhouse':
+            # ClickHouse uses databases, not schemas.
+            # Prefer the database specified in the connection; if not present,
+            # fall back to the source schema (e.g. 'public').
+            target_schema = getattr(self.target_connector, 'database_name', None) or schema
+            logger.info(
+                f"Mapping source schema '{schema}' to ClickHouse database '{target_schema}' "
+                f"(connection database overrides schema when provided)"
+            )
         elif self.target_db_type == 'postgres':
             # PostgreSQL: Always use 'public' schema regardless of source schema
             target_schema = 'public'
@@ -136,16 +177,35 @@ class TableHandler:
         # Map columns to target database types
         target_columns = []
         for col in source_columns:
+            # Extract precision and scale for numeric types
+            precision = None
+            scale = None
+            if col.data_type and '(' in col.data_type:
+                # Try to extract precision and scale from data type
+                try:
+                    params = col.data_type.split('(')[1].split(')')[0]
+                    if ',' in params:
+                        parts = params.split(',')
+                        precision = int(parts[0].strip())
+                        scale = int(parts[1].strip())
+                    else:
+                        precision = int(params.strip())
+                except (ValueError, IndexError):
+                    pass
+            
             mapped_type = map_data_type(
                 source_type=col.data_type,
                 source_db=self.source_db_type,
                 target_db=self.target_db_type,
-                max_length=col.max_length
+                max_length=col.max_length,
+                precision=precision,
+                scale=scale
             )
             
             # For AUTO_INCREMENT columns in MySQL, clear default_value
             # MySQL handles auto-increment internally, default values are not allowed
             # For IDENTITY columns in SQL Server, also clear default_value
+            # For ClickHouse, no special handling needed (no auto-increment concept)
             default_value = col.default_value
             if self.target_db_type == 'mysql' and 'AUTO_INCREMENT' in mapped_type.upper():
                 default_value = None
@@ -166,8 +226,12 @@ class TableHandler:
         
         # Create table
         try:
-            # Use target_schema (which is already set above for MySQL targets)
-            self.target_connector.create_table(target_schema, table, target_columns)
+            # Use target_schema (which is already set above for MySQL/ClickHouse targets)
+            # For ClickHouse, pass the source_db_type so connector can handle ENGINE/ORDER BY
+            if self.target_db_type == 'clickhouse':
+                self.target_connector.create_table(target_schema, table, target_columns, target_db_type=self.source_db_type)
+            else:
+                self.target_connector.create_table(target_schema, table, target_columns)
             logger.info(f"Created table {target_schema}.{table} in target database")
             return True
         except Exception as e:

@@ -69,6 +69,9 @@ def load_schemas_lazy(connection_id: str, user, use_cache: bool = True) -> List[
     """
     Lazy load schemas only (lightweight, uses connection pool and cache)
     
+    For ClickHouse: Returns databases (ClickHouse uses databases, not schemas)
+    The connector's get_schemas() method handles the database/schema mapping automatically.
+    
     Args:
         connection_id: UUID of the database connection
         user: User object (for permission checking)
@@ -76,6 +79,7 @@ def load_schemas_lazy(connection_id: str, user, use_cache: bool = True) -> List[
         
     Returns:
         List[Dict]: List of schema dictionaries with 'name' key
+                    For ClickHouse, these are database names
     """
     # Check cache first
     if use_cache:
@@ -152,9 +156,11 @@ def load_tables_lazy(connection_id: str, schema_name: str, user, use_cache: bool
     """
     Lazy load tables for a specific schema (uses connection pool and cache)
     
+    For ClickHouse: schema_name is treated as database name (ClickHouse uses databases, not schemas)
+    
     Args:
         connection_id: UUID of the database connection
-        schema_name: Name of the schema/database
+        schema_name: Name of the schema/database (for ClickHouse, this is the database name)
         user: User object (for permission checking)
         use_cache: Whether to use cache (default: True)
         
@@ -215,9 +221,12 @@ def load_columns_lazy(connection_id: str, schema_name: str, table_name: str, use
     """
     Lazy load columns for a specific table (uses connection pool and cache)
     
+    For ClickHouse: schema_name is treated as database name (ClickHouse uses databases, not schemas)
+    ClickHouse column types are parsed correctly (e.g., DateTime, Int64, Decimal(10,2), Nullable(Type))
+    
     Args:
         connection_id: UUID of the database connection
-        schema_name: Name of the schema/database
+        schema_name: Name of the schema/database (for ClickHouse, this is the database name)
         table_name: Name of the table
         user: User object (for permission checking)
         use_cache: Whether to use cache (default: True)

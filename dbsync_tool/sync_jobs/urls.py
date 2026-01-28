@@ -8,6 +8,7 @@ urlpatterns = [
     path('jobs/', views.job_list, name='list'),
     path('create/step1/', views.create_job_step1_view, name='create_step1'),
     path('create/step2/', views.create_job_step2_view, name='create_step2'),
+    path('create/step2/load-metadata/', views.create_job_step2_load_metadata, name='create_step2_load_metadata'),
     path('create/step2/submit/', views.create_job_step2_submit, name='create_step2_submit'),
     path('api/validate-transformation-query/', views.validate_transformation_query, name='validate_transformation_query'),
     path('create/step3/', views.create_job_step3_view, name='create_step3'),

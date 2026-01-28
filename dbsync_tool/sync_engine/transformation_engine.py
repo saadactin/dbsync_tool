@@ -159,6 +159,9 @@ class TransformationEngine:
         elif db_type == 'mysql':
             quote_char = '`'
             close_char = '`'
+        elif db_type == 'clickhouse':
+            quote_char = '`'
+            close_char = '`'
         elif db_type == 'sqlserver':
             quote_char = '['
             close_char = ']'
@@ -184,10 +187,14 @@ class TransformationEngine:
                     if db_type == 'sqlserver':
                         # SQL Server uses [] brackets, no escaping needed
                         in_quotes = False
-                    elif i + 1 < len(select_clause) and select_clause[i + 1] == quote_char:
-                        # Escaped quote (for postgres/mysql)
-                        current_col += select_clause[i + 1]
-                        i += 1
+                    elif db_type in ('postgres', 'mysql', 'clickhouse'):
+                        # Escaped quote (for postgres/mysql/clickhouse)
+                        if i + 1 < len(select_clause) and select_clause[i + 1] == quote_char:
+                            current_col += select_clause[i + 1]
+                            i += 1
+                        else:
+                            # Closing quote
+                            in_quotes = False
                     else:
                         # Closing quote
                         in_quotes = False
@@ -216,6 +223,9 @@ class TransformationEngine:
         elif db_type == 'mysql':
             if column.startswith('`') and column.endswith('`'):
                 return column[1:-1]
+        elif db_type == 'clickhouse':
+            if column.startswith('`') and column.endswith('`'):
+                return column[1:-1]
         elif db_type == 'sqlserver':
             if column.startswith('[') and column.endswith(']'):
                 return column[1:-1]
@@ -234,7 +244,7 @@ class TransformationEngine:
         Args:
             column: Column name (unquoted)
             transformation: Transformation type (TRIM, UPPER, LOWER)
-            db_type: Database type ('postgres', 'mysql', 'sqlserver')
+            db_type: Database type ('postgres', 'mysql', 'sqlserver', 'clickhouse')
             
         Returns:
             Formatted SELECT clause expression with transformation applied
@@ -243,6 +253,7 @@ class TransformationEngine:
             - PostgreSQL: TRIM("name") AS "name"
             - MySQL: TRIM(`name`) AS `name`
             - SQL Server: LTRIM(RTRIM([name])) AS [name]
+            - ClickHouse: trim(`name`) AS `name`
         """
         transformation = transformation.upper()
         
@@ -250,6 +261,8 @@ class TransformationEngine:
         if db_type == 'postgres':
             quoted_col = f'"{column}"'
         elif db_type == 'mysql':
+            quoted_col = f'`{column}`'
+        elif db_type == 'clickhouse':
             quoted_col = f'`{column}`'
         elif db_type == 'sqlserver':
             quoted_col = f'[{column}]'
@@ -261,13 +274,24 @@ class TransformationEngine:
             if db_type == 'sqlserver':
                 # SQL Server uses LTRIM(RTRIM())
                 transformed = f'LTRIM(RTRIM({quoted_col}))'
+            elif db_type == 'clickhouse':
+                # ClickHouse uses lowercase trim()
+                transformed = f'trim({quoted_col})'
             else:
                 # PostgreSQL and MySQL use TRIM()
                 transformed = f'TRIM({quoted_col})'
         elif transformation == 'UPPER':
-            transformed = f'UPPER({quoted_col})'
+            if db_type == 'clickhouse':
+                # ClickHouse uses lowercase upper()
+                transformed = f'upper({quoted_col})'
+            else:
+                transformed = f'UPPER({quoted_col})'
         elif transformation == 'LOWER':
-            transformed = f'LOWER({quoted_col})'
+            if db_type == 'clickhouse':
+                # ClickHouse uses lowercase lower()
+                transformed = f'lower({quoted_col})'
+            else:
+                transformed = f'LOWER({quoted_col})'
         else:
             # Unknown transformation, return original
             logger.warning(f"Unknown transformation '{transformation}', using original column")

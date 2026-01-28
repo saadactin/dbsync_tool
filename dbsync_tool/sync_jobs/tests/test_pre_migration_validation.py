@@ -246,3 +246,65 @@ class PreMigrationValidatorTest(TestCase):
         # Should still validate (syntax check)
         self.assertTrue(is_valid)
         self.assertIsNotNone(report)
+    
+    def test_remove_limit_clauses_clickhouse(self):
+        """Test removing LIMIT/OFFSET clauses for ClickHouse"""
+        query = 'SELECT * FROM `test_db`.`users` ORDER BY id LIMIT 10 OFFSET 5'
+        result = self.validator._remove_limit_clauses(query, 'clickhouse')
+        self.assertNotIn('LIMIT', result)
+        self.assertNotIn('OFFSET', result)
+        self.assertIn('SELECT', result)
+        self.assertIn('ORDER BY', result)
+    
+    def test_get_expected_row_count_clickhouse(self):
+        """Test getting expected row count with ClickHouse connector"""
+        clickhouse_connector = Mock(spec=DBConnector)
+        clickhouse_connector.__class__.__name__ = 'ClickHouseConnector'
+        
+        # Mock cursor context manager
+        mock_cursor = Mock()
+        mock_cursor.execute = Mock()
+        result_list = [(15,)]  # fetchall returns a list of tuples
+        mock_cursor.fetchall = Mock(return_value=result_list)
+        mock_cursor.__enter__ = Mock(return_value=mock_cursor)
+        mock_cursor.__exit__ = Mock(return_value=False)
+        
+        # Mock connection
+        mock_connection = Mock()
+        mock_connection.cursor = Mock(return_value=mock_cursor)
+        clickhouse_connector._connection = mock_connection
+        
+        validator = PreMigrationValidator(clickhouse_connector)
+        
+        count = validator._get_expected_row_count(
+            schema='test_db',
+            table='users',
+            where_clause="status = 1",
+            column_transformations={}
+        )
+        
+        self.assertEqual(count, 15)
+    
+    def test_fetch_sample_rows_clickhouse(self):
+        """Test fetching sample rows with ClickHouse"""
+        clickhouse_connector = Mock(spec=DBConnector)
+        clickhouse_connector.__class__.__name__ = 'ClickHouseConnector'
+        sample_data = [
+            (1, 'John Doe', 'john@example.com'),
+            (2, 'Jane Smith', 'jane@example.com')
+        ]
+        clickhouse_connector.fetch_batch = Mock(return_value=sample_data)
+        
+        validator = PreMigrationValidator(clickhouse_connector)
+        
+        rows = validator._fetch_sample_rows(
+            transformed_query='SELECT `id`, `name`, `email` FROM `test_db`.`users`',
+            sample_size=2
+        )
+        
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows, sample_data)
+        # Verify LIMIT was added for ClickHouse
+        clickhouse_connector.fetch_batch.assert_called_once()
+        call_args = clickhouse_connector.fetch_batch.call_args
+        self.assertIn('LIMIT', call_args[1]['query'] or call_args[0][0])

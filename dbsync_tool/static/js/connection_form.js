@@ -13,7 +13,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const defaultPorts = {
         'postgres': '5432',
         'mysql': '3306',
-        'sqlserver': '1433'
+        'sqlserver': '1433',
+        'clickhouse': '9000'
     };
     
     // Set default port based on database type

@@ -8,6 +8,7 @@ from connections.connectors.postgres import PostgresConnector
 from connections.connectors.mysql import MySQLConnector
 from connections.connectors.sqlserver import SQLServerConnector
 from connections.connectors.base import ColumnInfo
+from core.exceptions import DatabaseConnectionError
 
 
 class TestIntegrationCrossDB(unittest.TestCase):
@@ -52,6 +53,19 @@ class TestIntegrationCrossDB(unittest.TestCase):
                     password=os.environ.get('TEST_SQLSERVER_PASS', 'test'),
                     database_name=os.environ.get('TEST_SQLSERVER_DB', 'test')
                 )
+
+                # Proactively verify connectivity; if any required DB is not reachable,
+                # skip integration tests rather than failing the whole suite.
+                try:
+                    cls.pg_conn.connect()
+                    cls.pg_conn.close()
+                    cls.mysql_conn.connect()
+                    cls.mysql_conn.close()
+                    cls.sqlserver_conn.connect()
+                    cls.sqlserver_conn.close()
+                except (DatabaseConnectionError, Exception) as e:
+                    print(f"Warning: Integration DB(s) not available, skipping integration tests: {e}")
+                    cls.skip_tests = True
             except Exception as e:
                 print(f"Warning: Could not set up test connections: {e}")
                 cls.skip_tests = True

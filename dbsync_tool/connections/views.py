@@ -39,7 +39,8 @@ class ConnectionListView(LoginRequiredMixin, ListView):
         db_type_info = {
             'postgres': {'name': 'PostgreSQL', 'connections': []},
             'mysql': {'name': 'MySQL', 'connections': []},
-            'sqlserver': {'name': 'SQL Server', 'connections': []}
+            'sqlserver': {'name': 'SQL Server', 'connections': []},
+            'clickhouse': {'name': 'ClickHouse', 'connections': []}
         }
         
         for conn in connections:

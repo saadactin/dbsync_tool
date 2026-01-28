@@ -5,6 +5,10 @@ from connections.models import DatabaseConnection
 from connections.connectors.postgres import PostgresConnector
 from connections.connectors.mysql import MySQLConnector
 from connections.connectors.sqlserver import SQLServerConnector
+try:
+    from connections.connectors.clickhouse import ClickHouseConnector
+except ImportError:
+    ClickHouseConnector = None
 from core.encryption import decrypt_password
 from connections.connectors.base import DBConnector
 from core.exceptions import InvalidDatabaseTypeError
@@ -42,6 +46,16 @@ def get_connector(connection: DatabaseConnection) -> DBConnector:
         )
     elif connection.db_type == 'sqlserver':
         return SQLServerConnector(
+            host=connection.host,
+            port=connection.port,
+            username=connection.username,
+            password=password,
+            database_name=connection.database_name
+        )
+    elif connection.db_type == 'clickhouse':
+        if ClickHouseConnector is None:
+            raise InvalidDatabaseTypeError("ClickHouse connector not available. Install clickhouse-connect.")
+        return ClickHouseConnector(
             host=connection.host,
             port=connection.port,
             username=connection.username,

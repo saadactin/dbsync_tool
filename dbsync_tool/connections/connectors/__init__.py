@@ -20,13 +20,18 @@ try:
 except ImportError:
     SQLServerConnector = None
 
+try:
+    from .clickhouse import ClickHouseConnector
+except ImportError:
+    ClickHouseConnector = None
+
 
 def get_connector(db_type: str, host: str, port: int, username: str, password: str, database_name: str = None) -> DBConnector:
     """
     Factory function to create appropriate connector based on database type
     
     Args:
-        db_type: Database type ('postgres', 'mysql', 'sqlserver')
+        db_type: Database type ('postgres', 'mysql', 'sqlserver', 'clickhouse')
         host: Database host
         port: Database port
         username: Database username
@@ -51,6 +56,10 @@ def get_connector(db_type: str, host: str, port: int, username: str, password: s
         if SQLServerConnector is None:
             raise InvalidDatabaseTypeError("SQL Server connector not available. Install pyodbc and ODBC driver.")
         return SQLServerConnector(host, port, username, password, database_name)
+    elif db_type == 'clickhouse':
+        if ClickHouseConnector is None:
+            raise InvalidDatabaseTypeError("ClickHouse connector not available. Install clickhouse-connect.")
+        return ClickHouseConnector(host, port, username, password, database_name)
     else:
         raise InvalidDatabaseTypeError(f"Unsupported database type: {db_type}")
 

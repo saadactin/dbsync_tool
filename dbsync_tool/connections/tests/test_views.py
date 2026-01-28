@@ -23,6 +23,18 @@ class ConnectionViewTests(TestCase):
             username='otheruser',
             password='testpass123'
         )
+
+        # RBAC/Tenant setup: for Admin users, `tenant` is self (see TenantService rules)
+        from accounts.models import UserProfile, Role
+        UserProfile.objects.update_or_create(
+            user=self.user,
+            defaults={'role': Role.ADMIN, 'tenant': None}
+        )
+        UserProfile.objects.update_or_create(
+            user=self.other_user,
+            defaults={'role': Role.ADMIN, 'tenant': None}
+        )
+
         self.connection = DatabaseConnection.objects.create(
             name="Test DB",
             db_type="postgres",
@@ -31,7 +43,9 @@ class ConnectionViewTests(TestCase):
             username="testuser",
             password="testpass",
             database_name="testdb",
-            created_by=self.user
+            created_by=self.user,
+            tenant=self.user,
+            is_active=True
         )
     
     def test_list_view_requires_login(self):
@@ -57,7 +71,9 @@ class ConnectionViewTests(TestCase):
             username="other",
             password="pass",
             database_name="otherdb",
-            created_by=self.other_user
+            created_by=self.other_user,
+            tenant=self.other_user,
+            is_active=True
         )
         
         self.client.login(username='testuser', password='testpass123')
@@ -105,7 +121,9 @@ class ConnectionViewTests(TestCase):
             username="other",
             password="pass",
             database_name="otherdb",
-            created_by=self.other_user
+            created_by=self.other_user,
+            tenant=self.other_user,
+            is_active=True
         )
         response = self.client.get(reverse('connections:detail', args=[other_conn.id]))
         self.assertEqual(response.status_code, 404)
@@ -125,7 +143,9 @@ class ConnectionViewTests(TestCase):
             username="other",
             password="pass",
             database_name="otherdb",
-            created_by=self.other_user
+            created_by=self.other_user,
+            tenant=self.other_user,
+            is_active=True
         )
         response = self.client.get(reverse('connections:update', args=[other_conn.id]))
         self.assertEqual(response.status_code, 404)
@@ -145,7 +165,9 @@ class ConnectionViewTests(TestCase):
             username="other",
             password="pass",
             database_name="otherdb",
-            created_by=self.other_user
+            created_by=self.other_user,
+            tenant=self.other_user,
+            is_active=True
         )
         response = self.client.post(reverse('connections:delete', args=[other_conn.id]))
         self.assertEqual(response.status_code, 404)

@@ -67,11 +67,8 @@ def dashboard(request):
         # Get execution trends (last 30 days)
         trends = DashboardService.get_execution_trends(request.user, days=30)
         
-        # Get top jobs
-        top_jobs = DashboardService.get_top_jobs_by_rows(request.user, limit=5)
-        
-        # Get recent activity
-        recent_activity = DashboardService.get_recent_activity(request.user, limit=10)
+        # Get recent activity (last 5 jobs only)
+        recent_activity = DashboardService.get_recent_activity(request.user, limit=5)
         
         # Serialize trends data to JSON for JavaScript
         import json
@@ -92,7 +89,6 @@ def dashboard(request):
             'stats': stats,
             'trends': trends,
             'trends_json': trends_json,  # JSON serialized for JavaScript
-            'top_jobs': top_jobs,
             'recent_activity': recent_activity,
             'user_role': profile.role,  # For template display
             'is_super_admin': profile.is_super_admin(),
@@ -597,12 +593,18 @@ def create_job_step3_view(request):
                     request.user
                 )
                 # Filter to date/timestamp columns and integer columns (for incremental sync)
+                # Supports: PostgreSQL, MySQL, SQL Server, and ClickHouse types
                 incremental_candidates = []
                 for col in columns:
                     data_type_lower = col['data_type'].lower()
+                    # Standard types (PostgreSQL, MySQL, SQL Server)
                     if any(dt in data_type_lower for dt in ['timestamp', 'datetime', 'date', 'time']):
                         incremental_candidates.append(col)
                     elif any(dt in data_type_lower for dt in ['int', 'bigint', 'serial']):
+                        incremental_candidates.append(col)
+                    # ClickHouse-specific types (DateTime64, UInt32, UInt64)
+                    # Note: ClickHouse Int32, Int64 are already covered by 'int' check above
+                    elif any(dt in data_type_lower for dt in ['datetime64', 'uint32', 'uint64']):
                         incremental_candidates.append(col)
                 
                 table_columns[f"{schema_name}.{table_name}"] = {
@@ -1423,12 +1425,19 @@ def job_edit(request, job_id):
                     table.table_name,
                     request.user
                 )
+                # Filter to date/timestamp columns and integer columns (for incremental sync)
+                # Supports: PostgreSQL, MySQL, SQL Server, and ClickHouse types
                 incremental_candidates = []
                 for col in columns:
                     data_type_lower = col['data_type'].lower()
+                    # Standard types (PostgreSQL, MySQL, SQL Server)
                     if any(dt in data_type_lower for dt in ['timestamp', 'datetime', 'date', 'time']):
                         incremental_candidates.append(col)
                     elif any(dt in data_type_lower for dt in ['int', 'bigint', 'serial']):
+                        incremental_candidates.append(col)
+                    # ClickHouse-specific types (DateTime64, UInt32, UInt64)
+                    # Note: ClickHouse Int32, Int64 are already covered by 'int' check above
+                    elif any(dt in data_type_lower for dt in ['datetime64', 'uint32', 'uint64']):
                         incremental_candidates.append(col)
                 
                 table_columns[f"{table.schema_name}.{table.table_name}"] = {

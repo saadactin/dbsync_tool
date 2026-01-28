@@ -7,6 +7,7 @@ DB_TYPES = [
     ('postgres', 'PostgreSQL'),
     ('mysql', 'MySQL'),
     ('sqlserver', 'SQL Server'),
+    ('clickhouse', 'ClickHouse'),  # NEW
 ]
 
 DB_TYPE_CHOICES = DB_TYPES
@@ -16,6 +17,7 @@ DEFAULT_PORTS = {
     'postgres': 5432,
     'mysql': 3306,
     'sqlserver': 1433,
+    'clickhouse': 9000,  # NEW - Native protocol port (HTTP is 8123)
 }
 
 # Connection string templates (for reference, not used directly)
@@ -23,6 +25,7 @@ CONNECTION_STRING_TEMPLATES = {
     'postgres': 'postgresql://{username}:{password}@{host}:{port}/{database}',
     'mysql': 'mysql+connector://{username}:{password}@{host}:{port}/{database}',
     'sqlserver': 'mssql+pyodbc://{username}:{password}@{host}:{port}/{database}?driver=ODBC+Driver+17+for+SQL+Server',
+    'clickhouse': 'clickhouse://{username}:{password}@{host}:{port}/{database}',  # NEW
 }
 
 # Sync job status choices
