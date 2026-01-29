@@ -70,6 +70,26 @@ def dashboard(request):
         # Get recent activity (last 5 jobs only)
         recent_activity = DashboardService.get_recent_activity(request.user, limit=5)
         
+        # Get health score
+        from sync_jobs.services import HealthScoreService
+        try:
+            health_score_data = HealthScoreService.calculate_score(request.user)
+            health_score_trend = HealthScoreService.get_trend(request.user, days=7)
+            health_score_trend_direction = HealthScoreService.get_trend_direction(request.user)
+        except Exception as e:
+            logger.error(f"Error calculating health score: {str(e)}", exc_info=True)
+            health_score_data = {
+                'score': 0, 
+                'components': {
+                    'success_rate': 0,
+                    'connection_health': 0,
+                    'schedule_adherence': 0,
+                    'error_frequency': 0
+                }
+            }
+            health_score_trend = []
+            health_score_trend_direction = 'stable'
+        
         # Serialize trends data to JSON for JavaScript
         import json
         from django.utils.dateformat import format
@@ -84,6 +104,60 @@ def dashboard(request):
             for trend in trends
         ])
         
+        # Serialize health score trend data
+        health_score_trend_json = json.dumps(health_score_trend)
+        
+        # Get anomaly alerts
+        from sync_jobs.services import AnomalyDetectionService
+        try:
+            anomalies = AnomalyDetectionService.get_active_anomalies(request.user)
+            anomaly_stats = AnomalyDetectionService.get_anomaly_stats(request.user)
+            anomalies_json = json.dumps([
+                {
+                    'id': str(a.id),
+                    'job': {'id': str(a.job.id), 'name': a.job.name},
+                    'anomaly_type': a.anomaly_type,
+                    'anomaly_type_display': a.get_anomaly_type_display(),
+                    'severity': a.severity,
+                    'severity_display': a.get_severity_display(),
+                    'description': a.description,
+                    'detected_at': a.detected_at.isoformat() if a.detected_at else None,
+                    'is_acknowledged': a.is_acknowledged,
+                }
+                for a in anomalies[:10]  # Limit to 10 for initial load
+            ])
+        except Exception as e:
+            logger.error(f"Error retrieving anomalies: {str(e)}", exc_info=True)
+            anomalies = []
+            anomaly_stats = {'total': 0, 'critical': 0, 'warning': 0, 'acknowledged': 0, 'unacknowledged': 0}
+            anomalies_json = json.dumps([])
+        
+        # Get recommendations data
+        from sync_jobs.services import RecommendationsEngine
+        try:
+            recommendations = RecommendationsEngine.get_active_recommendations(request.user)
+            recommendation_stats = RecommendationsEngine.get_recommendation_stats(request.user)
+            recommendations_json = json.dumps([
+                {
+                    'id': str(r.id),
+                    'category': r.category,
+                    'priority': r.priority,
+                    'title': r.title,
+                    'description': r.description,
+                    'action_url': r.action_url,
+                    'related_job': {'id': str(r.related_job.id), 'name': r.related_job.name} if r.related_job else None,
+                    'related_connection': {'id': str(r.related_connection.id), 'name': r.related_connection.name} if r.related_connection else None,
+                    'created_at': r.created_at.isoformat() if r.created_at else None,
+                    'is_dismissed': r.is_dismissed
+                }
+                for r in recommendations[:10]  # Limit to 10 for dashboard
+            ])
+        except Exception as e:
+            logger.error(f"Error retrieving recommendations: {str(e)}", exc_info=True)
+            recommendations = []
+            recommendation_stats = {'total': 0, 'high_priority': 0, 'medium_priority': 0, 'low_priority': 0, 'by_category': {}, 'dismissed': 0}
+            recommendations_json = json.dumps([])
+        
         context = {
             'page_title': 'Dashboard',
             'stats': stats,
@@ -93,6 +167,16 @@ def dashboard(request):
             'user_role': profile.role,  # For template display
             'is_super_admin': profile.is_super_admin(),
             'is_admin': profile.is_admin(),
+            'health_score': health_score_data,
+            'health_score_trend': health_score_trend,
+            'health_score_trend_json': health_score_trend_json,
+            'health_score_trend_direction': health_score_trend_direction,
+            'anomalies': anomalies,
+            'anomaly_stats': anomaly_stats,
+            'anomalies_json': anomalies_json,
+            'recommendations': recommendations,
+            'recommendation_stats': recommendation_stats,
+            'recommendations_json': recommendations_json,
         }
         
         return render(request, 'sync_jobs/dashboard.html', context)

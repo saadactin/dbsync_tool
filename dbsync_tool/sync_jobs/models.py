@@ -366,3 +366,294 @@ class JobTemplate(models.Model):
     
     def __str__(self):
         return self.name
+
+
+class HealthScoreSnapshot(models.Model):
+    """
+    Daily snapshot of sync system health score
+    Stores historical health scores for trend analysis
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    score = models.IntegerField(
+        help_text="Overall health score (0-100)"
+    )
+    components = models.JSONField(
+        default=dict,
+        help_text="Breakdown: {success_rate: 85, connection_health: 90, schedule_adherence: 75, error_frequency: 80}"
+    )
+    tenant = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='health_scores',
+        db_index=True,
+        help_text="Tenant (Admin user) this score belongs to"
+    )
+    calculated_at = models.DateTimeField(
+        auto_now_add=True,
+        db_index=True,
+        help_text="When this snapshot was calculated"
+    )
+    
+    class Meta:
+        db_table = 'health_score_snapshots'
+        ordering = ['-calculated_at']
+        indexes = [
+            models.Index(fields=['tenant', '-calculated_at']),
+            models.Index(fields=['calculated_at']),
+        ]
+        get_latest_by = 'calculated_at'
+    
+    def __str__(self):
+        return f"Health Score {self.score} for {self.tenant.username} at {self.calculated_at}"
+
+
+class AnomalyAlert(models.Model):
+    """
+    Alert for detected anomalies in sync jobs
+    Stores detected anomalies with type, severity, and acknowledgment status
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.ForeignKey(
+        SyncJob,
+        on_delete=models.CASCADE,
+        related_name='anomaly_alerts',
+        db_index=True,
+        help_text="Job this anomaly is associated with"
+    )
+    anomaly_type = models.CharField(
+        max_length=50,
+        choices=[
+            ('duration_spike', 'Duration Spike'),
+            ('failure_pattern', 'Failure Pattern'),
+            ('row_count_drop', 'Row Count Drop'),
+            ('connection_timeout', 'Connection Timeout'),
+        ],
+        help_text="Type of anomaly detected"
+    )
+    severity = models.CharField(
+        max_length=20,
+        choices=[
+            ('warning', 'Warning'),
+            ('critical', 'Critical'),
+        ],
+        default='warning',
+        help_text="Severity level of the anomaly"
+    )
+    description = models.TextField(
+        help_text="Human-readable description of the anomaly"
+    )
+    detected_at = models.DateTimeField(
+        auto_now_add=True,
+        db_index=True,
+        help_text="When this anomaly was detected"
+    )
+    is_acknowledged = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Whether user has acknowledged this alert"
+    )
+    acknowledged_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When this alert was acknowledged"
+    )
+    acknowledged_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='acknowledged_anomalies',
+        help_text="User who acknowledged this alert"
+    )
+    tenant = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='tenant_anomalies',
+        db_index=True,
+        help_text="Tenant (Admin user) this alert belongs to"
+    )
+    
+    class Meta:
+        db_table = 'anomaly_alerts'
+        ordering = ['-detected_at']
+        indexes = [
+            models.Index(fields=['tenant', '-detected_at']),
+            models.Index(fields=['tenant', 'is_acknowledged']),
+            models.Index(fields=['job', '-detected_at']),
+            models.Index(fields=['severity', 'is_acknowledged']),
+        ]
+    
+    def __str__(self):
+        return f"{self.get_anomaly_type_display()} for {self.job.name} - {self.get_severity_display()}"
+
+
+class FreshnessMetric(models.Model):
+    """
+    Freshness metric for a sync job
+    Tracks how stale data is based on schedule vs last successful sync
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.OneToOneField(
+        SyncJob,
+        on_delete=models.CASCADE,
+        related_name='freshness_metric',
+        db_index=True,
+        help_text="Job this metric belongs to"
+    )
+    last_successful_sync = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="When the last successful sync completed"
+    )
+    freshness_minutes = models.IntegerField(
+        default=0,
+        help_text="Minutes since last successful sync"
+    )
+    expected_freshness_minutes = models.IntegerField(
+        default=1440,  # 24 hours default
+        help_text="Expected freshness interval in minutes (based on schedule)"
+    )
+    freshness_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('fresh', 'Fresh'),
+            ('stale', 'Stale'),
+            ('critical', 'Critical'),
+            ('never_run', 'Never Run'),
+        ],
+        default='never_run',
+        db_index=True,
+        help_text="Freshness status category"
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        db_index=True,
+        help_text="When this metric was last updated"
+    )
+    tenant = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='freshness_metrics',
+        db_index=True,
+        help_text="Tenant (Admin user) this metric belongs to"
+    )
+    
+    class Meta:
+        db_table = 'freshness_metrics'
+        ordering = ['-freshness_minutes']
+        indexes = [
+            models.Index(fields=['tenant', '-freshness_minutes']),
+            models.Index(fields=['tenant', 'freshness_status']),
+            models.Index(fields=['job', '-updated_at']),
+        ]
+    
+    def __str__(self):
+        return f"Freshness for {self.job.name}: {self.get_freshness_status_display()}"
+
+
+class Recommendation(models.Model):
+    """
+    Recommendation for improving sync operations
+    Generated by analyzing health scores, anomalies, freshness, and job metrics
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='recommendations',
+        db_index=True,
+        help_text="Tenant (Admin user) this recommendation belongs to"
+    )
+    category = models.CharField(
+        max_length=50,
+        choices=[
+            ('performance', 'Performance'),
+            ('reliability', 'Reliability'),
+            ('schedule', 'Schedule'),
+            ('configuration', 'Configuration'),
+            ('health', 'Health Score'),
+        ],
+        db_index=True,
+        help_text="Category of recommendation"
+    )
+    priority = models.CharField(
+        max_length=20,
+        choices=[
+            ('high', 'High'),
+            ('medium', 'Medium'),
+            ('low', 'Low'),
+        ],
+        default='medium',
+        db_index=True,
+        help_text="Priority level of recommendation"
+    )
+    title = models.CharField(
+        max_length=255,
+        help_text="Short title of the recommendation"
+    )
+    description = models.TextField(
+        help_text="Detailed description and action steps"
+    )
+    action_url = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="URL to navigate to for taking action (e.g., /jobs/{id}/edit/)"
+    )
+    related_job = models.ForeignKey(
+        SyncJob,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='recommendations',
+        help_text="Job this recommendation relates to (if applicable)"
+    )
+    related_connection = models.ForeignKey(
+        'connections.DatabaseConnection',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='recommendations',
+        help_text="Connection this recommendation relates to (if applicable)"
+    )
+    is_dismissed = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Whether user has dismissed this recommendation"
+    )
+    dismissed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When this recommendation was dismissed"
+    )
+    dismissed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='dismissed_recommendations',
+        help_text="User who dismissed this recommendation"
+    )
+    metadata = models.JSONField(
+        default=dict,
+        help_text="Additional metadata (e.g., detected metrics, thresholds)"
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        db_index=True,
+        help_text="When this recommendation was created"
+    )
+    
+    class Meta:
+        db_table = 'recommendations'
+        ordering = ['-priority', '-created_at']
+        indexes = [
+            models.Index(fields=['tenant', 'is_dismissed', '-priority']),
+            models.Index(fields=['tenant', 'category', 'is_dismissed']),
+            models.Index(fields=['related_job', 'is_dismissed']),
+            models.Index(fields=['created_at']),
+        ]
+    
+    def __str__(self):
+        return f"{self.get_priority_display()} {self.get_category_display()}: {self.title}"

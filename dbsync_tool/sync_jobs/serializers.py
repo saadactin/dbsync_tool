@@ -2,7 +2,7 @@
 REST API serializers
 """
 from rest_framework import serializers
-from sync_jobs.models import SyncJob, SyncExecution, SyncJobTable, SyncSchedule
+from sync_jobs.models import SyncJob, SyncExecution, SyncJobTable, SyncSchedule, AnomalyAlert, Recommendation
 from connections.models import DatabaseConnection
 
 
@@ -52,4 +52,62 @@ class SyncExecutionSerializer(serializers.ModelSerializer):
             'total_rows_synced', 'error_message',
         ]
         read_only_fields = ['id']
+
+
+class AnomalyAlertSerializer(serializers.ModelSerializer):
+    """Serializer for AnomalyAlert"""
+    job = serializers.SerializerMethodField()
+    anomaly_type_display = serializers.CharField(source='get_anomaly_type_display', read_only=True)
+    severity_display = serializers.CharField(source='get_severity_display', read_only=True)
+    
+    class Meta:
+        model = AnomalyAlert
+        fields = [
+            'id', 'job', 'anomaly_type', 'anomaly_type_display',
+            'severity', 'severity_display', 'description',
+            'detected_at', 'is_acknowledged', 'acknowledged_at',
+        ]
+        read_only_fields = ['id', 'detected_at']
+    
+    def get_job(self, obj):
+        """Return job info"""
+        return {
+            'id': str(obj.job.id),
+            'name': obj.job.name
+        }
+
+
+class RecommendationSerializer(serializers.ModelSerializer):
+    """Serializer for Recommendation"""
+    related_job = serializers.SerializerMethodField()
+    related_connection = serializers.SerializerMethodField()
+    category_display = serializers.CharField(source='get_category_display', read_only=True)
+    priority_display = serializers.CharField(source='get_priority_display', read_only=True)
+    
+    class Meta:
+        model = Recommendation
+        fields = [
+            'id', 'category', 'category_display', 'priority', 'priority_display',
+            'title', 'description', 'action_url', 'related_job', 'related_connection',
+            'is_dismissed', 'dismissed_at', 'metadata', 'created_at',
+        ]
+        read_only_fields = ['id', 'created_at']
+    
+    def get_related_job(self, obj):
+        """Return job info if related"""
+        if obj.related_job:
+            return {
+                'id': str(obj.related_job.id),
+                'name': obj.related_job.name
+            }
+        return None
+    
+    def get_related_connection(self, obj):
+        """Return connection info if related"""
+        if obj.related_connection:
+            return {
+                'id': str(obj.related_connection.id),
+                'name': obj.related_connection.name
+            }
+        return None
 

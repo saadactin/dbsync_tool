@@ -7,6 +7,7 @@
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/sync_jobs.css' %}">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://d3js.org/d3.v7.min.js"></script>
 <style>
     .stats-card {
         background: white;
@@ -39,6 +40,30 @@
         position: relative;
         height: 300px;
         margin-bottom: 20px;
+    }
+    .health-score-gauge-container {
+        position: relative;
+        height: 200px;
+        margin: 0 auto;
+    }
+    .health-score-components {
+        text-align: left;
+        margin-top: 10px;
+        padding: 10px;
+        background: #f8f9fa;
+        border-radius: 4px;
+    }
+    .freshness-cell {
+        transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .freshness-cell:hover {
+        transform: scale(1.1);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        z-index: 100;
+    }
+    #freshnessMapContainer {
+        max-height: 600px;
+        overflow-y: auto;
     }
 </style>
 {% endblock %}
@@ -168,6 +193,118 @@
                         <h2 class="text-muted">N/A</h2>
                         <p class="text-muted">No completed executions</p>
                     {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Connection Relationship Graph -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Connection Relationship Graph</h5>
+                    <div>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="resetGraphView()" title="Reset View">
+                            <i class="bi bi-arrow-clockwise"></i> Reset View
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary ms-2" onclick="initConnectionGraph()" title="Refresh">
+                            <i class="bi bi-arrow-clockwise"></i> Refresh
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <strong>Database Types:</strong>
+                                <span class="badge" style="background-color: #3366cc; color: white;">PostgreSQL</span>
+                                <span class="badge" style="background-color: #ff9900; color: white;">MySQL</span>
+                                <span class="badge" style="background-color: #00cc66; color: white;">SQL Server</span>
+                                <span class="badge" style="background-color: #9966cc; color: white;">ClickHouse</span>
+                            </div>
+                            <div class="col-md-6">
+                                <strong>Health Status:</strong>
+                                <span class="badge bg-success">Healthy</span>
+                                <span class="badge bg-warning">Warning</span>
+                                <span class="badge bg-danger">Critical</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="connectionGraphContainer" style="width: 100%; height: 600px; border: 1px solid #ddd; border-radius: 4px; background: #f8f9fa;">
+                        <div class="text-center p-5">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Loading connection graph...</p>
+                        </div>
+                    </div>
+                    <div class="mt-2">
+                        <small class="text-muted">
+                            <i class="bi bi-info-circle"></i> 
+                            Click on nodes to see connected jobs. Hover over edges to see job details. Drag nodes to reposition.
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Data Freshness Map -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Data Freshness Map</h5>
+                    <div>
+                        <div class="btn-group" role="group">
+                            <button type="button" class="btn btn-sm btn-outline-primary active" onclick="loadFreshnessMap('7d', this)">7d</button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="loadFreshnessMap('30d', this)">30d</button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="loadFreshnessMap('all', this)">All</button>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary ms-2" onclick="refreshFreshnessMap()" title="Refresh">
+                            <i class="bi bi-arrow-clockwise"></i> Refresh
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <label for="freshnessStatusFilter" class="form-label">Filter by Status:</label>
+                                <select id="freshnessStatusFilter" class="form-select form-select-sm" onchange="filterFreshnessMap()">
+                                    <option value="">All Status</option>
+                                    <option value="fresh">Fresh</option>
+                                    <option value="stale">Stale</option>
+                                    <option value="critical">Critical</option>
+                                    <option value="never_run">Never Run</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Legend:</label>
+                                <div>
+                                    <span class="badge" style="background-color: #28a745;">🟢 Fresh</span>
+                                    <span class="badge" style="background-color: #ffc107; color: #000;">🟡 Stale</span>
+                                    <span class="badge" style="background-color: #dc3545;">🔴 Critical</span>
+                                    <span class="badge" style="background-color: #6c757d;">⚪ Never Run</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="freshnessMapContainer" style="overflow-x: auto;">
+                        <div class="text-center p-5">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Loading freshness map...</p>
+                        </div>
+                    </div>
+                    <div class="mt-2">
+                        <small class="text-muted">
+                            <i class="bi bi-info-circle"></i> 
+                            Click on a cell to see job details. Hover to see exact freshness time.
+                        </small>
+                    </div>
                 </div>
             </div>
         </div>
@@ -406,5 +543,16 @@ if (successRateCtx) {
 setInterval(function() {
     location.reload();
 }, 30000);
+</script>
+<script src="{% static 'js/connection_graph.js' %}"></script>
+<script src="{% static 'js/freshness_map.js' %}"></script>
+<script>
+// Initialize connection graph
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize connection graph
+    if (typeof initConnectionGraph === 'function') {
+        initConnectionGraph();
+    }
+});
 </script>
 {% endblock %}

@@ -53,6 +53,41 @@ def start_scheduler():
             # Load all existing scheduled jobs
             load_all_jobs()
             
+            # Schedule anomaly detection task (every 15 minutes)
+            from scheduler.tasks import detect_anomalies_task
+            from apscheduler.triggers.interval import IntervalTrigger
+            
+            try:
+                _scheduler.add_job(
+                    func=detect_anomalies_task,
+                    trigger=IntervalTrigger(minutes=15),
+                    id='anomaly_detection_task',
+                    name='Anomaly Detection Task',
+                    replace_existing=True,
+                    max_instances=1,
+                    misfire_grace_time=300
+                )
+                logger.info("Anomaly detection task scheduled (every 15 minutes)")
+            except Exception as e:
+                logger.error(f"Error scheduling anomaly detection task: {str(e)}", exc_info=True)
+            
+            # Schedule recommendation generation task (every hour)
+            from scheduler.tasks import generate_recommendations_task
+            
+            try:
+                _scheduler.add_job(
+                    func=generate_recommendations_task,
+                    trigger=IntervalTrigger(hours=1),
+                    id='recommendation_generation_task',
+                    name='Recommendation Generation Task',
+                    replace_existing=True,
+                    max_instances=1,
+                    misfire_grace_time=600
+                )
+                logger.info("Recommendation generation task scheduled (every hour)")
+            except Exception as e:
+                logger.error(f"Error scheduling recommendation generation task: {str(e)}", exc_info=True)
+            
             # Register shutdown handler
             atexit.register(stop_scheduler)
             
