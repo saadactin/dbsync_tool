@@ -315,6 +315,12 @@ class ConnectionTestView(LoginRequiredMixin, View):
         
         success, message = test_database_connection(connection, request.user)
         
+        # Update last_tested_at if test is successful
+        if success:
+            from django.utils import timezone
+            connection.last_tested_at = timezone.now()
+            connection.save(update_fields=['last_tested_at'])
+        
         return JsonResponse({
             'success': success,
             'message': message,
@@ -794,6 +800,7 @@ class APIConnectionTestView(LoginRequiredMixin, View):
                 # Get available modules
                 try:
                     modules = connector.get_available_modules()
+                    # Note: For new connections, last_tested_at will be set when the connection is saved
                     return JsonResponse({
                         'success': True,
                         'message': f'Connection successful! Found {len(modules)} modules.',
@@ -809,11 +816,19 @@ class APIConnectionTestView(LoginRequiredMixin, View):
             # Test existing connection
             success, message, modules = connection.test_connection()
             
+            # Update last_tested_at if test is successful
+            if success and pk:
+                from django.utils import timezone
+                connection.last_tested_at = timezone.now()
+                connection.save(update_fields=['last_tested_at'])
+                logger.info(f'Updated last_tested_at for API connection {connection.id}')
+            
             return JsonResponse({
                 'success': success,
                 'message': message,
                 'modules': modules if success else [],
-                'connection_id': str(connection.id) if pk else None
+                'connection_id': str(connection.id) if pk else None,
+                'last_tested_at': connection.last_tested_at.isoformat() if (success and pk and connection.last_tested_at) else None
             })
             
         except APIConnection.DoesNotExist:

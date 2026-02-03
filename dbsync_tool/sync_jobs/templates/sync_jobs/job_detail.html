@@ -478,5 +478,25 @@
 {% if job.sync_type == 'incremental' %}
 <script src="{% static 'js/checkpoint_management.js' %}"></script>
 {% endif %}
+<script>
+// Auto-refresh page when job is running
+(function() {
+    const jobStatus = '{{ job.status }}';
+    const latestExecutionStatus = '{{ latest_execution.status|default:"" }}';
+    const isRunning = jobStatus === 'running' || latestExecutionStatus === 'running';
+    
+    if (isRunning) {
+        // Refresh every 3 seconds when job is running
+        let refreshInterval = setInterval(function() {
+            window.location.reload();
+        }, 3000); // Refresh every 3 seconds
+        
+        // Stop auto-refresh when user navigates away
+        window.addEventListener('beforeunload', function() {
+            clearInterval(refreshInterval);
+        });
+    }
+})();
+</script>
 {% endblock %}
 

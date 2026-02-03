@@ -277,10 +277,28 @@ def create_job_step1_view(request):
                     user_api_conns = TenantService.get_queryset_for_user(api_qs, request.user)
                     source_api_connection = user_api_conns.get(id=source_connection_uuid)
                     
+                    # Check if source API connection has been tested
+                    if not source_api_connection.last_tested_at:
+                        messages.error(
+                            request,
+                            f'API connection "{source_api_connection.name}" has not been tested. '
+                            f'Please test the connection before creating a sync job.'
+                        )
+                        return redirect('sync_jobs:create_step1')
+                    
                     # Target must be database connection
                     db_qs = DatabaseConnection.objects.filter(is_active=True)
                     user_db_conns = TenantService.get_queryset_for_user(db_qs, request.user)
                     target_connection = user_db_conns.get(id=target_connection_uuid)
+                    
+                    # Check if target database connection has been tested
+                    if not target_connection.last_tested_at:
+                        messages.error(
+                            request,
+                            f'Database connection "{target_connection.name}" has not been tested. '
+                            f'Please test the connection before creating a sync job.'
+                        )
+                        return redirect('sync_jobs:create_step1')
                     
                     # Store in session for step 2
                     request.session['sync_job_name'] = job_name
@@ -294,6 +312,24 @@ def create_job_step1_view(request):
                     user_db_conns = TenantService.get_queryset_for_user(db_qs, request.user)
                     source_connection = user_db_conns.get(id=source_connection_uuid)
                     target_connection = user_db_conns.get(id=target_connection_uuid)
+                    
+                    # Check if source database connection has been tested
+                    if not source_connection.last_tested_at:
+                        messages.error(
+                            request,
+                            f'Source database connection "{source_connection.name}" has not been tested. '
+                            f'Please test the connection before creating a sync job.'
+                        )
+                        return redirect('sync_jobs:create_step1')
+                    
+                    # Check if target database connection has been tested
+                    if not target_connection.last_tested_at:
+                        messages.error(
+                            request,
+                            f'Target database connection "{target_connection.name}" has not been tested. '
+                            f'Please test the connection before creating a sync job.'
+                        )
+                        return redirect('sync_jobs:create_step1')
                     
                     # Store in session for step 2
                     request.session['sync_job_name'] = job_name
@@ -1034,49 +1070,42 @@ def create_job_step3_submit(request):
         messages.success(request, f'Sync job "{job_name}" created successfully!')
         logger.info(f"User {request.user.username} created sync job {sync_job.id}: {job_name}")
         
-        # If schedule type is 'once', automatically start the sync execution synchronously
+        # If schedule type is 'once', automatically start the sync execution asynchronously
         if schedule_type == 'once':
             try:
+                import threading
                 from sync_engine.executor import SyncExecutor
                 
                 logger.info(
-                    f"Auto-starting 'once' schedule job {sync_job.id} for user {request.user.username}"
+                    f"Auto-starting 'once' schedule job {sync_job.id} for user {request.user.username} (async)"
                 )
                 
-                # Execute synchronously - blocks until complete
-                executor = SyncExecutor(sync_job)
-                executor.execute()
+                # Execute asynchronously in a background thread
+                def run_sync_async():
+                    try:
+                        executor = SyncExecutor(sync_job)
+                        executor.execute()
+                        logger.info(f"Async execution completed for job {sync_job.id}")
+                    except Exception as e:
+                        logger.error(f"Failed to execute job {sync_job.id} in background: {str(e)}", exc_info=True)
                 
-                # Refresh job to get latest status
-                sync_job.refresh_from_db()
+                # Start the sync in a background thread
+                thread = threading.Thread(target=run_sync_async, daemon=True)
+                thread.start()
                 
-                # Get latest execution
-                from sync_jobs.models import SyncExecution
-                latest_execution = SyncExecution.objects.filter(job=sync_job).latest('started_at')
-                
-                if latest_execution.status == 'completed':
-                    messages.success(
-                        request,
-                        f'Job "{job_name}" created and completed successfully! Synced {latest_execution.total_rows_synced or 0} rows.'
-                    )
-                elif latest_execution.status == 'failed':
-                    messages.warning(
-                        request,
-                        f'Job "{job_name}" created but execution failed: {latest_execution.error_message or "Unknown error"}'
-                    )
-                else:
-                    messages.info(
-                        request,
-                        f'Job "{job_name}" created and execution completed with status: {latest_execution.status}'
-                    )
-                
+                # Immediately redirect to job detail page (don't wait for sync to complete)
+                messages.success(
+                    request,
+                    f'Job "{job_name}" created and started! You can monitor the progress on the job detail page.'
+                )
                 return redirect('sync_jobs:job_detail', job_id=sync_job.id)
             except Exception as e:
                 logger.error(f"Failed to auto-start job execution: {str(e)}", exc_info=True)
                 # Don't fail the job creation, just log the error
                 messages.warning(request, f'Job "{job_name}" created, but automatic execution failed: {str(e)}. You can run it manually.')
+                return redirect('sync_jobs:job_detail', job_id=sync_job.id)
         
-        return redirect('sync_jobs:list')
+        return redirect('sync_jobs:job_detail', job_id=sync_job.id)
         
     except DatabaseConnection.DoesNotExist:
         logger.error(f"Connection not found for user {request.user.username}")
@@ -1552,38 +1581,30 @@ def job_edit(request, job_id):
             # If schedule type is 'once', automatically start the sync execution synchronously
             if schedule_type == 'once' and job.status != 'running':
                 try:
+                    import threading
                     from sync_engine.executor import SyncExecutor
                     
                     logger.info(
-                        f"Auto-starting 'once' schedule job {job.id} for user {request.user.username}"
+                        f"Auto-starting 'once' schedule job {job.id} for user {request.user.username} (async)"
                     )
                     
-                    # Execute synchronously - blocks until complete
-                    executor = SyncExecutor(job)
-                    executor.execute()
+                    # Execute asynchronously in a background thread
+                    def run_sync_async():
+                        try:
+                            executor = SyncExecutor(job)
+                            executor.execute()
+                            logger.info(f"Async execution completed for job {job.id}")
+                        except Exception as e:
+                            logger.error(f"Failed to execute job {job.id} in background: {str(e)}", exc_info=True)
                     
-                    # Refresh job to get latest status
-                    job.refresh_from_db()
+                    # Start the sync in a background thread
+                    thread = threading.Thread(target=run_sync_async, daemon=True)
+                    thread.start()
                     
-                    # Get latest execution
-                    from sync_jobs.models import SyncExecution
-                    latest_execution = SyncExecution.objects.filter(job=job).latest('started_at')
-                    
-                    if latest_execution.status == 'completed':
-                        messages.success(
-                            request,
-                            f'Job "{job.name}" updated and executed successfully! Synced {latest_execution.total_rows_synced or 0} rows.'
-                        )
-                    elif latest_execution.status == 'failed':
-                        messages.warning(
-                            request,
-                            f'Job "{job.name}" updated but execution failed: {latest_execution.error_message or "Unknown error"}'
-                        )
-                    else:
-                        messages.info(
-                            request,
-                            f'Job "{job.name}" updated and execution completed with status: {latest_execution.status}'
-                        )
+                    messages.success(
+                        request,
+                        f'Job "{job.name}" updated and started! You can monitor the progress on this page.'
+                    )
                 except Exception as e:
                     logger.error(f"Failed to auto-start job execution: {str(e)}", exc_info=True)
                     # Don't fail the job update, just log the error
@@ -1662,43 +1683,35 @@ def job_run_now(request, job_id):
         messages.error(request, 'Cannot run a paused job. Please resume it first.')
         return redirect('sync_jobs:job_detail', job_id=job_id)
     
-    # Execute sync synchronously
+    # Execute sync asynchronously
     try:
+        import threading
         from sync_engine.executor import SyncExecutor
         
         logger.info(
-            f"User {request.user.username} triggered run for job {job_id}: {job.name}"
+            f"User {request.user.username} triggered run for job {job_id}: {job.name} (async)"
         )
         
-        # Execute synchronously - blocks until complete
-        executor = SyncExecutor(job)
-        executor.execute()
+        # Execute asynchronously in a background thread
+        def run_sync_async():
+            try:
+                executor = SyncExecutor(job)
+                executor.execute()
+                logger.info(f"Async execution completed for job {job_id}")
+            except Exception as e:
+                logger.error(f"Failed to execute job {job_id} in background: {str(e)}", exc_info=True)
         
-        # Refresh job to get latest status
-        job.refresh_from_db()
+        # Start the sync in a background thread
+        thread = threading.Thread(target=run_sync_async, daemon=True)
+        thread.start()
         
-        # Get latest execution
-        from sync_jobs.models import SyncExecution
-        latest_execution = SyncExecution.objects.filter(job=job).latest('started_at')
-        
-        if latest_execution.status == 'completed':
-            messages.success(
-                request,
-                f'Job "{job.name}" completed successfully! Synced {latest_execution.total_rows_synced or 0} rows.'
-            )
-        elif latest_execution.status == 'failed':
-            messages.error(
-                request,
-                f'Job "{job.name}" failed: {latest_execution.error_message or "Unknown error"}'
-            )
-        else:
-            messages.info(
-                request,
-                f'Job "{job.name}" execution completed with status: {latest_execution.status}'
-            )
+        messages.success(
+            request,
+            f'Job "{job.name}" started! You can monitor the progress on this page.'
+        )
     except Exception as e:
-        logger.error(f"Failed to execute job: {str(e)}", exc_info=True)
-        messages.error(request, f'Failed to execute job: {str(e)}')
+        logger.error(f"Failed to start job execution: {str(e)}", exc_info=True)
+        messages.error(request, f'Failed to start job: {str(e)}')
     
     return redirect('sync_jobs:job_detail', job_id=job_id)
 

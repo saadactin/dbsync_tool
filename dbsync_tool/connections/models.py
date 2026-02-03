@@ -35,6 +35,7 @@ class DatabaseConnection(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    last_tested_at = models.DateTimeField(null=True, blank=True, help_text="Last time this connection was successfully tested")
     is_active = models.BooleanField(default=True, help_text="Whether this connection is active")
     
     class Meta:
@@ -253,6 +254,7 @@ class APIConnection(models.Model):
         help_text='User who created this connection'
     )
     is_active = models.BooleanField(default=True, help_text="Whether this connection is active")
+    last_tested_at = models.DateTimeField(null=True, blank=True, help_text="Last time this connection was successfully tested")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     

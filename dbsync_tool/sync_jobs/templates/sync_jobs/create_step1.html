@@ -123,7 +123,14 @@
                                     <div class="connection-select-card" data-connection-id="{{ connection.id }}" data-connection-type="database" data-db-type="{{ connection.db_type }}">
                                         <div class="connection-info">
                                             <div class="connection-details">
-                                                <h6>{{ connection.name }}</h6>
+                                                <h6>
+                                                    {{ connection.name }}
+                                                    {% if not connection.last_tested_at %}
+                                                        <span class="badge bg-warning ms-2" title="This connection has not been tested">⚠️ Not Tested</span>
+                                                    {% else %}
+                                                        <span class="badge bg-success ms-2" title="Last tested: {{ connection.last_tested_at|timesince }} ago">✓ Tested</span>
+                                                    {% endif %}
+                                                </h6>
                                                 <p>
                                                     <span class="badge bg-primary">{{ connection.get_db_type_display }}</span>
                                                     <span style="margin-left: 10px;">{{ connection.host }}:{{ connection.port }}</span>
@@ -155,7 +162,14 @@
                                     <div class="connection-select-card" data-connection-id="{{ connection.id }}" data-connection-type="api" data-api-type="{{ connection.api_type }}">
                                         <div class="connection-info">
                                             <div class="connection-details">
-                                                <h6>{{ connection.name }}</h6>
+                                                <h6>
+                                                    {{ connection.name }}
+                                                    {% if not connection.last_tested_at %}
+                                                        <span class="badge bg-warning ms-2" title="This connection has not been tested">⚠️ Not Tested</span>
+                                                    {% else %}
+                                                        <span class="badge bg-success ms-2" title="Last tested: {{ connection.last_tested_at|timesince }} ago">✓ Tested</span>
+                                                    {% endif %}
+                                                </h6>
                                                 <p>
                                                     <span class="badge bg-info">{{ connection.get_api_type_display }}</span>
                                                     <span style="margin-left: 10px;">Modules: {{ connection.selected_modules|length|default:0 }} selected</span>
@@ -201,7 +215,14 @@
                                     <div class="connection-select-card" data-connection-id="{{ connection.id }}" data-db-type="{{ connection.db_type }}">
                                         <div class="connection-info">
                                             <div class="connection-details">
-                                                <h6>{{ connection.name }}</h6>
+                                                <h6>
+                                                    {{ connection.name }}
+                                                    {% if not connection.last_tested_at %}
+                                                        <span class="badge bg-warning ms-2" title="This connection has not been tested">⚠️ Not Tested</span>
+                                                    {% else %}
+                                                        <span class="badge bg-success ms-2" title="Last tested: {{ connection.last_tested_at|timesince }} ago">✓ Tested</span>
+                                                    {% endif %}
+                                                </h6>
                                                 <p>
                                                     <span class="badge bg-success">{{ connection.get_db_type_display }}</span>
                                                     <span style="margin-left: 10px;">{{ connection.host }}:{{ connection.port }}</span>

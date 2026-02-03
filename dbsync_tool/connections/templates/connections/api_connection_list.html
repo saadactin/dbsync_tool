@@ -50,6 +50,7 @@
                                                     <th>API Domain</th>
                                                     <th>Modules</th>
                                                     <th>Status</th>
+                                                    <th>Last Test</th>
                                                     {% if not user.userprofile.is_viewer %}
                                                         <th>Actions</th>
                                                     {% endif %}
@@ -76,6 +77,14 @@
                                                             <span class="badge bg-success">Active</span>
                                                         {% else %}
                                                             <span class="badge bg-secondary">Inactive</span>
+                                                        {% endif %}
+                                                    </td>
+                                                    <td>
+                                                        {% if connection.last_tested_at %}
+                                                            <span class="badge bg-success">Success</span>
+                                                            <small class="text-muted d-block">{{ connection.last_tested_at|timesince }} ago</small>
+                                                        {% else %}
+                                                            <span class="badge bg-warning">Not Tested</span>
                                                         {% endif %}
                                                     </td>
                                                     {% if not user.userprofile.is_viewer %}
@@ -179,14 +188,16 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(data => {
                 if (data.success) {
                     alert('Connection test successful! Found ' + data.modules.length + ' modules.');
+                    // Reload the page to show updated last_tested_at
+                    window.location.reload();
                 } else {
                     alert('Connection test failed: ' + data.message);
+                    button.disabled = false;
+                    button.innerHTML = originalHTML;
                 }
             })
             .catch(error => {
                 alert('Error testing connection: ' + error.message);
-            })
-            .finally(() => {
                 button.disabled = false;
                 button.innerHTML = originalHTML;
             });
