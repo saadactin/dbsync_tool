@@ -5,8 +5,10 @@ import clickhouse_connect
 from typing import List, Tuple, Optional, Dict, Any
 from .base import DBConnector, ColumnInfo
 from core.exceptions import DatabaseConnectionError, TableNotFoundError, DatabaseTimeoutError, DatabaseException, DatabaseQueryError
+from core.type_mapping import map_data_type
 from decimal import Decimal
 from datetime import date, datetime
+import pandas as pd
 import logging
 
 logger = logging.getLogger(__name__)
@@ -856,6 +858,190 @@ class ClickHouseConnector(DBConnector):
                 )
             else:
                 raise DatabaseQueryError(f"Failed to bulk insert into ClickHouse: {str(e)}")
+    
+    def create_table_from_dataframe(self, schema: str, table: str, df: pd.DataFrame):
+        """
+        Create a table from a pandas DataFrame
+        
+        Args:
+            schema: Database name
+            table: Table name
+            df: DataFrame with data structure
+        """
+        if not self._connection:
+            self.connect()
+        
+        if df.empty:
+            raise DatabaseConnectionError(f"Cannot create table from empty DataFrame")
+        
+        try:
+            # Ensure database exists
+            self.ensure_schema_exists(schema)
+            
+            # Infer column types from DataFrame
+            columns = []
+            for col_name in df.columns:
+                dtype = df[col_name].dtype
+                
+                # Map pandas dtype to ClickHouse type
+                if pd.api.types.is_integer_dtype(dtype):
+                    if dtype == 'int64':
+                        ch_type = 'Int64'
+                    elif dtype == 'int32':
+                        ch_type = 'Int32'
+                    elif dtype == 'int16':
+                        ch_type = 'Int16'
+                    elif dtype == 'int8':
+                        ch_type = 'Int8'
+                    else:
+                        ch_type = 'Int64'
+                elif pd.api.types.is_float_dtype(dtype):
+                    if dtype == 'float64':
+                        ch_type = 'Float64'
+                    elif dtype == 'float32':
+                        ch_type = 'Float32'
+                    else:
+                        ch_type = 'Float64'
+                elif pd.api.types.is_bool_dtype(dtype):
+                    ch_type = 'UInt8'
+                elif pd.api.types.is_datetime64_any_dtype(dtype):
+                    ch_type = 'DateTime'
+                elif pd.api.types.is_object_dtype(dtype):
+                    # Check sample values to determine if it's a date
+                    sample = df[col_name].dropna().head(1)
+                    if len(sample) > 0 and isinstance(sample.iloc[0], (date, datetime)):
+                        ch_type = 'DateTime'
+                    else:
+                        ch_type = 'String'
+                else:
+                    ch_type = 'String'
+                
+                # Check if column has nulls
+                has_nulls = df[col_name].isna().any()
+                if has_nulls:
+                    ch_type = f'Nullable({ch_type})'
+                
+                columns.append(ColumnInfo(
+                    name=col_name,
+                    data_type=ch_type,
+                    is_nullable=has_nulls,
+                    is_primary_key=False,
+                    max_length=None
+                ))
+            
+            # Create table using existing create_table method
+            self.create_table(schema, table, columns, target_db_type='clickhouse')
+            
+        except Exception as e:
+            raise DatabaseConnectionError(f"Failed to create table from DataFrame: {str(e)}")
+    
+    def add_missing_columns(self, schema: str, table: str, df: pd.DataFrame):
+        """
+        Add missing columns to an existing table based on DataFrame
+        
+        Args:
+            schema: Database name
+            table: Table name
+            df: DataFrame with new columns
+        """
+        if not self._connection:
+            self.connect()
+        
+        if df.empty:
+            return
+        
+        try:
+            # Get existing columns
+            existing_columns = self.get_columns(schema, table)
+            existing_col_names = {col.name for col in existing_columns}
+            
+            # Find new columns
+            new_columns = []
+            for col_name in df.columns:
+                if col_name not in existing_col_names:
+                    dtype = df[col_name].dtype
+                    
+                    # Map pandas dtype to ClickHouse type (same logic as create_table_from_dataframe)
+                    if pd.api.types.is_integer_dtype(dtype):
+                        ch_type = 'Int64' if dtype == 'int64' else 'Int32'
+                    elif pd.api.types.is_float_dtype(dtype):
+                        ch_type = 'Float64' if dtype == 'float64' else 'Float32'
+                    elif pd.api.types.is_bool_dtype(dtype):
+                        ch_type = 'UInt8'
+                    elif pd.api.types.is_datetime64_any_dtype(dtype):
+                        ch_type = 'DateTime'
+                    else:
+                        ch_type = 'String'
+                    
+                    # Check if column has nulls
+                    has_nulls = df[col_name].isna().any()
+                    if has_nulls:
+                        ch_type = f'Nullable({ch_type})'
+                    
+                    new_columns.append((col_name, ch_type))
+            
+            # Add new columns
+            for col_name, ch_type in new_columns:
+                alter_query = f"ALTER TABLE `{schema}`.`{table}` ADD COLUMN IF NOT EXISTS `{col_name}` {ch_type}"
+                self._connection.command(alter_query)
+                logger.info(f"Added column {col_name} ({ch_type}) to table {schema}.{table}")
+            
+        except Exception as e:
+            raise DatabaseConnectionError(f"Failed to add missing columns: {str(e)}")
+    
+    def upsert_dataframe(
+        self, 
+        schema: str, 
+        table: str, 
+        df: pd.DataFrame, 
+        key_column: str
+    ):
+        """
+        Upsert (insert or update) DataFrame rows into table
+        
+        Args:
+            schema: Database name
+            table: Table name
+            df: DataFrame with data
+            key_column: Primary key or unique identifier column name
+        """
+        if not self._connection:
+            self.connect()
+        
+        if df.empty:
+            return
+        
+        try:
+            # ClickHouse doesn't have native UPSERT, so we use ReplacingMergeTree or manual approach
+            # For simplicity, we'll delete existing rows and insert new ones
+            # This is not ideal but works for most use cases
+            
+            # Get key values from DataFrame
+            if key_column not in df.columns:
+                raise DatabaseConnectionError(f"Key column {key_column} not found in DataFrame")
+            
+            key_values = df[key_column].dropna().unique().tolist()
+            
+            # Delete existing rows with matching keys
+            if key_values:
+                # Build DELETE query
+                # ClickHouse DELETE requires WHERE clause with key values
+                # For simplicity, delete all matching keys
+                placeholders = ', '.join([f"'{v}'" if isinstance(v, str) else str(v) for v in key_values])
+                delete_query = f"ALTER TABLE `{schema}`.`{table}` DELETE WHERE `{key_column}` IN ({placeholders})"
+                try:
+                    self._connection.command(delete_query)
+                except Exception as e:
+                    # If DELETE fails (e.g., table doesn't support mutations), just log and continue
+                    logger.warning(f"Could not delete existing rows: {str(e)}. Proceeding with insert.")
+            
+            # Insert new rows
+            columns = list(df.columns)
+            rows = [tuple(row) for row in df.values]
+            self.bulk_insert(schema, table, columns, rows)
+            
+        except Exception as e:
+            raise DatabaseConnectionError(f"Failed to upsert DataFrame: {str(e)}")
     
     def close(self):
         """Close database connection"""

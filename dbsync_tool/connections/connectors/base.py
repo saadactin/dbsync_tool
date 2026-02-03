@@ -5,6 +5,7 @@ All database-specific connectors inherit from this class
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Optional, Dict, Any
 from dataclasses import dataclass
+import pandas as pd
 
 
 @dataclass
@@ -266,4 +267,47 @@ class DBConnector(ABC):
     def __del__(self):
         """Destructor to ensure connection is closed"""
         self.close()
+    
+    @abstractmethod
+    def create_table_from_dataframe(self, schema: str, table: str, df: pd.DataFrame):
+        """
+        Create a table from a pandas DataFrame
+        
+        Args:
+            schema: Schema/database name
+            table: Table name
+            df: DataFrame with data structure
+        """
+        pass
+    
+    @abstractmethod
+    def add_missing_columns(self, schema: str, table: str, df: pd.DataFrame):
+        """
+        Add missing columns to an existing table based on DataFrame
+        
+        Args:
+            schema: Schema/database name
+            table: Table name
+            df: DataFrame with new columns
+        """
+        pass
+    
+    @abstractmethod
+    def upsert_dataframe(
+        self, 
+        schema: str, 
+        table: str, 
+        df: pd.DataFrame, 
+        key_column: str
+    ):
+        """
+        Upsert (insert or update) DataFrame rows into table
+        
+        Args:
+            schema: Schema/database name
+            table: Table name
+            df: DataFrame with data
+            key_column: Primary key or unique identifier column name
+        """
+        pass
 

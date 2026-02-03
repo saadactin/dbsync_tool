@@ -69,3 +69,29 @@ MIN_BATCH_SIZE = 100
 # Type mapping reference (actual implementation in type_mapping.py)
 TYPE_MAPPING_MODULE = 'core.type_mapping'
 
+# API type choices
+API_TYPE_CHOICES = [
+    ('zoho_crm', 'Zoho CRM'),
+]
+
+# Connection category choices (for future use)
+CONNECTION_CATEGORY_CHOICES = [
+    ('database', 'Database'),
+    ('api', 'API'),
+]
+
+# Zoho API domain mappings
+ZOHO_API_DOMAINS = {
+    'india': 'https://www.zohoapis.in',
+    'us': 'https://www.zohoapis.com',
+    'europe': 'https://www.zohoapis.eu',
+    'australia': 'https://www.zohoapis.com.au',
+}
+
+# Zoho token URL mappings
+ZOHO_DEFAULT_TOKEN_URLS = {
+    'https://www.zohoapis.in': 'https://accounts.zoho.in/oauth/v2/token',
+    'https://www.zohoapis.com': 'https://accounts.zoho.com/oauth/v2/token',
+    'https://www.zohoapis.eu': 'https://accounts.zoho.eu/oauth/v2/token',
+    'https://www.zohoapis.com.au': 'https://accounts.zoho.com.au/oauth/v2/token',
+}

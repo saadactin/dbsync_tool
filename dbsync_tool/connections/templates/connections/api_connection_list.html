@@ -1,0 +1,197 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}API Connections - DB Sync Tool{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>API Connections</h1>
+        <div class="btn-group" role="group">
+            <a href="{% url 'connections:list' %}" class="btn btn-outline-primary">
+                <span>🗄️</span> Database Connections
+            </a>
+            {% if not user.userprofile.is_viewer %}
+                <a href="{% url 'connections:api_create' %}" class="btn btn-primary">
+                    <span>➕</span> Add New API Connection
+                </a>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if grouped_list %}
+        {% if total_connections > 0 %}
+            <div class="accordion" id="apiConnectionsAccordion">
+                {% for group in grouped_list %}
+                    {% if group.connections %}
+                        <div class="accordion-item" data-api-type="{{ group.type }}">
+                            <h2 class="accordion-header" id="heading{{ group.type|capfirst }}">
+                                <button class="accordion-button {% if not forloop.first %}collapsed{% endif %}" type="button" 
+                                        data-bs-toggle="collapse" 
+                                        data-bs-target="#collapse{{ group.type|capfirst }}" 
+                                        aria-expanded="{% if forloop.first %}true{% else %}false{% endif %}" 
+                                        aria-controls="collapse{{ group.type|capfirst }}">
+                                    <div class="d-flex align-items-center w-100">
+                                        <span class="fw-bold me-2">{{ group.name }}</span>
+                                        <span class="badge bg-secondary rounded-pill ms-auto">{{ group.count }}</span>
+                                    </div>
+                                </button>
+                            </h2>
+                            <div id="collapse{{ group.type|capfirst }}" 
+                                 class="accordion-collapse collapse {% if forloop.first %}show{% endif %}" 
+                                 aria-labelledby="heading{{ group.type|capfirst }}" 
+                                 data-bs-parent="#apiConnectionsAccordion">
+                                <div class="accordion-body p-0">
+                                    <div class="table-responsive">
+                                        <table class="table table-hover mb-0">
+                                            <thead>
+                                                <tr>
+                                                    <th>Name</th>
+                                                    <th>API Domain</th>
+                                                    <th>Modules</th>
+                                                    <th>Status</th>
+                                                    {% if not user.userprofile.is_viewer %}
+                                                        <th>Actions</th>
+                                                    {% endif %}
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {% for connection in group.connections %}
+                                                <tr>
+                                                    <td>
+                                                        <a href="{% url 'connections:api_detail' connection.id %}" class="text-decoration-none fw-semibold">
+                                                            {{ connection.name }}
+                                                        </a>
+                                                    </td>
+                                                    <td>{{ connection.api_domain }}</td>
+                                                    <td>
+                                                        {% if connection.selected_modules %}
+                                                            <span class="badge bg-info">{{ connection.selected_modules|length }} module{{ connection.selected_modules|length|pluralize }}</span>
+                                                        {% else %}
+                                                            <span class="text-muted">No modules selected</span>
+                                                        {% endif %}
+                                                    </td>
+                                                    <td>
+                                                        {% if connection.is_active %}
+                                                            <span class="badge bg-success">Active</span>
+                                                        {% else %}
+                                                            <span class="badge bg-secondary">Inactive</span>
+                                                        {% endif %}
+                                                    </td>
+                                                    {% if not user.userprofile.is_viewer %}
+                                                        <td>
+                                                            <div class="btn-group" role="group">
+                                                                <a href="{% url 'connections:api_detail' connection.id %}" class="btn btn-sm btn-outline-primary" title="View">
+                                                                    <span>👁️</span>
+                                                                </a>
+                                                                <a href="{% url 'connections:api_update' connection.id %}" class="btn btn-sm btn-outline-secondary" title="Edit">
+                                                                    <span>✏️</span>
+                                                                </a>
+                                                                <button type="button" class="btn btn-sm btn-outline-info test-api-connection" data-connection-id="{{ connection.id }}" title="Test">
+                                                                    <span>🔌</span>
+                                                                </button>
+                                                                <a href="{% url 'connections:api_delete' connection.id %}" class="btn btn-sm btn-outline-danger" title="Delete">
+                                                                    <span>🗑️</span>
+                                                                </a>
+                                                            </div>
+                                                        </td>
+                                                    {% endif %}
+                                                </tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    {% endif %}
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="card">
+                <div class="card-body text-center py-5">
+                    <h5 class="text-muted">No API connections found</h5>
+                    <p class="text-muted">Get started by adding your first API connection.</p>
+                    {% if not user.userprofile.is_viewer %}
+                        <a href="{% url 'connections:api_create' %}" class="btn btn-primary">
+                            <span>➕</span> Add New API Connection
+                        </a>
+                    {% endif %}
+                </div>
+            </div>
+        {% endif %}
+    {% else %}
+        <div class="card">
+            <div class="card-body text-center py-5">
+                <h5 class="text-muted">No API connections found</h5>
+                <p class="text-muted">Get started by adding your first API connection.</p>
+                {% if not user.userprofile.is_viewer %}
+                    <a href="{% url 'connections:api_create' %}" class="btn btn-primary">
+                        <span>➕</span> Add New API Connection
+                    </a>
+                {% endif %}
+            </div>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Get CSRF token
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Test connection functionality
+    const testButtons = document.querySelectorAll('.test-api-connection');
+    const csrftoken = getCookie('csrftoken');
+    
+    testButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            const connectionId = this.getAttribute('data-connection-id');
+            const button = this;
+            const originalHTML = button.innerHTML;
+            
+            button.disabled = true;
+            button.innerHTML = '<span>⏳</span>';
+            
+            fetch(`/connections/api/${connectionId}/test/`, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrftoken,
+                    'Content-Type': 'application/json',
+                },
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Connection test successful! Found ' + data.modules.length + ' modules.');
+                } else {
+                    alert('Connection test failed: ' + data.message);
+                }
+            })
+            .catch(error => {
+                alert('Error testing connection: ' + error.message);
+            })
+            .finally(() => {
+                button.disabled = false;
+                button.innerHTML = originalHTML;
+            });
+        });
+    });
+});
+</script>
+{% endblock %}

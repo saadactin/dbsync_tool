@@ -6,7 +6,7 @@ from django.db.models import Count, Sum, Avg, Q, F
 from django.db.models.functions import TruncDate
 from datetime import timedelta
 from sync_jobs.models import SyncJob, SyncExecution, SyncExecutionLog
-from connections.models import DatabaseConnection
+from connections.models import DatabaseConnection, APIConnection
 
 
 class DashboardService:
@@ -102,6 +102,35 @@ class DashboardService:
         user_connections = TenantService.get_queryset_for_user(all_connections, user)
         total_connections = user_connections.count()
         
+        # API connection statistics
+        all_api_connections = APIConnection.objects.all()
+        user_api_connections = TenantService.get_queryset_for_user(all_api_connections, user)
+        
+        api_connections_stats = {
+            'total': user_api_connections.count(),
+            'active': user_api_connections.filter(is_active=True).count(),
+            'inactive': user_api_connections.filter(is_active=False).count(),
+            'by_type': list(user_api_connections.values('api_type').annotate(count=Count('id'))),
+        }
+        
+        # API sync job statistics
+        api_source_jobs = user_jobs.filter(source_connection_type='api')
+        api_jobs_stats = {
+            'total': api_source_jobs.count(),
+            'running': api_source_jobs.filter(status='running').count(),
+            'completed': api_source_jobs.filter(status='completed').count(),
+            'failed': api_source_jobs.filter(status='failed').count(),
+            'paused': api_source_jobs.filter(status='paused').count(),
+            'pending': api_source_jobs.filter(status='pending').count(),
+        }
+        
+        # API vs Database source breakdown
+        database_source_jobs = user_jobs.filter(source_connection_type='database')
+        source_breakdown = {
+            'api': api_source_jobs.count(),
+            'database': database_source_jobs.count(),
+        }
+        
         return {
             'jobs': {
                 'total': total_jobs,
@@ -136,6 +165,9 @@ class DashboardService:
             'connections': {
                 'total': total_connections,
             },
+            'api_connections': api_connections_stats,
+            'api_jobs': api_jobs_stats,
+            'source_breakdown': source_breakdown,
         }
     
     @staticmethod
@@ -217,4 +249,102 @@ class DashboardService:
         ).select_related('job').order_by('-started_at')[:limit]
         
         return executions
+    
+    @staticmethod
+    def get_api_connection_statistics(user):
+        """
+        Get API connection statistics for a user
+        
+        Returns:
+            dict: API connection statistics
+        """
+        from accounts.services.tenant_service import TenantService
+        all_api_connections = APIConnection.objects.all()
+        user_api_connections = TenantService.get_queryset_for_user(all_api_connections, user)
+        
+        return {
+            'total': user_api_connections.count(),
+            'active': user_api_connections.filter(is_active=True).count(),
+            'inactive': user_api_connections.filter(is_active=False).count(),
+            'by_type': list(user_api_connections.values('api_type').annotate(count=Count('id'))),
+        }
+    
+    @staticmethod
+    def get_api_sync_job_statistics(user):
+        """
+        Get API sync job statistics for a user
+        
+        Returns:
+            dict: API sync job statistics
+        """
+        from accounts.services.tenant_service import TenantService
+        all_jobs = SyncJob.objects.all()
+        user_jobs = TenantService.get_queryset_for_user(all_jobs, user)
+        api_source_jobs = user_jobs.filter(source_connection_type='api')
+        
+        # Get execution statistics for API jobs
+        api_executions = SyncExecution.objects.filter(job__in=api_source_jobs)
+        
+        now = timezone.now()
+        last_24h = now - timedelta(hours=24)
+        last_7d = now - timedelta(days=7)
+        last_30d = now - timedelta(days=30)
+        
+        api_executions_24h = api_executions.filter(started_at__gte=last_24h)
+        api_executions_7d = api_executions.filter(started_at__gte=last_7d)
+        api_executions_30d = api_executions.filter(started_at__gte=last_30d)
+        
+        return {
+            'total': api_source_jobs.count(),
+            'running': api_source_jobs.filter(status='running').count(),
+            'completed': api_source_jobs.filter(status='completed').count(),
+            'failed': api_source_jobs.filter(status='failed').count(),
+            'paused': api_source_jobs.filter(status='paused').count(),
+            'pending': api_source_jobs.filter(status='pending').count(),
+            'executions': {
+                'last_24h': api_executions_24h.count(),
+                'last_7d': api_executions_7d.count(),
+                'last_30d': api_executions_30d.count(),
+            },
+            'success_rate': DashboardService._calculate_success_rate(api_executions_30d),
+            'rows_synced': {
+                'last_24h': api_executions_24h.aggregate(total=Sum('total_rows_synced'))['total'] or 0,
+                'last_7d': api_executions_7d.aggregate(total=Sum('total_rows_synced'))['total'] or 0,
+                'last_30d': api_executions_30d.aggregate(total=Sum('total_rows_synced'))['total'] or 0,
+            },
+        }
+    
+    @staticmethod
+    def get_api_vs_database_breakdown(user):
+        """
+        Get breakdown of API vs Database source jobs
+        
+        Returns:
+            dict: Source type breakdown
+        """
+        from accounts.services.tenant_service import TenantService
+        all_jobs = SyncJob.objects.all()
+        user_jobs = TenantService.get_queryset_for_user(all_jobs, user)
+        
+        api_jobs = user_jobs.filter(source_connection_type='api')
+        database_jobs = user_jobs.filter(source_connection_type='database')
+        
+        # Get execution counts
+        api_executions = SyncExecution.objects.filter(job__in=api_jobs)
+        database_executions = SyncExecution.objects.filter(job__in=database_jobs)
+        
+        return {
+            'jobs': {
+                'api': api_jobs.count(),
+                'database': database_jobs.count(),
+            },
+            'executions': {
+                'api': api_executions.count(),
+                'database': database_executions.count(),
+            },
+            'rows_synced': {
+                'api': api_executions.aggregate(total=Sum('total_rows_synced'))['total'] or 0,
+                'database': database_executions.aggregate(total=Sum('total_rows_synced'))['total'] or 0,
+            },
+        }
 

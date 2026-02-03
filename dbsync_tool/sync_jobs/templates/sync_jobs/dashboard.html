@@ -112,13 +112,91 @@
         <div class="col-md-3">
             <div class="stats-card">
                 <h3 class="text-primary">{{ stats.connections.total }}</h3>
-                <p>Connections</p>
+                <p>Database Connections</p>
             </div>
         </div>
         <div class="col-md-3">
             <div class="stats-card">
                 <h3 class="text-info">{{ stats.executions.last_24h }}</h3>
                 <p>Executions (24h)</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- API Connection Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <h3 class="mb-3">API Connections</h3>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-primary">{{ stats.api_connections.total }}</h3>
+                <p>Total API Connections</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-success">{{ stats.api_connections.active }}</h3>
+                <p>Active API Connections</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-warning">{{ stats.api_connections.inactive }}</h3>
+                <p>Inactive API Connections</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-info">{{ stats.api_jobs.total }}</h3>
+                <p>API Source Jobs</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- API Job Statistics -->
+    {% if stats.api_jobs.total > 0 %}
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <h3 class="mb-3">API Sync Job Statistics</h3>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-info">{{ stats.api_jobs.running }}</h3>
+                <p>Running</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-success">{{ stats.api_jobs.completed }}</h3>
+                <p>Completed</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-danger">{{ stats.api_jobs.failed }}</h3>
+                <p>Failed</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-secondary">{{ stats.api_jobs.pending }}</h3>
+                <p>Pending</p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- Source Type Breakdown -->
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Source Type Breakdown</h5>
+                </div>
+                <div class="card-body">
+                    <canvas id="sourceTypeChart"></canvas>
+                </div>
             </div>
         </div>
     </div>
@@ -399,6 +477,52 @@ if (successRateCtx) {
     } else {
         // Show message if no data
         successRateCtx.parentElement.innerHTML = '<p class="text-muted text-center mt-4">No execution data available for the last 30 days</p>';
+    }
+}
+
+// Source Type Breakdown Chart
+const sourceTypeCtx = document.getElementById('sourceTypeChart');
+if (sourceTypeCtx) {
+    const apiJobs = {{ stats.source_breakdown.api|default:0 }};
+    const databaseJobs = {{ stats.source_breakdown.database|default:0 }};
+    
+    if (apiJobs > 0 || databaseJobs > 0) {
+        const sourceTypeChart = new Chart(sourceTypeCtx.getContext('2d'), {
+            type: 'doughnut',
+            data: {
+                labels: ['API Source', 'Database Source'],
+                datasets: [{
+                    data: [apiJobs, databaseJobs],
+                    backgroundColor: [
+                        'rgb(75, 192, 192)',
+                        'rgb(54, 162, 235)'
+                    ],
+                    borderWidth: 2,
+                    borderColor: '#fff'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'bottom'
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const label = context.label || '';
+                                const value = context.parsed || 0;
+                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                                return `${label}: ${value} (${percentage}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
     }
 }
 

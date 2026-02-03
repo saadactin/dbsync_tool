@@ -1,0 +1,59 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Delete API Connection - DB Sync Tool{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-6 offset-md-3">
+            <div class="card">
+                <div class="card-header bg-danger text-white">
+                    <h3>Delete API Connection</h3>
+                </div>
+                <div class="card-body">
+                    <p>Are you sure you want to delete the API connection <strong>{{ object.name }}</strong>?</p>
+                    
+                    <div class="alert alert-warning">
+                        <strong>Warning:</strong> This action cannot be undone.
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-body">
+                            <h6>Connection Details:</h6>
+                            <table class="table table-sm table-borderless mb-0">
+                                <tr>
+                                    <th>Type:</th>
+                                    <td>{{ object.get_api_type_display }}</td>
+                                </tr>
+                                <tr>
+                                    <th>API Domain:</th>
+                                    <td>{{ object.api_domain }}</td>
+                                </tr>
+                                <tr>
+                                    <th>Modules:</th>
+                                    <td>
+                                        {% if object.selected_modules %}
+                                            {{ object.selected_modules|length }} module{{ object.selected_modules|length|pluralize }}
+                                        {% else %}
+                                            No modules selected
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            </table>
+                        </div>
+                    </div>
+
+                    <form method="post">
+                        {% csrf_token %}
+                        <div class="d-flex justify-content-between">
+                            <a href="{% url 'connections:api_detail' object.id %}" class="btn btn-secondary">Cancel</a>
+                            <button type="submit" class="btn btn-danger">Delete Connection</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

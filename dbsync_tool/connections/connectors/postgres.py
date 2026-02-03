@@ -9,6 +9,8 @@ from typing import List, Tuple, Optional, Dict, Any
 from .base import DBConnector, ColumnInfo
 from core.exceptions import DatabaseConnectionError, TableNotFoundError
 from core.type_mapping import map_data_type
+from datetime import date, datetime
+import pandas as pd
 import logging
 
 logger = logging.getLogger(__name__)
@@ -533,4 +535,204 @@ class PostgresConnector(DBConnector):
         except Exception as e:
             self._connection.rollback()
             raise DatabaseConnectionError(f"Failed to bulk insert into PostgreSQL: {str(e)}")
+    
+    def create_table_from_dataframe(self, schema: str, table: str, df: pd.DataFrame):
+        """
+        Create a table from a pandas DataFrame
+        
+        Args:
+            schema: Schema name
+            table: Table name
+            df: DataFrame with data structure
+        """
+        if not self._connection:
+            self.connect()
+        
+        if df.empty:
+            raise DatabaseConnectionError(f"Cannot create table from empty DataFrame")
+        
+        try:
+            # Ensure schema exists
+            self.ensure_schema_exists(schema)
+            
+            # Infer column types from DataFrame
+            columns = []
+            for col_name in df.columns:
+                dtype = df[col_name].dtype
+                
+                # Map pandas dtype to PostgreSQL type
+                if pd.api.types.is_integer_dtype(dtype):
+                    if dtype == 'int64':
+                        pg_type = 'BIGINT'
+                    elif dtype == 'int32':
+                        pg_type = 'INTEGER'
+                    elif dtype == 'int16':
+                        pg_type = 'SMALLINT'
+                    else:
+                        pg_type = 'INTEGER'
+                elif pd.api.types.is_float_dtype(dtype):
+                    pg_type = 'DOUBLE PRECISION'
+                elif pd.api.types.is_bool_dtype(dtype):
+                    pg_type = 'BOOLEAN'
+                elif pd.api.types.is_datetime64_any_dtype(dtype):
+                    pg_type = 'TIMESTAMP'
+                elif pd.api.types.is_object_dtype(dtype):
+                    # Check sample values
+                    sample = df[col_name].dropna().head(1)
+                    if len(sample) > 0:
+                        val = sample.iloc[0]
+                        if isinstance(val, (date, datetime)):
+                            pg_type = 'TIMESTAMP'
+                        else:
+                            pg_type = 'TEXT'
+                    else:
+                        pg_type = 'TEXT'
+                else:
+                    pg_type = 'TEXT'
+                
+                # Check if column has nulls
+                has_nulls = df[col_name].isna().any()
+                
+                columns.append(ColumnInfo(
+                    name=col_name,
+                    data_type=pg_type,
+                    is_nullable=has_nulls,
+                    is_primary_key=False,
+                    max_length=None
+                ))
+            
+            # Create table using existing create_table method
+            self.create_table(schema, table, columns, target_db_type='postgres')
+            
+        except Exception as e:
+            raise DatabaseConnectionError(f"Failed to create table from DataFrame: {str(e)}")
+    
+    def add_missing_columns(self, schema: str, table: str, df: pd.DataFrame):
+        """
+        Add missing columns to an existing table based on DataFrame
+        
+        Args:
+            schema: Schema name
+            table: Table name
+            df: DataFrame with new columns
+        """
+        if not self._connection:
+            self.connect()
+        
+        if df.empty:
+            return
+        
+        try:
+            # Get existing columns
+            existing_columns = self.get_columns(schema, table)
+            existing_col_names = {col.name for col in existing_columns}
+            
+            # Find new columns
+            new_columns = []
+            for col_name in df.columns:
+                if col_name not in existing_col_names:
+                    dtype = df[col_name].dtype
+                    
+                    # Map pandas dtype to PostgreSQL type (same logic as create_table_from_dataframe)
+                    if pd.api.types.is_integer_dtype(dtype):
+                        pg_type = 'BIGINT' if dtype == 'int64' else 'INTEGER'
+                    elif pd.api.types.is_float_dtype(dtype):
+                        pg_type = 'DOUBLE PRECISION'
+                    elif pd.api.types.is_bool_dtype(dtype):
+                        pg_type = 'BOOLEAN'
+                    elif pd.api.types.is_datetime64_any_dtype(dtype):
+                        pg_type = 'TIMESTAMP'
+                    else:
+                        pg_type = 'TEXT'
+                    
+                    new_columns.append((col_name, pg_type))
+            
+            # Add new columns
+            with self._connection.cursor() as cursor:
+                for col_name, pg_type in new_columns:
+                    alter_query = sql.SQL("ALTER TABLE {}.{} ADD COLUMN IF NOT EXISTS {} {}").format(
+                        sql.Identifier(schema),
+                        sql.Identifier(table),
+                        sql.Identifier(col_name),
+                        sql.SQL(pg_type)
+                    )
+                    cursor.execute(alter_query)
+                    logger.info(f"Added column {col_name} ({pg_type}) to table {schema}.{table}")
+                self._connection.commit()
+            
+        except Exception as e:
+            self._connection.rollback()
+            raise DatabaseConnectionError(f"Failed to add missing columns: {str(e)}")
+    
+    def upsert_dataframe(
+        self, 
+        schema: str, 
+        table: str, 
+        df: pd.DataFrame, 
+        key_column: str
+    ):
+        """
+        Upsert (insert or update) DataFrame rows into table using INSERT ... ON CONFLICT
+        
+        Args:
+            schema: Schema name
+            table: Table name
+            df: DataFrame with data
+            key_column: Primary key or unique identifier column name
+        """
+        if not self._connection:
+            self.connect()
+        
+        if df.empty:
+            return
+        
+        try:
+            if key_column not in df.columns:
+                raise DatabaseConnectionError(f"Key column {key_column} not found in DataFrame")
+            
+            columns = list(df.columns)
+            rows = [tuple(row) for row in df.values]
+            
+            with self._connection.cursor() as cursor:
+                # Build column identifiers
+                col_identifiers = sql.SQL(', ').join(
+                    sql.Identifier(col) for col in columns
+                )
+                
+                # Build placeholders
+                placeholders = sql.SQL(', ').join([sql.Placeholder()] * len(columns))
+                
+                # Build UPDATE clause (update all columns except key)
+                update_cols = [col for col in columns if col != key_column]
+                update_clause = sql.SQL(', ').join(
+                    sql.SQL("{} = EXCLUDED.{}").format(
+                        sql.Identifier(col),
+                        sql.Identifier(col)
+                    )
+                    for col in update_cols
+                )
+                
+                # Build INSERT ... ON CONFLICT query
+                insert_query = sql.SQL("""
+                    INSERT INTO {}.{} ({}) 
+                    VALUES ({})
+                    ON CONFLICT ({}) DO UPDATE SET {}
+                """).format(
+                    sql.Identifier(schema),
+                    sql.Identifier(table),
+                    col_identifiers,
+                    placeholders,
+                    sql.Identifier(key_column),
+                    update_clause
+                )
+                
+                # Execute for each row
+                for row in rows:
+                    cursor.execute(insert_query, row)
+                
+                self._connection.commit()
+            
+        except Exception as e:
+            self._connection.rollback()
+            raise DatabaseConnectionError(f"Failed to upsert DataFrame: {str(e)}")
 

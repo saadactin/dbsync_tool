@@ -4,10 +4,12 @@ Main sync executor that orchestrates sync operations
 from typing import Optional
 from django.utils import timezone
 from sync_jobs.models import SyncJob, SyncExecution
-from connections.models import DatabaseConnection
+from connections.models import DatabaseConnection, APIConnection
 from connections.connectors.factory import get_connector
+from connections.connectors.zoho import ZohoConnector
 from sync_engine.full_sync import FullSyncExecutor
 from sync_engine.incremental_sync import IncrementalSyncExecutor
+from sync_engine.api_sync import APISyncExecutor
 from sync_engine.exceptions import SyncExecutionError, TableSyncError
 import logging
 import time
@@ -61,29 +63,60 @@ class SyncExecutor:
             self.job.status = 'running'
             self.job.save()
             
-            # Get connectors with retry
-            source_connector = self._get_connector_with_retry(self.job.source_connection)
-            target_connector = self._get_connector_with_retry(self.job.target_connection)
-            
-            # Execute based on sync type
-            if self.job.sync_type == 'full':
-                executor = FullSyncExecutor(
+            # Check if source is API or Database
+            if self.job.is_api_source():
+                # API source - use APISyncExecutor
+                logger.info(f"Job {self.job.id} has API source, using APISyncExecutor")
+                
+                # Get API connector
+                api_connection = self.job.source_api_connection
+                if not api_connection:
+                    raise SyncExecutionError("API connection not found for API source job")
+                
+                api_connector = ZohoConnector(api_connection)
+                
+                # Get target database connector
+                target_connector = self._get_connector_with_retry(self.job.target_connection)
+                
+                # Execute API sync
+                executor = APISyncExecutor(
                     job=self.job,
                     execution=execution,
-                    source_connector=source_connector,
+                    api_connector=api_connector,
                     target_connector=target_connector
                 )
                 executor.execute()
-            elif self.job.sync_type == 'incremental':
-                executor = IncrementalSyncExecutor(
-                    job=self.job,
-                    execution=execution,
-                    source_connector=source_connector,
-                    target_connector=target_connector
-                )
-                executor.execute()
+                
+                # Close API connector (it doesn't have a close method, but we can clean up)
+                # API connectors don't maintain persistent connections
+                
             else:
-                raise SyncExecutionError(f"Unknown sync type: {self.job.sync_type}")
+                # Database source - use existing executors
+                logger.info(f"Job {self.job.id} has database source, using database sync executors")
+                
+                # Get connectors with retry
+                source_connector = self._get_connector_with_retry(self.job.source_connection)
+                target_connector = self._get_connector_with_retry(self.job.target_connection)
+                
+                # Execute based on sync type
+                if self.job.sync_type == 'full':
+                    executor = FullSyncExecutor(
+                        job=self.job,
+                        execution=execution,
+                        source_connector=source_connector,
+                        target_connector=target_connector
+                    )
+                    executor.execute()
+                elif self.job.sync_type == 'incremental':
+                    executor = IncrementalSyncExecutor(
+                        job=self.job,
+                        execution=execution,
+                        source_connector=source_connector,
+                        target_connector=target_connector
+                    )
+                    executor.execute()
+                else:
+                    raise SyncExecutionError(f"Unknown sync type: {self.job.sync_type}")
             
             # Mark execution as completed
             execution.status = 'completed'
@@ -160,13 +193,14 @@ class SyncExecutor:
             
             raise SyncExecutionError(f"Sync execution failed: {str(e)}") from e
         finally:
-            # Close connections
-            if source_connector:
+            # Close connections (only for database connectors)
+            # Note: source_connector may not be set for API sources
+            if hasattr(self, 'source_connector') and self.source_connector:
                 try:
-                    source_connector.close()
+                    self.source_connector.close()
                 except Exception as e:
                     logger.warning(f"Error closing source connection: {str(e)}")
-            if target_connector:
+            if 'target_connector' in locals() and target_connector:
                 try:
                     target_connector.close()
                 except Exception as e:

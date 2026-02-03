@@ -4,7 +4,8 @@ Sync job models
 import uuid
 from django.db import models
 from django.contrib.auth.models import User
-from connections.models import DatabaseConnection
+from django.core.exceptions import ValidationError
+from connections.models import DatabaseConnection, APIConnection
 from core.constants import SCHEDULE_TYPE_CHOICES
 
 
@@ -18,7 +19,23 @@ class SyncJob(models.Model):
     source_connection = models.ForeignKey(
         DatabaseConnection,
         on_delete=models.CASCADE,
-        related_name='source_jobs'
+        related_name='source_jobs',
+        null=True,  # Nullable for API sources
+        blank=True
+    )
+    source_api_connection = models.ForeignKey(
+        APIConnection,
+        on_delete=models.CASCADE,
+        related_name='api_source_jobs',
+        null=True,  # Nullable for database sources
+        blank=True
+    )
+    source_connection_type = models.CharField(
+        max_length=20,
+        choices=[('database', 'Database'), ('api', 'API')],
+        null=True,  # Nullable for backward compatibility
+        blank=True,
+        help_text="Type of source connection (database or API)"
     )
     target_connection = models.ForeignKey(
         DatabaseConnection,
@@ -65,6 +82,48 @@ class SyncJob(models.Model):
             models.Index(fields=['tenant']),
             models.Index(fields=['tenant', 'status']),
         ]
+    
+    def get_source_connection(self):
+        """
+        Get source connection (database or API)
+        
+        Returns:
+            DatabaseConnection or APIConnection instance
+        """
+        if self.source_connection_type == 'api':
+            return self.source_api_connection
+        return self.source_connection
+    
+    def is_api_source(self):
+        """
+        Check if source is API connection
+        
+        Returns:
+            bool: True if source is API connection, False otherwise
+        """
+        return self.source_connection_type == 'api'
+    
+    def clean(self):
+        """Validate model data"""
+        super().clean()
+        
+        # Ensure exactly one source connection is set
+        if self.source_connection_type == 'api':
+            if not self.source_api_connection:
+                raise ValidationError("source_api_connection is required when source_connection_type is 'api'")
+            if self.source_connection:
+                raise ValidationError("source_connection must be null when source_connection_type is 'api'")
+        elif self.source_connection_type == 'database':
+            if not self.source_connection:
+                raise ValidationError("source_connection is required when source_connection_type is 'database'")
+            if self.source_api_connection:
+                raise ValidationError("source_api_connection must be null when source_connection_type is 'database'")
+        else:
+            # Backward compatibility: if type is not set, assume database
+            if not self.source_connection and not self.source_api_connection:
+                raise ValidationError("Either source_connection or source_api_connection must be set")
+            if self.source_connection and self.source_api_connection:
+                raise ValidationError("Only one of source_connection or source_api_connection can be set")
     
     def __str__(self):
         return f"{self.name} ({self.get_sync_type_display()})"
@@ -272,6 +331,105 @@ class SyncExecutionLog(models.Model):
     
     def __str__(self):
         return f"Log for {self.schema_name}.{self.table_name} - {self.get_status_display()}"
+
+
+class APISyncState(models.Model):
+    """
+    Track incremental sync state for API source modules
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.ForeignKey(
+        SyncJob,
+        on_delete=models.CASCADE,
+        related_name='api_sync_states'
+    )
+    module_name = models.CharField(max_length=255, help_text="Name of the API module being synced")
+    last_sync_time = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Last time this module was synced"
+    )
+    last_modified_time = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Last modified time from API (for incremental sync)"
+    )
+    records_synced = models.BigIntegerField(
+        default=0,
+        help_text="Total number of records synced for this module"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'api_sync_states'
+        unique_together = [['job', 'module_name']]
+        indexes = [
+            models.Index(fields=['job', 'module_name']),
+            models.Index(fields=['job']),
+        ]
+        ordering = ['job', 'module_name']
+    
+    def __str__(self):
+        return f"Sync state for {self.job.name} - {self.module_name}"
+    
+    @classmethod
+    def get_for_job(cls, job):
+        """
+        Get all sync states for a job
+        
+        Args:
+            job: SyncJob instance
+            
+        Returns:
+            QuerySet of APISyncState objects
+        """
+        return cls.objects.filter(job=job)
+    
+    @classmethod
+    def get_for_module(cls, job, module_name):
+        """
+        Get sync state for a specific module
+        
+        Args:
+            job: SyncJob instance
+            module_name: Module name
+            
+        Returns:
+            APISyncState instance or None
+        """
+        try:
+            return cls.objects.get(job=job, module_name=module_name)
+        except cls.DoesNotExist:
+            return None
+    
+    def update_sync_time(self, records_count: int, last_modified=None):
+        """
+        Update sync state after successful sync
+        
+        Args:
+            records_count: Number of records synced in this operation
+            last_modified: Optional datetime of last modified time from API
+        """
+        from django.utils import timezone
+        self.last_sync_time = timezone.now()
+        if last_modified:
+            self.last_modified_time = last_modified
+        self.records_synced += records_count
+        self.save()
+    
+    def get_data_freshness(self):
+        """
+        Get time since last successful sync
+        
+        Returns:
+            timedelta or None if never synced
+        """
+        from django.utils import timezone
+        from datetime import timedelta
+        if self.last_sync_time:
+            return timezone.now() - self.last_sync_time
+        return None
 
 
 class NotificationPreference(models.Model):

@@ -6,6 +6,8 @@ from typing import List, Tuple, Optional, Dict, Any
 from .base import DBConnector, ColumnInfo
 from core.exceptions import DatabaseConnectionError, TableNotFoundError
 from core.type_mapping import map_data_type
+import pandas as pd
+from datetime import date, datetime
 import logging
 import traceback
 
@@ -676,4 +678,239 @@ class SQLServerConnector(DBConnector):
             raise DatabaseConnectionError(f"Failed to bulk insert into SQL Server: {str(e)}")
         finally:
             cursor.close()
+    
+    def create_table_from_dataframe(self, schema: str, table: str, df: pd.DataFrame):
+        """
+        Create a table from a pandas DataFrame
+        
+        Args:
+            schema: Schema name
+            table: Table name
+            df: DataFrame with data structure
+        """
+        if not self._connection:
+            self.connect()
+        
+        if df.empty:
+            raise DatabaseConnectionError(f"Cannot create table from empty DataFrame")
+        
+        try:
+            # Ensure schema exists
+            actual_schema = self.ensure_schema_exists(schema)
+            
+            # Infer column types from DataFrame
+            columns = []
+            for col_name in df.columns:
+                dtype = df[col_name].dtype
+                
+                # Map pandas dtype to SQL Server type
+                if pd.api.types.is_integer_dtype(dtype):
+                    if dtype == 'int64':
+                        sql_type = 'BIGINT'
+                    elif dtype == 'int32':
+                        sql_type = 'INT'
+                    elif dtype == 'int16':
+                        sql_type = 'SMALLINT'
+                    else:
+                        sql_type = 'INT'
+                elif pd.api.types.is_float_dtype(dtype):
+                    sql_type = 'FLOAT'
+                elif pd.api.types.is_bool_dtype(dtype):
+                    sql_type = 'BIT'
+                elif pd.api.types.is_datetime64_any_dtype(dtype):
+                    sql_type = 'DATETIME2'
+                elif pd.api.types.is_object_dtype(dtype):
+                    # Check sample values
+                    sample = df[col_name].dropna().head(1)
+                    if len(sample) > 0:
+                        val = sample.iloc[0]
+                        if isinstance(val, (date, datetime)):
+                            sql_type = 'DATETIME2'
+                        else:
+                            sql_type = 'NVARCHAR(MAX)'
+                    else:
+                        sql_type = 'NVARCHAR(MAX)'
+                else:
+                    sql_type = 'NVARCHAR(MAX)'
+                
+                # Check if column has nulls
+                has_nulls = df[col_name].isna().any()
+                
+                columns.append(ColumnInfo(
+                    name=col_name,
+                    data_type=sql_type,
+                    is_nullable=has_nulls,
+                    is_primary_key=False,
+                    max_length=None
+                ))
+            
+            # Create table using existing create_table method
+            self.create_table(actual_schema, table, columns, target_db_type='sqlserver')
+            
+        except Exception as e:
+            raise DatabaseConnectionError(f"Failed to create table from DataFrame: {str(e)}")
+    
+    def add_missing_columns(self, schema: str, table: str, df: pd.DataFrame):
+        """
+        Add missing columns to an existing table based on DataFrame
+        
+        Args:
+            schema: Schema name
+            table: Table name
+            df: DataFrame with new columns
+        """
+        if not self._connection:
+            self.connect()
+        
+        if df.empty:
+            return
+        
+        try:
+            # Handle schema mapping (public -> dbo)
+            actual_schema = schema
+            if schema.lower() == 'public':
+                actual_schema = 'dbo'
+            
+            # Get existing columns
+            existing_columns = self.get_columns(actual_schema, table)
+            existing_col_names = {col.name for col in existing_columns}
+            
+            # Find new columns
+            new_columns = []
+            for col_name in df.columns:
+                if col_name not in existing_col_names:
+                    dtype = df[col_name].dtype
+                    
+                    # Map pandas dtype to SQL Server type (same logic as create_table_from_dataframe)
+                    if pd.api.types.is_integer_dtype(dtype):
+                        sql_type = 'BIGINT' if dtype == 'int64' else 'INT'
+                    elif pd.api.types.is_float_dtype(dtype):
+                        sql_type = 'FLOAT'
+                    elif pd.api.types.is_bool_dtype(dtype):
+                        sql_type = 'BIT'
+                    elif pd.api.types.is_datetime64_any_dtype(dtype):
+                        sql_type = 'DATETIME2'
+                    else:
+                        sql_type = 'NVARCHAR(MAX)'
+                    
+                    new_columns.append((col_name, sql_type))
+            
+            # Add new columns
+            cursor = self._connection.cursor()
+            try:
+                for col_name, sql_type in new_columns:
+                    # Check if column already exists (race condition protection)
+                    cursor.execute("""
+                        SELECT COUNT(*) 
+                        FROM INFORMATION_SCHEMA.COLUMNS 
+                        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?
+                    """, (actual_schema, table, col_name))
+                    if cursor.fetchone()[0] == 0:
+                        alter_query = f"ALTER TABLE [{actual_schema}].[{table}] ADD [{col_name}] {sql_type}"
+                        cursor.execute(alter_query)
+                        logger.info(f"Added column {col_name} ({sql_type}) to table {actual_schema}.{table}")
+                self._connection.commit()
+            finally:
+                cursor.close()
+            
+        except Exception as e:
+            if self._connection:
+                try:
+                    self._connection.rollback()
+                except Exception:
+                    pass
+            raise DatabaseConnectionError(f"Failed to add missing columns: {str(e)}")
+    
+    def upsert_dataframe(
+        self, 
+        schema: str, 
+        table: str, 
+        df: pd.DataFrame, 
+        key_column: str
+    ):
+        """
+        Upsert (insert or update) DataFrame rows into table using MERGE statement
+        
+        Args:
+            schema: Schema name
+            table: Table name
+            df: DataFrame with data
+            key_column: Primary key or unique identifier column name
+        """
+        if not self._connection:
+            self.connect()
+        
+        if df.empty:
+            return
+        
+        try:
+            if key_column not in df.columns:
+                raise DatabaseConnectionError(f"Key column {key_column} not found in DataFrame")
+            
+            # Handle schema mapping (public -> dbo)
+            actual_schema = schema
+            if schema.lower() == 'public':
+                actual_schema = 'dbo'
+            
+            cursor = self._connection.cursor()
+            try:
+                columns = list(df.columns)
+                
+                # Build MERGE statement
+                # SQL Server MERGE syntax
+                target_cols = ', '.join(f"[{col}]" for col in columns)
+                source_cols = ', '.join(f"source.[{col}]" for col in columns)
+                update_cols = ', '.join(f"[{col}] = source.[{col}]" for col in columns if col != key_column)
+                insert_cols = ', '.join(f"[{col}]" for col in columns)
+                insert_values = ', '.join(f"source.[{col}]" for col in columns)
+                
+                # Process in batches to avoid memory issues
+                batch_size = 1000
+                for i in range(0, len(df), batch_size):
+                    batch_df = df.iloc[i:i+batch_size]
+                    
+                    # Build VALUES clause for this batch
+                    values_clauses = []
+                    for _, row in batch_df.iterrows():
+                        row_values = []
+                        for col in columns:
+                            val = row[col]
+                            if pd.isna(val):
+                                row_values.append('NULL')
+                            elif isinstance(val, str):
+                                # Escape single quotes
+                                escaped = val.replace("'", "''")
+                                row_values.append(f"'{escaped}'")
+                            elif isinstance(val, (date, datetime)):
+                                row_values.append(f"'{val.isoformat()}'")
+                            else:
+                                row_values.append(str(val))
+                        values_clauses.append(f"({', '.join(row_values)})")
+                    
+                    values_clause = ', '.join(values_clauses)
+                    
+                    merge_query = f"""
+                        MERGE [{actual_schema}].[{table}] AS target
+                        USING (VALUES {values_clause}) AS source ({target_cols})
+                        ON target.[{key_column}] = source.[{key_column}]
+                        WHEN MATCHED THEN
+                            UPDATE SET {update_cols}
+                        WHEN NOT MATCHED THEN
+                            INSERT ({insert_cols})
+                            VALUES ({insert_values});
+                    """
+                    
+                    cursor.execute(merge_query)
+                
+                self._connection.commit()
+            finally:
+                cursor.close()
+            
+        except Exception as e:
+            if self._connection:
+                try:
+                    self._connection.rollback()
+                except Exception:
+                    pass
+            raise DatabaseConnectionError(f"Failed to upsert DataFrame: {str(e)}")
 

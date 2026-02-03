@@ -9,6 +9,7 @@ from core.exceptions import DatabaseConnectionError, TableNotFoundError
 from core.type_mapping import map_data_type
 from decimal import Decimal
 from datetime import date, datetime
+import pandas as pd
 import logging
 
 logger = logging.getLogger(__name__)
@@ -651,4 +652,225 @@ class MySQLConnector(DBConnector):
             raise DatabaseConnectionError(f"Failed to bulk insert into MySQL: {str(e)}")
         finally:
             cursor.close()
+    
+    def create_table_from_dataframe(self, schema: str, table: str, df: pd.DataFrame):
+        """
+        Create a table from a pandas DataFrame
+        
+        Args:
+            schema: Database name
+            table: Table name
+            df: DataFrame with data structure
+        """
+        if not self._connection:
+            self.connect()
+        
+        if df.empty:
+            raise DatabaseConnectionError(f"Cannot create table from empty DataFrame")
+        
+        try:
+            cursor = self._connection.cursor()
+            
+            # Ensure database exists
+            try:
+                cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{schema}`")
+                cursor.execute(f"USE `{schema}`")
+                self._connection.commit()
+            except Exception:
+                # Use connected database instead
+                cursor.execute(f"USE `{self.database_name}`")
+                schema = self.database_name
+            
+            # Infer column types from DataFrame
+            columns = []
+            for col_name in df.columns:
+                dtype = df[col_name].dtype
+                
+                # Map pandas dtype to MySQL type
+                if pd.api.types.is_integer_dtype(dtype):
+                    if dtype == 'int64':
+                        mysql_type = 'BIGINT'
+                    elif dtype == 'int32':
+                        mysql_type = 'INT'
+                    elif dtype == 'int16':
+                        mysql_type = 'SMALLINT'
+                    else:
+                        mysql_type = 'INT'
+                elif pd.api.types.is_float_dtype(dtype):
+                    mysql_type = 'DOUBLE'
+                elif pd.api.types.is_bool_dtype(dtype):
+                    mysql_type = 'BOOLEAN'
+                elif pd.api.types.is_datetime64_any_dtype(dtype):
+                    mysql_type = 'DATETIME'
+                elif pd.api.types.is_object_dtype(dtype):
+                    # Check sample values
+                    sample = df[col_name].dropna().head(1)
+                    if len(sample) > 0:
+                        val = sample.iloc[0]
+                        if isinstance(val, (date, datetime)):
+                            mysql_type = 'DATETIME'
+                        else:
+                            mysql_type = 'TEXT'
+                    else:
+                        mysql_type = 'TEXT'
+                else:
+                    mysql_type = 'TEXT'
+                
+                # Check if column has nulls
+                has_nulls = df[col_name].isna().any()
+                
+                columns.append(ColumnInfo(
+                    name=col_name,
+                    data_type=mysql_type,
+                    is_nullable=has_nulls,
+                    is_primary_key=False,
+                    max_length=None
+                ))
+            
+            # Create table using existing create_table method
+            self.create_table(schema, table, columns, target_db_type='mysql')
+            
+        except Exception as e:
+            if self._connection:
+                self._connection.rollback()
+            raise DatabaseConnectionError(f"Failed to create table from DataFrame: {str(e)}")
+        finally:
+            if cursor:
+                cursor.close()
+    
+    def add_missing_columns(self, schema: str, table: str, df: pd.DataFrame):
+        """
+        Add missing columns to an existing table based on DataFrame
+        
+        Args:
+            schema: Database name
+            table: Table name
+            df: DataFrame with new columns
+        """
+        if not self._connection:
+            self.connect()
+        
+        if df.empty:
+            return
+        
+        try:
+            cursor = self._connection.cursor()
+            
+            # Use connected database if schema doesn't match
+            if schema != self.database_name:
+                try:
+                    cursor.execute(f"USE `{schema}`")
+                except Exception:
+                    cursor.execute(f"USE `{self.database_name}`")
+                    schema = self.database_name
+            else:
+                cursor.execute(f"USE `{self.database_name}`")
+            
+            # Get existing columns
+            existing_columns = self.get_columns(schema, table)
+            existing_col_names = {col.name for col in existing_columns}
+            
+            # Find new columns
+            new_columns = []
+            for col_name in df.columns:
+                if col_name not in existing_col_names:
+                    dtype = df[col_name].dtype
+                    
+                    # Map pandas dtype to MySQL type (same logic as create_table_from_dataframe)
+                    if pd.api.types.is_integer_dtype(dtype):
+                        mysql_type = 'BIGINT' if dtype == 'int64' else 'INT'
+                    elif pd.api.types.is_float_dtype(dtype):
+                        mysql_type = 'DOUBLE'
+                    elif pd.api.types.is_bool_dtype(dtype):
+                        mysql_type = 'BOOLEAN'
+                    elif pd.api.types.is_datetime64_any_dtype(dtype):
+                        mysql_type = 'DATETIME'
+                    else:
+                        mysql_type = 'TEXT'
+                    
+                    new_columns.append((col_name, mysql_type))
+            
+            # Add new columns
+            for col_name, mysql_type in new_columns:
+                alter_query = f"ALTER TABLE `{table}` ADD COLUMN IF NOT EXISTS `{col_name}` {mysql_type}"
+                cursor.execute(alter_query)
+                logger.info(f"Added column {col_name} ({mysql_type}) to table {schema}.{table}")
+            
+            self._connection.commit()
+            
+        except Exception as e:
+            if self._connection:
+                self._connection.rollback()
+            raise DatabaseConnectionError(f"Failed to add missing columns: {str(e)}")
+        finally:
+            if cursor:
+                cursor.close()
+    
+    def upsert_dataframe(
+        self, 
+        schema: str, 
+        table: str, 
+        df: pd.DataFrame, 
+        key_column: str
+    ):
+        """
+        Upsert (insert or update) DataFrame rows into table using INSERT ... ON DUPLICATE KEY UPDATE
+        
+        Args:
+            schema: Database name
+            table: Table name
+            df: DataFrame with data
+            key_column: Primary key or unique identifier column name
+        """
+        if not self._connection:
+            self.connect()
+        
+        if df.empty:
+            return
+        
+        try:
+            if key_column not in df.columns:
+                raise DatabaseConnectionError(f"Key column {key_column} not found in DataFrame")
+            
+            cursor = self._connection.cursor()
+            
+            # Use connected database if schema doesn't match
+            if schema != self.database_name:
+                try:
+                    cursor.execute(f"USE `{schema}`")
+                except Exception:
+                    cursor.execute(f"USE `{self.database_name}`")
+                    schema = self.database_name
+            else:
+                cursor.execute(f"USE `{self.database_name}`")
+            
+            columns = list(df.columns)
+            rows = [tuple(row) for row in df.values]
+            
+            # Build column names
+            col_names = ', '.join(f"`{col}`" for col in columns)
+            placeholders = ', '.join(['%s'] * len(columns))
+            
+            # Build UPDATE clause (update all columns except key)
+            update_cols = [col for col in columns if col != key_column]
+            update_clause = ', '.join(f"`{col}` = VALUES(`{col}`)" for col in update_cols)
+            
+            # Build INSERT ... ON DUPLICATE KEY UPDATE query
+            insert_query = f"""
+                INSERT INTO `{table}` ({col_names}) 
+                VALUES ({placeholders})
+                ON DUPLICATE KEY UPDATE {update_clause}
+            """
+            
+            # Execute for each row
+            cursor.executemany(insert_query, rows)
+            self._connection.commit()
+            
+        except Exception as e:
+            if self._connection:
+                self._connection.rollback()
+            raise DatabaseConnectionError(f"Failed to upsert DataFrame: {str(e)}")
+        finally:
+            if cursor:
+                cursor.close()
 

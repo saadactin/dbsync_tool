@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import DatabaseConnection, ConnectionTestLog
+from .models import DatabaseConnection, ConnectionTestLog, APIConnection
 
 
 @admin.register(DatabaseConnection)
@@ -55,3 +55,33 @@ class ConnectionTestLogAdmin(admin.ModelAdmin):
             'fields': ('id', 'tested_at')
         }),
     )
+
+
+@admin.register(APIConnection)
+class APIConnectionAdmin(admin.ModelAdmin):
+    """Admin interface for APIConnection model"""
+    list_display = ['name', 'api_type', 'tenant', 'is_active', 'created_at']
+    list_filter = ['api_type', 'is_active', 'created_at']
+    search_fields = ['name', 'api_type']
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('name', 'api_type', 'tenant', 'created_by', 'is_active')
+        }),
+        ('Zoho Credentials', {
+            'fields': ('client_id', 'client_secret', 'refresh_token', 'api_domain', 'token_url')
+        }),
+        ('Module Configuration', {
+            'fields': ('selected_modules',)
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def save_model(self, request, obj, form, change):
+        """Set created_by to current user if new object"""
+        if not change:  # New object
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)

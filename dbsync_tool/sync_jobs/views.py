@@ -12,7 +12,7 @@ from django.db import IntegrityError, DatabaseError
 from functools import wraps
 from datetime import datetime, timedelta
 from django.utils import timezone
-from connections.models import DatabaseConnection
+from connections.models import DatabaseConnection, APIConnection
 from metadata.services import load_all_metadata, load_table_columns
 from .models import SyncJob, SyncJobTable, SyncSchedule, SyncCheckpoint, SyncExecution, SyncExecutionLog
 
@@ -208,10 +208,12 @@ def create_job_step1_view(request):
     """
     Step 1: Connection selection view
     First step of sync job creation wizard
+    Supports both database and API connections as source
     """
     if request.method == 'POST':
         job_name = request.POST.get('job_name', '').strip()
         source_connection_id = request.POST.get('source_connection')
+        source_connection_type = request.POST.get('source_connection_type', 'database')  # 'database' or 'api'
         target_connection_id = request.POST.get('target_connection')
         
         # Enhanced validation
@@ -236,7 +238,11 @@ def create_job_step1_view(request):
             except (ValueError, TypeError, AttributeError):
                 errors.append('Invalid source connection ID.')
         
-        # Target connection validation
+        # Validate source connection type
+        if source_connection_type not in ['database', 'api']:
+            errors.append('Invalid source connection type.')
+        
+        # Target connection validation (must always be database)
         target_connection_uuid = None
         if not target_connection_id:
             errors.append('Target connection is required.')
@@ -248,8 +254,13 @@ def create_job_step1_view(request):
             except (ValueError, TypeError, AttributeError):
                 errors.append('Invalid target connection ID.')
         
-        # Business rule: Source and target must be different
-        if source_connection_uuid and target_connection_uuid:
+        # Business rule: API can only be source, not target
+        if source_connection_type == 'api':
+            # API source is allowed, but target must be database (validated below)
+            pass
+        
+        # Business rule: Source and target must be different (only if both are database)
+        if source_connection_type == 'database' and source_connection_uuid and target_connection_uuid:
             if source_connection_uuid == target_connection_uuid:
                 errors.append('Source and target connections cannot be the same.')
         
@@ -260,32 +271,57 @@ def create_job_step1_view(request):
             # Validate connections exist and belong to user
             from accounts.services.tenant_service import TenantService
             try:
-                conn_qs = DatabaseConnection.objects.filter(is_active=True)
-                user_conns = TenantService.get_queryset_for_user(conn_qs, request.user)
-                source_connection = user_conns.get(id=source_connection_uuid)
-                target_connection = user_conns.get(id=target_connection_uuid)
-                
-                # Store in session for step 2
-                request.session['sync_job_name'] = job_name
-                request.session['sync_job_source_connection_id'] = str(source_connection.id)
-                request.session['sync_job_target_connection_id'] = str(target_connection.id)
+                if source_connection_type == 'api':
+                    # Source is API connection
+                    api_qs = APIConnection.objects.filter(is_active=True)
+                    user_api_conns = TenantService.get_queryset_for_user(api_qs, request.user)
+                    source_api_connection = user_api_conns.get(id=source_connection_uuid)
+                    
+                    # Target must be database connection
+                    db_qs = DatabaseConnection.objects.filter(is_active=True)
+                    user_db_conns = TenantService.get_queryset_for_user(db_qs, request.user)
+                    target_connection = user_db_conns.get(id=target_connection_uuid)
+                    
+                    # Store in session for step 2
+                    request.session['sync_job_name'] = job_name
+                    request.session['sync_job_source_connection_type'] = 'api'
+                    request.session['sync_job_source_api_connection_id'] = str(source_api_connection.id)
+                    request.session['sync_job_target_connection_id'] = str(target_connection.id)
+                    
+                else:
+                    # Source is database connection
+                    db_qs = DatabaseConnection.objects.filter(is_active=True)
+                    user_db_conns = TenantService.get_queryset_for_user(db_qs, request.user)
+                    source_connection = user_db_conns.get(id=source_connection_uuid)
+                    target_connection = user_db_conns.get(id=target_connection_uuid)
+                    
+                    # Store in session for step 2
+                    request.session['sync_job_name'] = job_name
+                    request.session['sync_job_source_connection_type'] = 'database'
+                    request.session['sync_job_source_connection_id'] = str(source_connection.id)
+                    request.session['sync_job_target_connection_id'] = str(target_connection.id)
                 
                 # Redirect to step 2
                 return redirect('sync_jobs:create_step2')
                 
-            except DatabaseConnection.DoesNotExist:
+            except (DatabaseConnection.DoesNotExist, APIConnection.DoesNotExist):
                 messages.error(request, 'Selected connection not found or inactive.')
     
     # Get user's active connections
     from accounts.services.tenant_service import TenantService
-    connections_qs = DatabaseConnection.objects.filter(is_active=True).order_by('name')
-    connections = TenantService.get_queryset_for_user(connections_qs, request.user)
+    db_connections_qs = DatabaseConnection.objects.filter(is_active=True).order_by('name')
+    db_connections = TenantService.get_queryset_for_user(db_connections_qs, request.user)
+    
+    api_connections_qs = APIConnection.objects.filter(is_active=True).order_by('name')
+    api_connections = TenantService.get_queryset_for_user(api_connections_qs, request.user)
     
     context = {
-        'connections': connections,
+        'db_connections': db_connections,
+        'api_connections': api_connections,
         'page_title': 'Create Sync Job - Step 1',
         'job_name': request.session.get('sync_job_name', ''),
-        'selected_source_id': request.session.get('sync_job_source_connection_id', ''),
+        'selected_source_id': request.session.get('sync_job_source_connection_id') or request.session.get('sync_job_source_api_connection_id', ''),
+        'selected_source_type': request.session.get('sync_job_source_connection_type', 'database'),
         'selected_target_id': request.session.get('sync_job_target_connection_id', ''),
     }
     
@@ -295,34 +331,74 @@ def create_job_step1_view(request):
 @login_required
 def create_job_step2_view(request):
     """
-    Step 2: Table selection view
+    Step 2: Table/Module selection view
     Gets source connection from session (set in step 1)
+    For API sources: Shows module selection
+    For Database sources: Shows table selection
     """
-    # Get source connection from session
+    # Get source connection info from session
+    source_connection_type = request.session.get('sync_job_source_connection_type', 'database')
     source_connection_id = request.session.get('sync_job_source_connection_id')
+    source_api_connection_id = request.session.get('sync_job_source_api_connection_id')
     target_connection_id = request.session.get('sync_job_target_connection_id')
     job_name = request.session.get('sync_job_name')
     
-    if not source_connection_id or not target_connection_id:
+    if not target_connection_id:
         messages.error(request, 'Please complete Step 1 first.')
         return redirect('sync_jobs:create_step1')
     
-    from accounts.services.tenant_service import TenantService
-    try:
-        conn_qs = DatabaseConnection.objects.filter(is_active=True)
-        user_conns = TenantService.get_queryset_for_user(conn_qs, request.user)
-        source_connection = user_conns.get(id=source_connection_id)
-    except DatabaseConnection.DoesNotExist:
-        messages.error(request, 'Source connection not found or inactive.')
-        return redirect('sync_jobs:create_step1')
+    if source_connection_type == 'api':
+        # API source - show module selection
+        if not source_api_connection_id:
+            messages.error(request, 'Please complete Step 1 first.')
+            return redirect('sync_jobs:create_step1')
+        
+        from accounts.services.tenant_service import TenantService
+        try:
+            api_qs = APIConnection.objects.filter(is_active=True)
+            user_api_conns = TenantService.get_queryset_for_user(api_qs, request.user)
+            source_api_connection = user_api_conns.get(id=source_api_connection_id)
+            
+            # Get available modules from API connection
+            available_modules = source_api_connection.selected_modules or []
+            
+            context = {
+                'source_connection_type': 'api',
+                'source_api_connection': source_api_connection,
+                'available_modules': available_modules,
+                'job_name': job_name,
+                'page_title': 'Select Modules - Step 2',
+            }
+            
+            return render(request, 'sync_jobs/create_step2.html', context)
+            
+        except APIConnection.DoesNotExist:
+            messages.error(request, 'Source API connection not found or inactive.')
+            return redirect('sync_jobs:create_step1')
     
-    context = {
-        'source_connection': source_connection,
-        'job_name': job_name,
-        'page_title': 'Select Tables - Step 2',
-    }
-    
-    return render(request, 'sync_jobs/create_step2.html', context)
+    else:
+        # Database source - show table selection (existing flow)
+        if not source_connection_id:
+            messages.error(request, 'Please complete Step 1 first.')
+            return redirect('sync_jobs:create_step1')
+        
+        from accounts.services.tenant_service import TenantService
+        try:
+            conn_qs = DatabaseConnection.objects.filter(is_active=True)
+            user_conns = TenantService.get_queryset_for_user(conn_qs, request.user)
+            source_connection = user_conns.get(id=source_connection_id)
+        except DatabaseConnection.DoesNotExist:
+            messages.error(request, 'Source connection not found or inactive.')
+            return redirect('sync_jobs:create_step1')
+        
+        context = {
+            'source_connection_type': 'database',
+            'source_connection': source_connection,
+            'job_name': job_name,
+            'page_title': 'Select Tables - Step 2',
+        }
+        
+        return render(request, 'sync_jobs/create_step2.html', context)
 
 
 @login_required
@@ -511,116 +587,175 @@ def validate_transformation_query(request):
 def create_job_step2_submit(request):
     """
     Handle Step 2 form submission
+    Supports both table selection (database) and module selection (API)
     """
     if request.method != 'POST':
         return redirect('sync_jobs:create_step2')
     
-    selected_tables = request.POST.getlist('selected_tables')
+    source_connection_type = request.session.get('sync_job_source_connection_type', 'database')
     
-    if not selected_tables:
-        messages.error(request, 'Please select at least one table.')
-        return redirect('sync_jobs:create_step2')
+    if source_connection_type == 'api':
+        # API source - handle module selection
+        selected_modules = request.POST.getlist('selected_modules')
+        
+        if not selected_modules:
+            messages.error(request, 'Please select at least one module.')
+            return redirect('sync_jobs:create_step2')
+        
+        # Store selected modules in session (format similar to tables for consistency)
+        modules = []
+        for module_name in selected_modules:
+            modules.append({
+                'schema_name': 'api',  # Use 'api' as schema for API sources
+                'table_name': module_name  # Module name becomes table name
+            })
+        
+        # Store in session for step 3
+        request.session['sync_job_selected_tables'] = modules  # Reuse same session key
+        
+        # API sources don't have transformations (for now)
+        request.session['sync_job_table_transformations'] = {}
+        
+        # Redirect to step 3
+        messages.success(request, f'Selected {len(modules)} module(s).')
+        return redirect('sync_jobs:create_step3')
     
-    # Parse selected tables and store in session
-    tables = []
-    for table_json in selected_tables:
+    else:
+        # Database source - handle table selection (existing flow)
+        selected_tables = request.POST.getlist('selected_tables')
+        
+        if not selected_tables:
+            messages.error(request, 'Please select at least one table.')
+            return redirect('sync_jobs:create_step2')
+        
+        # Parse selected tables and store in session
+        tables = []
+        for table_json in selected_tables:
+            try:
+                import json
+                table_data = json.loads(table_json)
+                tables.append({
+                    'schema_name': table_data['schema'],
+                    'table_name': table_data['table']
+                })
+            except:
+                continue
+        
+        if not tables:
+            messages.error(request, 'Invalid table selection.')
+            return redirect('sync_jobs:create_step2')
+        
+        # Store in session for step 3
+        request.session['sync_job_selected_tables'] = tables
+        
+        # Store transformation data in session if provided
+        table_transformations_json = request.POST.get('table_transformations', '{}')
         try:
             import json
-            table_data = json.loads(table_json)
-            tables.append({
-                'schema_name': table_data['schema'],
-                'table_name': table_data['table']
-            })
+            table_transformations = json.loads(table_transformations_json)
+            request.session['sync_job_table_transformations'] = table_transformations
         except:
-            continue
-    
-    if not tables:
-        messages.error(request, 'Invalid table selection.')
-        return redirect('sync_jobs:create_step2')
-    
-    # Store in session for step 3
-    request.session['sync_job_selected_tables'] = tables
-    
-    # Store transformation data in session if provided
-    table_transformations_json = request.POST.get('table_transformations', '{}')
-    try:
-        import json
-        table_transformations = json.loads(table_transformations_json)
-        request.session['sync_job_table_transformations'] = table_transformations
-    except:
-        request.session['sync_job_table_transformations'] = {}
-    
-    # Redirect to step 3
-    messages.success(request, f'Selected {len(tables)} table(s).')
-    return redirect('sync_jobs:create_step3')
+            request.session['sync_job_table_transformations'] = {}
+        
+        # Redirect to step 3
+        messages.success(request, f'Selected {len(tables)} table(s).')
+        return redirect('sync_jobs:create_step3')
 
 
 @login_required
 def create_job_step3_view(request):
     """
     Step 3: Sync type and scheduling configuration
+    Supports both database and API sources
     """
     # Get data from session
     job_name = request.session.get('sync_job_name')
+    source_connection_type = request.session.get('sync_job_source_connection_type', 'database')
     source_connection_id = request.session.get('sync_job_source_connection_id')
+    source_api_connection_id = request.session.get('sync_job_source_api_connection_id')
     target_connection_id = request.session.get('sync_job_target_connection_id')
     selected_tables = request.session.get('sync_job_selected_tables', [])
     
-    if not all([job_name, source_connection_id, target_connection_id, selected_tables]):
-        messages.error(request, 'Please complete previous steps first.')
-        return redirect('sync_jobs:create_step1')
+    # Validate session data based on source type
+    if source_connection_type == 'api':
+        if not all([job_name, source_api_connection_id, target_connection_id, selected_tables]):
+            messages.error(request, 'Please complete previous steps first.')
+            return redirect('sync_jobs:create_step1')
+    else:
+        if not all([job_name, source_connection_id, target_connection_id, selected_tables]):
+            messages.error(request, 'Please complete previous steps first.')
+            return redirect('sync_jobs:create_step1')
     
     from accounts.services.tenant_service import TenantService
-    try:
-        conn_qs = DatabaseConnection.objects.filter(is_active=True)
-        user_conns = TenantService.get_queryset_for_user(conn_qs, request.user)
-        source_connection = user_conns.get(id=source_connection_id)
-    except DatabaseConnection.DoesNotExist:
-        messages.error(request, 'Source connection not found.')
-        return redirect('sync_jobs:create_step1')
     
-    # Load column information for each table (for incremental column selection)
+    # Load column information for each table (only for database sources)
+    # For API sources, incremental sync uses Modified_Time from API, no column selection needed
     table_columns = {}
-    if selected_tables:
-        for table_info in selected_tables:
-            schema_name = table_info.get('schema_name')
-            table_name = table_info.get('table_name')
-            try:
-                columns = load_table_columns(
-                    str(source_connection.id),
-                    schema_name,
-                    table_name,
-                    request.user
-                )
-                # Filter to date/timestamp columns and integer columns (for incremental sync)
-                # Supports: PostgreSQL, MySQL, SQL Server, and ClickHouse types
-                incremental_candidates = []
-                for col in columns:
-                    data_type_lower = col['data_type'].lower()
-                    # Standard types (PostgreSQL, MySQL, SQL Server)
-                    if any(dt in data_type_lower for dt in ['timestamp', 'datetime', 'date', 'time']):
-                        incremental_candidates.append(col)
-                    elif any(dt in data_type_lower for dt in ['int', 'bigint', 'serial']):
-                        incremental_candidates.append(col)
-                    # ClickHouse-specific types (DateTime64, UInt32, UInt64)
-                    # Note: ClickHouse Int32, Int64 are already covered by 'int' check above
-                    elif any(dt in data_type_lower for dt in ['datetime64', 'uint32', 'uint64']):
-                        incremental_candidates.append(col)
-                
-                table_columns[f"{schema_name}.{table_name}"] = {
-                    'all_columns': columns,
-                    'incremental_candidates': incremental_candidates
-                }
-            except Exception as e:
-                # If column loading fails, continue without it
-                table_columns[f"{schema_name}.{table_name}"] = {
-                    'all_columns': [],
-                    'incremental_candidates': []
-                }
+    source_connection = None
+    source_api_connection = None
+    
+    if source_connection_type == 'api':
+        # API source - no column loading needed
+        try:
+            api_qs = APIConnection.objects.filter(is_active=True)
+            user_api_conns = TenantService.get_queryset_for_user(api_qs, request.user)
+            source_api_connection = user_api_conns.get(id=source_api_connection_id)
+        except APIConnection.DoesNotExist:
+            messages.error(request, 'Source API connection not found.')
+            return redirect('sync_jobs:create_step1')
+    else:
+        # Database source - load column information
+        try:
+            conn_qs = DatabaseConnection.objects.filter(is_active=True)
+            user_conns = TenantService.get_queryset_for_user(conn_qs, request.user)
+            source_connection = user_conns.get(id=source_connection_id)
+        except DatabaseConnection.DoesNotExist:
+            messages.error(request, 'Source connection not found.')
+            return redirect('sync_jobs:create_step1')
+        
+        # Load column information for each table (for incremental column selection)
+        if selected_tables:
+            for table_info in selected_tables:
+                schema_name = table_info.get('schema_name')
+                table_name = table_info.get('table_name')
+                try:
+                    columns = load_table_columns(
+                        str(source_connection.id),
+                        schema_name,
+                        table_name,
+                        request.user
+                    )
+                    # Filter to date/timestamp columns and integer columns (for incremental sync)
+                    # Supports: PostgreSQL, MySQL, SQL Server, and ClickHouse types
+                    incremental_candidates = []
+                    for col in columns:
+                        data_type_lower = col['data_type'].lower()
+                        # Standard types (PostgreSQL, MySQL, SQL Server)
+                        if any(dt in data_type_lower for dt in ['timestamp', 'datetime', 'date', 'time']):
+                            incremental_candidates.append(col)
+                        elif any(dt in data_type_lower for dt in ['int', 'bigint', 'serial']):
+                            incremental_candidates.append(col)
+                        # ClickHouse-specific types (DateTime64, UInt32, UInt64)
+                        # Note: ClickHouse Int32, Int64 are already covered by 'int' check above
+                        elif any(dt in data_type_lower for dt in ['datetime64', 'uint32', 'uint64']):
+                            incremental_candidates.append(col)
+                    
+                    table_columns[f"{schema_name}.{table_name}"] = {
+                        'all_columns': columns,
+                        'incremental_candidates': incremental_candidates
+                    }
+                except Exception as e:
+                    # If column loading fails, continue without it
+                    table_columns[f"{schema_name}.{table_name}"] = {
+                        'all_columns': [],
+                        'incremental_candidates': []
+                    }
     
     context = {
         'job_name': job_name,
+        'source_connection_type': source_connection_type,
         'source_connection': source_connection,
+        'source_api_connection': source_api_connection,
         'selected_tables': selected_tables,
         'table_columns': table_columns,
         'page_title': 'Configure Sync - Step 3',
@@ -640,13 +775,21 @@ def create_job_step3_submit(request):
     
     # Get data from session
     job_name = request.session.get('sync_job_name')
+    source_connection_type = request.session.get('sync_job_source_connection_type', 'database')
     source_connection_id = request.session.get('sync_job_source_connection_id')
+    source_api_connection_id = request.session.get('sync_job_source_api_connection_id')
     target_connection_id = request.session.get('sync_job_target_connection_id')
     selected_tables = request.session.get('sync_job_selected_tables', [])
     
-    if not all([job_name, source_connection_id, target_connection_id, selected_tables]):
-        messages.error(request, 'Session expired. Please start over.')
-        return redirect('sync_jobs:create_step1')
+    # Validate session data based on source type
+    if source_connection_type == 'api':
+        if not all([job_name, source_api_connection_id, target_connection_id, selected_tables]):
+            messages.error(request, 'Session expired. Please start over.')
+            return redirect('sync_jobs:create_step1')
+    else:
+        if not all([job_name, source_connection_id, target_connection_id, selected_tables]):
+            messages.error(request, 'Session expired. Please start over.')
+            return redirect('sync_jobs:create_step1')
     
     # Get form data
     sync_type = request.POST.get('sync_type', 'full')
@@ -708,12 +851,23 @@ def create_job_step3_submit(request):
         return redirect('sync_jobs:create_step3')
     
     try:
-        # Get connections
+        # Get connections based on source type
         from accounts.services.tenant_service import TenantService
-        conn_qs = DatabaseConnection.objects.filter(is_active=True)
-        user_conns = TenantService.get_queryset_for_user(conn_qs, request.user)
-        source_connection = user_conns.get(id=source_connection_id)
-        target_connection = user_conns.get(id=target_connection_id)
+        
+        # Target connection is always database
+        db_qs = DatabaseConnection.objects.filter(is_active=True)
+        user_db_conns = TenantService.get_queryset_for_user(db_qs, request.user)
+        target_connection = user_db_conns.get(id=target_connection_id)
+        
+        # Source connection depends on type
+        if source_connection_type == 'api':
+            api_qs = APIConnection.objects.filter(is_active=True)
+            user_api_conns = TenantService.get_queryset_for_user(api_qs, request.user)
+            source_api_connection = user_api_conns.get(id=source_api_connection_id)
+            source_connection = None
+        else:
+            source_connection = user_db_conns.get(id=source_connection_id)
+            source_api_connection = None
         
         # Calculate next_run_at based on schedule
         next_run_at = None
@@ -770,7 +924,9 @@ def create_job_step3_submit(request):
         # Create SyncJob
         sync_job = SyncJob.objects.create(
             name=job_name,
-            source_connection=source_connection,
+            source_connection=source_connection,  # None for API sources
+            source_api_connection=source_api_connection,  # None for database sources
+            source_connection_type=source_connection_type,
             target_connection=target_connection,
             sync_type=sync_type,
             status='pending',
@@ -779,29 +935,37 @@ def create_job_step3_submit(request):
             next_run_at=next_run_at
         )
         
-        # Get transformation data from session
+        # Get transformation data from session (only for database sources)
         table_transformations = request.session.get('sync_job_table_transformations', {})
         
         # Create SyncJobTable entries
         for table_info in selected_tables:
             table_key = f"{table_info['schema_name']}.{table_info['table_name']}"
-            incremental_column = incremental_columns.get(table_key)
             
-            # Get transformation data for this table
-            transformation_data = table_transformations.get(table_key, {})
-            transformation_query = transformation_data.get('where_clause', None)
-            column_transformations = transformation_data.get('column_transformations', {})
+            # For API sources, incremental_column is not applicable (uses Modified_Time from API)
+            # For database sources, use incremental_column from form
+            incremental_column = None
+            if source_connection_type == 'database':
+                incremental_column = incremental_columns.get(table_key)
             
-            # Ensure column_transformations is a dict or None
-            if column_transformations and not isinstance(column_transformations, dict):
-                logger.warning(f"Invalid column_transformations format for {table_key}, converting to dict")
-                column_transformations = {}
-            
-            # Clean up transformation_query - remove None/empty strings
-            if transformation_query:
-                transformation_query = transformation_query.strip()
-                if not transformation_query:
-                    transformation_query = None
+            # Get transformation data for this table (only for database sources)
+            transformation_query = None
+            column_transformations = {}
+            if source_connection_type == 'database':
+                transformation_data = table_transformations.get(table_key, {})
+                transformation_query = transformation_data.get('where_clause', None)
+                column_transformations = transformation_data.get('column_transformations', {})
+                
+                # Ensure column_transformations is a dict or None
+                if column_transformations and not isinstance(column_transformations, dict):
+                    logger.warning(f"Invalid column_transformations format for {table_key}, converting to dict")
+                    column_transformations = {}
+                
+                # Clean up transformation_query - remove None/empty strings
+                if transformation_query:
+                    transformation_query = transformation_query.strip()
+                    if not transformation_query:
+                        transformation_query = None
             
             SyncJobTable.objects.create(
                 job=sync_job,
@@ -812,6 +976,19 @@ def create_job_step3_submit(request):
                 column_transformations=column_transformations if column_transformations else {},
                 is_enabled=True
             )
+        
+        # Create APISyncState entries for API sources with incremental sync
+        if source_connection_type == 'api' and sync_type == 'incremental':
+            from sync_jobs.models import APISyncState
+            for table_info in selected_tables:
+                module_name = table_info['table_name']  # For API, table_name is module name
+                APISyncState.objects.create(
+                    job=sync_job,
+                    module_name=module_name,
+                    last_sync_time=None,  # Will be set on first sync
+                    last_modified_time=None,
+                    records_synced=0
+                )
         
         # Create SyncSchedule
         try:

@@ -113,12 +113,14 @@
                 <div class="card mb-4">
                     <div class="card-body">
                         <h5 class="card-title mb-3">Source Connection *</h5>
-                        <p class="text-muted mb-3">Select the database connection where data will be read from.</p>
+                        <p class="text-muted mb-3">Select the connection where data will be read from (Database or API).</p>
                         
-                        {% if connections %}
-                            <div id="source-connections">
-                                {% for connection in connections %}
-                                    <div class="connection-select-card" data-connection-id="{{ connection.id }}" data-db-type="{{ connection.db_type }}">
+                        <!-- Database Connections -->
+                        {% if db_connections %}
+                            <h6 class="mt-3 mb-2">Database Connections</h6>
+                            <div id="source-db-connections">
+                                {% for connection in db_connections %}
+                                    <div class="connection-select-card" data-connection-id="{{ connection.id }}" data-connection-type="database" data-db-type="{{ connection.db_type }}">
                                         <div class="connection-info">
                                             <div class="connection-details">
                                                 <h6>{{ connection.name }}</h6>
@@ -132,22 +134,58 @@
                                                 <input 
                                                     type="radio" 
                                                     name="source_connection" 
-                                                    id="source_{{ connection.id }}" 
+                                                    id="source_db_{{ connection.id }}" 
                                                     value="{{ connection.id }}"
-                                                    {% if selected_source_id == connection.id|stringformat:"s" %}checked{% endif %}
-                                                    required
+                                                    data-connection-type="database"
+                                                    {% if selected_source_type == 'database' and selected_source_id == connection.id|stringformat:"s" %}checked{% endif %}
                                                 >
-                                                <label for="source_{{ connection.id }}" class="ms-2">Select</label>
+                                                <label for="source_db_{{ connection.id }}" class="ms-2">Select</label>
                                             </div>
                                         </div>
                                     </div>
                                 {% endfor %}
                             </div>
-                        {% else %}
+                        {% endif %}
+                        
+                        <!-- API Connections -->
+                        {% if api_connections %}
+                            <h6 class="mt-3 mb-2">API Connections</h6>
+                            <div id="source-api-connections">
+                                {% for connection in api_connections %}
+                                    <div class="connection-select-card" data-connection-id="{{ connection.id }}" data-connection-type="api" data-api-type="{{ connection.api_type }}">
+                                        <div class="connection-info">
+                                            <div class="connection-details">
+                                                <h6>{{ connection.name }}</h6>
+                                                <p>
+                                                    <span class="badge bg-info">{{ connection.get_api_type_display }}</span>
+                                                    <span style="margin-left: 10px;">Modules: {{ connection.selected_modules|length|default:0 }} selected</span>
+                                                </p>
+                                            </div>
+                                            <div class="radio-wrapper">
+                                                <input 
+                                                    type="radio" 
+                                                    name="source_connection" 
+                                                    id="source_api_{{ connection.id }}" 
+                                                    value="{{ connection.id }}"
+                                                    data-connection-type="api"
+                                                    {% if selected_source_type == 'api' and selected_source_id == connection.id|stringformat:"s" %}checked{% endif %}
+                                                >
+                                                <label for="source_api_{{ connection.id }}" class="ms-2">Select</label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                        
+                        {% if not db_connections and not api_connections %}
                             <div class="alert alert-warning">
                                 <p>No active connections found. <a href="{% url 'connections:create' %}">Create a connection</a> first.</p>
                             </div>
                         {% endif %}
+                        
+                        <!-- Hidden field for source connection type -->
+                        <input type="hidden" name="source_connection_type" id="source_connection_type" value="{{ selected_source_type|default:'database' }}">
                     </div>
                 </div>
                 
@@ -157,9 +195,9 @@
                         <h5 class="card-title mb-3">Target Connection *</h5>
                         <p class="text-muted mb-3">Select the database connection where data will be written to.</p>
                         
-                        {% if connections %}
+                        {% if db_connections %}
                             <div id="target-connections">
-                                {% for connection in connections %}
+                                {% for connection in db_connections %}
                                     <div class="connection-select-card" data-connection-id="{{ connection.id }}" data-db-type="{{ connection.db_type }}">
                                         <div class="connection-info">
                                             <div class="connection-details">
@@ -187,7 +225,7 @@
                             </div>
                         {% else %}
                             <div class="alert alert-warning">
-                                <p>No active connections found. <a href="{% url 'connections:create' %}">Create a connection</a> first.</p>
+                                <p>No active database connections found. <a href="{% url 'connections:create' %}">Create a connection</a> first.</p>
                             </div>
                         {% endif %}
                     </div>
@@ -207,11 +245,24 @@
 {% block extra_js %}
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+    // Function to update source connection type hidden field
+    function updateSourceConnectionType() {
+        const selectedSourceRadio = document.querySelector('input[name="source_connection"]:checked');
+        if (selectedSourceRadio) {
+            const connectionType = selectedSourceRadio.dataset.connectionType || 'database';
+            document.getElementById('source_connection_type').value = connectionType;
+        }
+    }
+    
     // Function to update disabled state based on selected database types
     function updateDisabledConnections() {
-        // Get selected source connection's db_type
+        // Get selected source connection's type and db_type
         const selectedSourceRadio = document.querySelector('input[name="source_connection"]:checked');
+        const selectedSourceType = selectedSourceRadio ? (selectedSourceRadio.dataset.connectionType || 'database') : null;
         const selectedSourceDbType = selectedSourceRadio ? selectedSourceRadio.closest('.connection-select-card').dataset.dbType : null;
+        
+        // Update hidden field
+        updateSourceConnectionType();
         
         // Get selected target connection's db_type
         const selectedTargetRadio = document.querySelector('input[name="target_connection"]:checked');
@@ -224,8 +275,8 @@ document.addEventListener('DOMContentLoaded', function() {
             radio.disabled = false;
         });
         
-        // Disable target connections with same db_type as selected source
-        if (selectedSourceDbType) {
+        // Disable target connections with same db_type as selected source (only for database sources)
+        if (selectedSourceType === 'database' && selectedSourceDbType) {
             document.querySelectorAll('#target-connections .connection-select-card').forEach(card => {
                 const cardDbType = card.dataset.dbType;
                 const radio = card.querySelector('input[type="radio"]');
@@ -239,6 +290,15 @@ document.addEventListener('DOMContentLoaded', function() {
                         card.classList.remove('selected');
                     }
                 }
+            });
+        }
+        
+        // For API sources, all database connections are valid targets
+        if (selectedSourceType === 'api') {
+            document.querySelectorAll('#target-connections .connection-select-card').forEach(card => {
+                const radio = card.querySelector('input[type="radio"]');
+                card.classList.remove('disabled');
+                radio.disabled = false;
             });
         }
         
@@ -327,8 +387,11 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // Setup card selection for source connections
-    setupCardSelection('source-connections', 'source_connection');
+    // Setup card selection for source database connections
+    setupCardSelection('source-db-connections', 'source_connection');
+    
+    // Setup card selection for source API connections
+    setupCardSelection('source-api-connections', 'source_connection');
     
     // Setup card selection for target connections
     setupCardSelection('target-connections', 'target_connection');
