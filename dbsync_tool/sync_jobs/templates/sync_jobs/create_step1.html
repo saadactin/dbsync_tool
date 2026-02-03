@@ -115,82 +115,52 @@
                         <h5 class="card-title mb-3">Source Connection *</h5>
                         <p class="text-muted mb-3">Select the connection where data will be read from (Database or API).</p>
                         
-                        <!-- Database Connections -->
-                        {% if db_connections %}
-                            <h6 class="mt-3 mb-2">Database Connections</h6>
-                            <div id="source-db-connections">
-                                {% for connection in db_connections %}
-                                    <div class="connection-select-card" data-connection-id="{{ connection.id }}" data-connection-type="database" data-db-type="{{ connection.db_type }}">
-                                        <div class="connection-info">
-                                            <div class="connection-details">
-                                                <h6>
-                                                    {{ connection.name }}
-                                                    {% if not connection.last_tested_at %}
-                                                        <span class="badge bg-warning ms-2" title="This connection has not been tested">⚠️ Not Tested</span>
-                                                    {% else %}
-                                                        <span class="badge bg-success ms-2" title="Last tested: {{ connection.last_tested_at|timesince }} ago">✓ Tested</span>
-                                                    {% endif %}
-                                                </h6>
-                                                <p>
-                                                    <span class="badge bg-primary">{{ connection.get_db_type_display }}</span>
-                                                    <span style="margin-left: 10px;">{{ connection.host }}:{{ connection.port }}</span>
-                                                    <span style="margin-left: 10px;">Database: {{ connection.database_name }}</span>
-                                                </p>
-                                            </div>
-                                            <div class="radio-wrapper">
-                                                <input 
-                                                    type="radio" 
-                                                    name="source_connection" 
-                                                    id="source_db_{{ connection.id }}" 
-                                                    value="{{ connection.id }}"
-                                                    data-connection-type="database"
-                                                    {% if selected_source_type == 'database' and selected_source_id == connection.id|stringformat:"s" %}checked{% endif %}
-                                                >
-                                                <label for="source_db_{{ connection.id }}" class="ms-2">Select</label>
-                                            </div>
-                                        </div>
-                                    </div>
-                                {% endfor %}
-                            </div>
-                        {% endif %}
+                        <!-- Source Type Selection -->
+                        <div class="mb-3">
+                            <label for="source_connection_type_select" class="form-label"><strong>Source Type *</strong></label>
+                            <select class="form-select" id="source_connection_type_select" name="source_connection_type" required>
+                                <option value="">-- Select Source Type --</option>
+                                <option value="database" {% if selected_source_type == 'database' %}selected{% endif %}>Database Connection</option>
+                                <option value="api" {% if selected_source_type == 'api' %}selected{% endif %}>API Connection (Zoho)</option>
+                            </select>
+                            <input type="hidden" name="source_connection_type" id="source_connection_type" value="{{ selected_source_type|default:'' }}">
+                        </div>
                         
-                        <!-- API Connections -->
-                        {% if api_connections %}
-                            <h6 class="mt-3 mb-2">API Connections</h6>
-                            <div id="source-api-connections">
-                                {% for connection in api_connections %}
-                                    <div class="connection-select-card" data-connection-id="{{ connection.id }}" data-connection-type="api" data-api-type="{{ connection.api_type }}">
-                                        <div class="connection-info">
-                                            <div class="connection-details">
-                                                <h6>
-                                                    {{ connection.name }}
-                                                    {% if not connection.last_tested_at %}
-                                                        <span class="badge bg-warning ms-2" title="This connection has not been tested">⚠️ Not Tested</span>
-                                                    {% else %}
-                                                        <span class="badge bg-success ms-2" title="Last tested: {{ connection.last_tested_at|timesince }} ago">✓ Tested</span>
-                                                    {% endif %}
-                                                </h6>
-                                                <p>
-                                                    <span class="badge bg-info">{{ connection.get_api_type_display }}</span>
-                                                    <span style="margin-left: 10px;">Modules: {{ connection.selected_modules|length|default:0 }} selected</span>
-                                                </p>
-                                            </div>
-                                            <div class="radio-wrapper">
-                                                <input 
-                                                    type="radio" 
-                                                    name="source_connection" 
-                                                    id="source_api_{{ connection.id }}" 
-                                                    value="{{ connection.id }}"
-                                                    data-connection-type="api"
-                                                    {% if selected_source_type == 'api' and selected_source_id == connection.id|stringformat:"s" %}checked{% endif %}
-                                                >
-                                                <label for="source_api_{{ connection.id }}" class="ms-2">Select</label>
-                                            </div>
-                                        </div>
-                                    </div>
+                        <!-- Database Connections Dropdown -->
+                        <div class="mb-3" id="source-db-connections-container" style="display: {% if selected_source_type == 'database' %}block{% else %}none{% endif %};">
+                            <label for="source_db_connection" class="form-label"><strong>Database Connection *</strong></label>
+                            <select class="form-select" id="source_db_connection" {% if selected_source_type != 'database' %}disabled{% endif %}>
+                                <option value="">-- Select Database Connection --</option>
+                                {% for connection in db_connections %}
+                                    <option 
+                                        value="{{ connection.id }}" 
+                                        data-db-type="{{ connection.db_type }}"
+                                        {% if selected_source_type == 'database' and selected_source_id == connection.id|stringformat:"s" %}selected{% endif %}
+                                    >
+                                        {{ connection.name }} ({{ connection.get_db_type_display }}) - {{ connection.host }}:{{ connection.port }} / {{ connection.database_name }}
+                                        {% if not connection.last_tested_at %} ⚠️ Not Tested{% else %} ✓ Tested{% endif %}
+                                    </option>
                                 {% endfor %}
-                            </div>
-                        {% endif %}
+                            </select>
+                        </div>
+                        
+                        <!-- API Connections Dropdown -->
+                        <div class="mb-3" id="source-api-connections-container" style="display: {% if selected_source_type == 'api' %}block{% else %}none{% endif %};">
+                            <label for="source_api_connection" class="form-label"><strong>API Connection *</strong></label>
+                            <select class="form-select" id="source_api_connection" {% if selected_source_type != 'api' %}disabled{% endif %}>
+                                <option value="">-- Select API Connection --</option>
+                                {% for connection in api_connections %}
+                                    <option 
+                                        value="{{ connection.id }}" 
+                                        data-api-type="{{ connection.api_type }}"
+                                        {% if selected_source_type == 'api' and selected_source_id == connection.id|stringformat:"s" %}selected{% endif %}
+                                    >
+                                        {{ connection.name }} ({{ connection.get_api_type_display }}) - {{ connection.selected_modules|length|default:0 }} modules
+                                        {% if not connection.last_tested_at %} ⚠️ Not Tested{% else %} ✓ Tested{% endif %}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
                         
                         {% if not db_connections and not api_connections %}
                             <div class="alert alert-warning">
@@ -198,8 +168,8 @@
                             </div>
                         {% endif %}
                         
-                        <!-- Hidden field for source connection type -->
-                        <input type="hidden" name="source_connection_type" id="source_connection_type" value="{{ selected_source_type|default:'database' }}">
+                        <!-- Hidden field for source connection (populated by JavaScript) -->
+                        <input type="hidden" name="source_connection" id="source_connection_hidden" value="">
                     </div>
                 </div>
                 
@@ -210,39 +180,21 @@
                         <p class="text-muted mb-3">Select the database connection where data will be written to.</p>
                         
                         {% if db_connections %}
-                            <div id="target-connections">
-                                {% for connection in db_connections %}
-                                    <div class="connection-select-card" data-connection-id="{{ connection.id }}" data-db-type="{{ connection.db_type }}">
-                                        <div class="connection-info">
-                                            <div class="connection-details">
-                                                <h6>
-                                                    {{ connection.name }}
-                                                    {% if not connection.last_tested_at %}
-                                                        <span class="badge bg-warning ms-2" title="This connection has not been tested">⚠️ Not Tested</span>
-                                                    {% else %}
-                                                        <span class="badge bg-success ms-2" title="Last tested: {{ connection.last_tested_at|timesince }} ago">✓ Tested</span>
-                                                    {% endif %}
-                                                </h6>
-                                                <p>
-                                                    <span class="badge bg-success">{{ connection.get_db_type_display }}</span>
-                                                    <span style="margin-left: 10px;">{{ connection.host }}:{{ connection.port }}</span>
-                                                    <span style="margin-left: 10px;">Database: {{ connection.database_name }}</span>
-                                                </p>
-                                            </div>
-                                            <div class="radio-wrapper">
-                                                <input 
-                                                    type="radio" 
-                                                    name="target_connection" 
-                                                    id="target_{{ connection.id }}" 
-                                                    value="{{ connection.id }}"
-                                                    {% if selected_target_id == connection.id|stringformat:"s" %}checked{% endif %}
-                                                    required
-                                                >
-                                                <label for="target_{{ connection.id }}" class="ms-2">Select</label>
-                                            </div>
-                                        </div>
-                                    </div>
-                                {% endfor %}
+                            <div class="mb-3">
+                                <label for="target_connection" class="form-label"><strong>Database Connection *</strong></label>
+                                <select class="form-select" id="target_connection" name="target_connection" required>
+                                    <option value="">-- Select Target Database Connection --</option>
+                                    {% for connection in db_connections %}
+                                        <option 
+                                            value="{{ connection.id }}" 
+                                            data-db-type="{{ connection.db_type }}"
+                                            {% if selected_target_id == connection.id|stringformat:"s" %}selected{% endif %}
+                                        >
+                                            {{ connection.name }} ({{ connection.get_db_type_display }}) - {{ connection.host }}:{{ connection.port }} / {{ connection.database_name }}
+                                            {% if not connection.last_tested_at %} ⚠️ Not Tested{% else %} ✓ Tested{% endif %}
+                                        </option>
+                                    {% endfor %}
+                                </select>
                             </div>
                         {% else %}
                             <div class="alert alert-warning">
@@ -266,77 +218,109 @@
 {% block extra_js %}
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    // Function to update source connection type hidden field
-    function updateSourceConnectionType() {
-        const selectedSourceRadio = document.querySelector('input[name="source_connection"]:checked');
-        if (selectedSourceRadio) {
-            const connectionType = selectedSourceRadio.dataset.connectionType || 'database';
-            document.getElementById('source_connection_type').value = connectionType;
-        }
+    // Get dropdown elements
+    const sourceTypeSelect = document.getElementById('source_connection_type_select');
+    const sourceDbContainer = document.getElementById('source-db-connections-container');
+    const sourceApiContainer = document.getElementById('source-api-connections-container');
+    const sourceDbSelect = document.getElementById('source_db_connection');
+    const sourceApiSelect = document.getElementById('source_api_connection');
+    const sourceConnectionTypeHidden = document.getElementById('source_connection_type');
+    const targetConnectionSelect = document.getElementById('target_connection');
+    const nextBtn = document.getElementById('next-btn');
+    
+    // Handle source connection type selection
+    if (sourceTypeSelect) {
+        sourceTypeSelect.addEventListener('change', function() {
+            const selectedType = this.value;
+            sourceConnectionTypeHidden.value = selectedType;
+            
+            // Show/hide appropriate dropdowns
+            if (selectedType === 'database') {
+                sourceDbContainer.style.display = 'block';
+                sourceApiContainer.style.display = 'none';
+                sourceDbSelect.disabled = false;
+                sourceApiSelect.disabled = true;
+                sourceApiSelect.value = ''; // Clear API selection
+            } else if (selectedType === 'api') {
+                sourceDbContainer.style.display = 'none';
+                sourceApiContainer.style.display = 'block';
+                sourceDbSelect.disabled = true;
+                sourceApiSelect.disabled = false;
+                sourceDbSelect.value = ''; // Clear DB selection
+            } else {
+                sourceDbContainer.style.display = 'none';
+                sourceApiContainer.style.display = 'none';
+                sourceDbSelect.disabled = true;
+                sourceApiSelect.disabled = true;
+                sourceDbSelect.value = '';
+                sourceApiSelect.value = '';
+            }
+            
+            // Update disabled states
+            updateDisabledConnections();
+            validateForm();
+        });
     }
     
     // Function to update disabled state based on selected database types
     function updateDisabledConnections() {
-        // Get selected source connection's type and db_type
-        const selectedSourceRadio = document.querySelector('input[name="source_connection"]:checked');
-        const selectedSourceType = selectedSourceRadio ? (selectedSourceRadio.dataset.connectionType || 'database') : null;
-        const selectedSourceDbType = selectedSourceRadio ? selectedSourceRadio.closest('.connection-select-card').dataset.dbType : null;
+        // Get selected source connection
+        const sourceType = sourceConnectionTypeHidden.value;
+        let selectedSourceId = null;
+        let selectedSourceDbType = null;
         
-        // Update hidden field
-        updateSourceConnectionType();
+        if (sourceType === 'database' && sourceDbSelect) {
+            selectedSourceId = sourceDbSelect.value;
+            if (selectedSourceId) {
+                const selectedOption = sourceDbSelect.options[sourceDbSelect.selectedIndex];
+                selectedSourceDbType = selectedOption ? selectedOption.dataset.dbType : null;
+            }
+        }
         
         // Get selected target connection's db_type
-        const selectedTargetRadio = document.querySelector('input[name="target_connection"]:checked');
-        const selectedTargetDbType = selectedTargetRadio ? selectedTargetRadio.closest('.connection-select-card').dataset.dbType : null;
-        
-        // First, re-enable all connections
-        document.querySelectorAll('.connection-select-card').forEach(card => {
-            const radio = card.querySelector('input[type="radio"]');
-            card.classList.remove('disabled');
-            radio.disabled = false;
-        });
+        let selectedTargetDbType = null;
+        if (targetConnectionSelect && targetConnectionSelect.value) {
+            const selectedOption = targetConnectionSelect.options[targetConnectionSelect.selectedIndex];
+            selectedTargetDbType = selectedOption ? selectedOption.dataset.dbType : null;
+        }
         
         // Disable target connections with same db_type as selected source (only for database sources)
-        if (selectedSourceType === 'database' && selectedSourceDbType) {
-            document.querySelectorAll('#target-connections .connection-select-card').forEach(card => {
-                const cardDbType = card.dataset.dbType;
-                const radio = card.querySelector('input[type="radio"]');
-                
-                if (cardDbType === selectedSourceDbType) {
-                    card.classList.add('disabled');
-                    radio.disabled = true;
-                    // If this target is currently selected, automatically uncheck it
-                    if (radio.checked) {
-                        radio.checked = false;
-                        card.classList.remove('selected');
+        if (sourceType === 'database' && selectedSourceDbType && targetConnectionSelect) {
+            Array.from(targetConnectionSelect.options).forEach(option => {
+                if (option.value && option.dataset.dbType === selectedSourceDbType) {
+                    option.disabled = true;
+                    // If this target is currently selected, clear it
+                    if (option.selected) {
+                        targetConnectionSelect.value = '';
                     }
+                } else if (option.value) {
+                    option.disabled = false;
+                }
+            });
+        } else if (targetConnectionSelect) {
+            // For API sources or no source selected, enable all targets
+            Array.from(targetConnectionSelect.options).forEach(option => {
+                if (option.value) {
+                    option.disabled = false;
                 }
             });
         }
         
-        // For API sources, all database connections are valid targets
-        if (selectedSourceType === 'api') {
-            document.querySelectorAll('#target-connections .connection-select-card').forEach(card => {
-                const radio = card.querySelector('input[type="radio"]');
-                card.classList.remove('disabled');
-                radio.disabled = false;
-            });
-        }
-        
-        // Disable source connections with same db_type as selected target
-        if (selectedTargetDbType) {
-            document.querySelectorAll('#source-connections .connection-select-card').forEach(card => {
-                const cardDbType = card.dataset.dbType;
-                const radio = card.querySelector('input[type="radio"]');
-                
-                if (cardDbType === selectedTargetDbType) {
-                    card.classList.add('disabled');
-                    radio.disabled = true;
-                    // If this source is currently selected, automatically uncheck it
-                    if (radio.checked) {
-                        radio.checked = false;
-                        card.classList.remove('selected');
+        // Disable source database connections with same db_type as selected target
+        if (selectedTargetDbType && sourceDbSelect) {
+            Array.from(sourceDbSelect.options).forEach(option => {
+                if (option.value && option.dataset.dbType === selectedTargetDbType) {
+                    option.disabled = true;
+                    // If this source is currently selected, clear it
+                    if (option.selected) {
+                        sourceDbSelect.value = '';
+                        sourceConnectionTypeHidden.value = '';
+                        if (sourceTypeSelect) sourceTypeSelect.value = '';
+                        sourceDbContainer.style.display = 'none';
+                        sourceDbSelect.disabled = true;
                     }
+                } else if (option.value) {
+                    option.disabled = false;
                 }
             });
         }
@@ -345,77 +329,54 @@ document.addEventListener('DOMContentLoaded', function() {
         validateForm();
     }
     
-    // Function to handle card click and selection
-    function setupCardSelection(containerId, radioName) {
-        document.querySelectorAll(`#${containerId} .connection-select-card`).forEach(card => {
-            const radio = card.querySelector(`input[type="radio"][name="${radioName}"]`);
-            
-            // Make entire card clickable (only if not disabled)
-            card.addEventListener('click', function(e) {
-                // Don't trigger if clicking directly on the radio or label
-                if (e.target.type === 'radio' || e.target.tagName === 'LABEL') {
-                    return;
-                }
-                
-                // Don't allow selection if card is disabled
-                if (card.classList.contains('disabled')) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    return;
-                }
-                
-                // Prevent event bubbling
-                e.preventDefault();
-                e.stopPropagation();
-                
-                // Select the radio button first
-                radio.checked = true;
-                
-                // Update visual selection
-                document.querySelectorAll(`#${containerId} .connection-select-card`).forEach(c => {
-                    c.classList.remove('selected');
-                });
-                card.classList.add('selected');
-                
-                // Trigger change event first to ensure radio state is updated
-                radio.dispatchEvent(new Event('change', { bubbles: true }));
-                
-                // Then update disabled states (this will auto-deselect conflicting selections)
-                updateDisabledConnections();
-            });
-            
-            // Handle radio button change (for when radio is clicked directly)
-            radio.addEventListener('change', function() {
-                if (this.disabled) {
-                    return;
-                }
-                
-                document.querySelectorAll(`#${containerId} .connection-select-card`).forEach(c => {
-                    c.classList.remove('selected');
-                });
-                if (this.checked) {
-                    card.classList.add('selected');
-                }
-                
-                // Update disabled states (this will auto-deselect conflicting selections)
-                updateDisabledConnections();
-            });
-            
-            // Set initial selected state
-            if (radio.checked) {
-                card.classList.add('selected');
-            }
+    // Hidden field for source connection (used for form submission)
+    const sourceConnectionHidden = document.getElementById('source_connection_hidden');
+    
+    // Function to update hidden source_connection field
+    function updateSourceConnectionHidden() {
+        const sourceType = sourceConnectionTypeHidden.value;
+        if (sourceType === 'database' && sourceDbSelect) {
+            sourceConnectionHidden.value = sourceDbSelect.value;
+        } else if (sourceType === 'api' && sourceApiSelect) {
+            sourceConnectionHidden.value = sourceApiSelect.value;
+        } else {
+            sourceConnectionHidden.value = '';
+        }
+    }
+    
+    // Add change listeners to dropdowns
+    if (sourceDbSelect) {
+        sourceDbSelect.addEventListener('change', function() {
+            updateSourceConnectionHidden();
+            updateDisabledConnections();
+            validateForm();
         });
     }
     
-    // Setup card selection for source database connections
-    setupCardSelection('source-db-connections', 'source_connection');
+    if (sourceApiSelect) {
+        sourceApiSelect.addEventListener('change', function() {
+            updateSourceConnectionHidden();
+            updateDisabledConnections();
+            validateForm();
+        });
+    }
     
-    // Setup card selection for source API connections
-    setupCardSelection('source-api-connections', 'source_connection');
+    if (targetConnectionSelect) {
+        targetConnectionSelect.addEventListener('change', function() {
+            updateDisabledConnections();
+            validateForm();
+        });
+    }
     
-    // Setup card selection for target connections
-    setupCardSelection('target-connections', 'target_connection');
+    // Update hidden field when source type changes
+    if (sourceTypeSelect) {
+        sourceTypeSelect.addEventListener('change', function() {
+            updateSourceConnectionHidden();
+        });
+    }
+    
+    // Initial update
+    updateSourceConnectionHidden();
     
     // Initial update of disabled connections
     updateDisabledConnections();
@@ -423,9 +384,11 @@ document.addEventListener('DOMContentLoaded', function() {
     // Form validation
     function validateForm() {
         const jobName = document.getElementById('job_name').value.trim();
-        const sourceConnection = document.querySelector('input[name="source_connection"]:checked');
-        const targetConnection = document.querySelector('input[name="target_connection"]:checked');
-        const nextBtn = document.getElementById('next-btn');
+        const sourceType = sourceConnectionTypeHidden.value;
+        const sourceConnection = sourceType === 'database' ? 
+            (sourceDbSelect ? sourceDbSelect.value : '') : 
+            (sourceApiSelect ? sourceApiSelect.value : '');
+        const targetConnection = targetConnectionSelect ? targetConnectionSelect.value : '';
         
         // Remove any existing error messages
         const existingError = document.getElementById('same-connection-error');
@@ -433,76 +396,88 @@ document.addEventListener('DOMContentLoaded', function() {
             existingError.remove();
         }
         
-        if (jobName && sourceConnection && targetConnection) {
+        if (jobName && sourceType && sourceConnection && targetConnection) {
             // Check if source and target are the same connection
-            if (sourceConnection.value === targetConnection.value) {
-                nextBtn.disabled = true;
+            if (sourceConnection === targetConnection) {
+                if (nextBtn) nextBtn.disabled = true;
                 const errorDiv = document.createElement('div');
                 errorDiv.id = 'same-connection-error';
                 errorDiv.className = 'alert alert-danger mt-3';
                 errorDiv.textContent = 'Source and target connections cannot be the same.';
-                document.getElementById('step1-form').insertBefore(errorDiv, document.querySelector('.mb-4:last-of-type'));
+                const form = document.getElementById('step1-form');
+                if (form) form.insertBefore(errorDiv, form.querySelector('.mb-4:last-of-type'));
                 return;
             }
             
-            // Check if source and target have the same database type
-            const sourceCard = sourceConnection.closest('.connection-select-card');
-            const targetCard = targetConnection.closest('.connection-select-card');
-            const sourceDbType = sourceCard ? sourceCard.dataset.dbType : null;
-            const targetDbType = targetCard ? targetCard.dataset.dbType : null;
-            
-            if (sourceDbType && targetDbType && sourceDbType === targetDbType) {
-                nextBtn.disabled = true;
-                const errorDiv = document.createElement('div');
-                errorDiv.id = 'same-connection-error';
-                errorDiv.className = 'alert alert-danger mt-3';
-                errorDiv.textContent = 'Source and target connections cannot have the same database type.';
-                document.getElementById('step1-form').insertBefore(errorDiv, document.querySelector('.mb-4:last-of-type'));
-                return;
+            // Check if source and target have the same database type (only for database sources)
+            if (sourceType === 'database') {
+                const sourceOption = sourceDbSelect.options[sourceDbSelect.selectedIndex];
+                const targetOption = targetConnectionSelect.options[targetConnectionSelect.selectedIndex];
+                const sourceDbType = sourceOption ? sourceOption.dataset.dbType : null;
+                const targetDbType = targetOption ? targetOption.dataset.dbType : null;
+                
+                if (sourceDbType && targetDbType && sourceDbType === targetDbType) {
+                    if (nextBtn) nextBtn.disabled = true;
+                    const errorDiv = document.createElement('div');
+                    errorDiv.id = 'same-connection-error';
+                    errorDiv.className = 'alert alert-danger mt-3';
+                    errorDiv.textContent = 'Source and target connections cannot have the same database type.';
+                    const form = document.getElementById('step1-form');
+                    if (form) form.insertBefore(errorDiv, form.querySelector('.mb-4:last-of-type'));
+                    return;
+                }
             }
             
-            nextBtn.disabled = false;
+            if (nextBtn) nextBtn.disabled = false;
         } else {
-            nextBtn.disabled = true;
+            if (nextBtn) nextBtn.disabled = true;
         }
     }
     
     // Initial validation
-    document.getElementById('job_name').addEventListener('input', validateForm);
-    document.querySelectorAll('input[name="source_connection"], input[name="target_connection"]').forEach(radio => {
-        radio.addEventListener('change', validateForm);
-    });
+    const jobNameInput = document.getElementById('job_name');
+    if (jobNameInput) {
+        jobNameInput.addEventListener('input', validateForm);
+    }
     
     // Prevent form submission if validation fails
-    document.getElementById('step1-form').addEventListener('submit', function(e) {
-        const jobName = document.getElementById('job_name').value.trim();
-        const sourceConnection = document.querySelector('input[name="source_connection"]:checked');
-        const targetConnection = document.querySelector('input[name="target_connection"]:checked');
-        
-        if (!jobName || !sourceConnection || !targetConnection) {
-            e.preventDefault();
-            alert('Please fill in all required fields.');
-            return false;
-        }
-        
-        if (sourceConnection.value === targetConnection.value) {
-            e.preventDefault();
-            alert('Source and target connections cannot be the same.');
-            return false;
-        }
-        
-        // Check if source and target have the same database type
-        const sourceCard = sourceConnection.closest('.connection-select-card');
-        const targetCard = targetConnection.closest('.connection-select-card');
-        const sourceDbType = sourceCard ? sourceCard.dataset.dbType : null;
-        const targetDbType = targetCard ? targetCard.dataset.dbType : null;
-        
-        if (sourceDbType && targetDbType && sourceDbType === targetDbType) {
-            e.preventDefault();
-            alert('Source and target connections cannot have the same database type.');
-            return false;
-        }
-    });
+    const step1Form = document.getElementById('step1-form');
+    if (step1Form) {
+        step1Form.addEventListener('submit', function(e) {
+            const jobName = jobNameInput ? jobNameInput.value.trim() : '';
+            const sourceType = sourceConnectionTypeHidden.value;
+            const sourceConnection = sourceType === 'database' ? 
+                (sourceDbSelect ? sourceDbSelect.value : '') : 
+                (sourceApiSelect ? sourceApiSelect.value : '');
+            const targetConnection = targetConnectionSelect ? targetConnectionSelect.value : '';
+            
+            if (!jobName || !sourceType || !sourceConnection || !targetConnection) {
+                e.preventDefault();
+                alert('Please fill in all required fields.');
+                return false;
+            }
+            
+            if (sourceConnection === targetConnection) {
+                e.preventDefault();
+                alert('Source and target connections cannot be the same.');
+                return false;
+            }
+            
+            // Check if source and target have the same database type (only for database sources)
+            if (sourceType === 'database') {
+                const sourceOption = sourceDbSelect.options[sourceDbSelect.selectedIndex];
+                const targetOption = targetConnectionSelect.options[targetConnectionSelect.selectedIndex];
+                const sourceDbType = sourceOption ? sourceOption.dataset.dbType : null;
+                const targetDbType = targetOption ? targetOption.dataset.dbType : null;
+                
+                if (sourceDbType && targetDbType && sourceDbType === targetDbType) {
+                    e.preventDefault();
+                    alert('Source and target connections cannot have the same database type.');
+                    return false;
+                }
+            }
+        });
+    }
 });
 </script>
 {% endblock %}
