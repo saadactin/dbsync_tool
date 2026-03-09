@@ -15,9 +15,22 @@ from sync_engine.query_builder import QueryBuilder
 from sync_engine.transformation_engine import TransformationEngine
 import logging
 from decimal import Decimal
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 
 logger = logging.getLogger(__name__)
+
+
+def _utc_normalize_value(dt: Any) -> Optional[datetime]:
+    """Normalize datetime to UTC for comparison. Returns None for non-datetime."""
+    if dt is None:
+        return None
+    if not isinstance(dt, (datetime, date)):
+        return None
+    if isinstance(dt, date) and not isinstance(dt, datetime):
+        return datetime.combine(dt, datetime.min.time(), tzinfo=timezone.utc)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 class QueryResultVerifier:
@@ -511,14 +524,20 @@ class QueryResultVerifier:
                 elif transformation_upper == 'LOWER':
                     value = value.lower()
         
-        # Normalize data types for comparison
-        # Convert Decimal to float for comparison
+        # Keep Decimal for exact high-precision comparison (Oracle NUMBER, etc.)
         if isinstance(value, Decimal):
-            return float(value)
-        
-        # Normalize datetime/date objects
-        if isinstance(value, (datetime, date)):
             return value
+        
+        # Normalize datetime to UTC for cross-DB comparison (Oracle TIMESTAMP WITH TIME ZONE, etc.)
+        if isinstance(value, (datetime, date)):
+            return _utc_normalize_value(value)
+        
+        # Decode bytes to Unicode for text comparison (e.g. Oracle CLOB/VARCHAR2)
+        if isinstance(value, bytes):
+            try:
+                return value.decode('utf-8')
+            except (UnicodeDecodeError, AttributeError):
+                return value
         
         return value
     
@@ -538,6 +557,22 @@ class QueryResultVerifier:
             return True
         if val1 is None or val2 is None:
             return False
+        
+        # Exact Decimal comparison (Oracle NUMBER, high-precision numerics)
+        if isinstance(val1, Decimal) and isinstance(val2, Decimal):
+            return val1 == val2
+        if isinstance(val1, Decimal) or isinstance(val2, Decimal):
+            try:
+                d1 = Decimal(str(val1)) if not isinstance(val1, Decimal) else val1
+                d2 = Decimal(str(val2)) if not isinstance(val2, Decimal) else val2
+                return d1 == d2
+            except (ValueError, TypeError, ArithmeticError):
+                pass
+        
+        # UTC-normalized datetime comparison (Oracle TIMESTAMP WITH TIME ZONE, etc.)
+        n1, n2 = _utc_normalize_value(val1), _utc_normalize_value(val2)
+        if n1 is not None and n2 is not None:
+            return n1 == n2
         
         # Handle boolean comparisons (PostgreSQL bool vs MySQL tinyint(1))
         # PostgreSQL: True/False

@@ -44,6 +44,12 @@ class TestTableHandler(unittest.TestCase):
         handler = TableHandler(self.source_connector, self.target_connector)
         self.assertEqual(handler.source_db_type, 'clickhouse')
     
+    def test_get_db_type_oracle(self):
+        """Test database type detection for Oracle"""
+        self.source_connector.__class__.__name__ = 'OracleADWConnector'
+        handler = TableHandler(self.source_connector, self.target_connector)
+        self.assertEqual(handler.source_db_type, 'oracle')
+    
     def test_ensure_schema_exists_success(self):
         """Test successful schema creation"""
         # Use PostgreSQL as target (not MySQL, which skips schema creation)
@@ -118,6 +124,63 @@ class TestTableHandler(unittest.TestCase):
         self.assertEqual(call_args[0][1], 'test_table')  # table
         # Check that target_db_type is passed
         self.assertEqual(call_args[1]['target_db_type'], 'postgres')
+
+    def test_create_table_if_not_exists_oracle_target_reuses_compatible_table(self):
+        """Oracle as target: reuse existing table when schema is compatible."""
+        # Source: Postgres, Target: Oracle
+        source = Mock()
+        source.__class__.__name__ = 'PostgresConnector'
+        source.get_columns = Mock(return_value=[
+            ColumnInfo('id', 'integer', False, True, None),
+        ])
+
+        target = Mock()
+        target.__class__.__name__ = 'OracleADWConnector'
+        target.table_exists = Mock(return_value=True)
+        # Existing column is wider than required (precision 19 vs 10)
+        target.get_columns = Mock(return_value=[
+            ColumnInfo('ID', 'NUMBER(19)', False, True, None),
+        ])
+
+        handler = TableHandler(source, target)
+        result = handler.create_table_if_not_exists('myschema', 'mytable')
+
+        self.assertFalse(result)
+        target.create_table.assert_not_called()
+
+    def test_create_table_if_not_exists_oracle_target_creates_when_missing(self):
+        """Oracle as target: create table using Oracle-aware mappings when it does not exist."""
+        source = Mock()
+        source.__class__.__name__ = 'PostgresConnector'
+        source.get_columns = Mock(return_value=[
+            ColumnInfo('id', 'integer', False, True, None),
+            ColumnInfo('name', 'character varying(50)', True, False, 50),
+        ])
+
+        target = Mock()
+        target.__class__.__name__ = 'OracleADWConnector'
+        target.table_exists = Mock(return_value=False)
+        target.ensure_schema_exists = Mock()
+        target.create_table = Mock()
+
+        handler = TableHandler(source, target)
+        result = handler.create_table_if_not_exists('myschema', 'mytable')
+
+        self.assertTrue(result)
+        target.create_table.assert_called_once()
+        call_args = target.create_table.call_args
+        # schema, table, columns
+        self.assertEqual(call_args[0][0], 'myschema')
+        self.assertEqual(call_args[0][1], 'mytable')
+        created_columns = call_args[0][2]
+        self.assertGreaterEqual(len(created_columns), 2)
+        # The mapped Oracle types should be NUMBER(...) and VARCHAR2(...) or CLOB
+        id_col = created_columns[0]
+        name_col = created_columns[1]
+        self.assertIn('NUMBER', id_col.data_type.upper())
+        self.assertTrue(
+            'VARCHAR2' in name_col.data_type.upper() or 'CLOB' in name_col.data_type.upper()
+        )
 
 
 if __name__ == '__main__':

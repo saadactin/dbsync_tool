@@ -1,5 +1,11 @@
 """
-Email notification service for sync job events
+Email notification service for sync job events.
+
+Alerting hooks (design): Oracle-related verification failures can be wired here for Day 7+.
+- When SyncExecutionLog.verification_summary contains "Perfect accuracy: No" or
+  "Mismatched rows:", consider notify_on_verification_failure (extend NotificationPreference).
+- When SyncExecutionLog.error_message contains "Oracle ADW:", log to NotificationLog
+  and optionally send alert so operators can diagnose without guessing.
 """
 from django.core.mail import send_mail
 from django.template.loader import render_to_string

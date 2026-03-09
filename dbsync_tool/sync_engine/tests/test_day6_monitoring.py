@@ -22,10 +22,10 @@ class APISyncMonitorTests(TestCase):
             password='testpass123'
         )
         
-        # Create user profile
-        UserProfile.objects.create(
+        # Create user profile (get_or_create to avoid duplicate key when tests share DB)
+        UserProfile.objects.get_or_create(
             user=self.user,
-            role=Role.ADMIN
+            defaults={'role': Role.ADMIN}
         )
         
         # Create database connection

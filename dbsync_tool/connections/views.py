@@ -40,12 +40,18 @@ class ConnectionListView(LoginRequiredMixin, ListView):
             'postgres': {'name': 'PostgreSQL', 'connections': []},
             'mysql': {'name': 'MySQL', 'connections': []},
             'sqlserver': {'name': 'SQL Server', 'connections': []},
-            'clickhouse': {'name': 'ClickHouse', 'connections': []}
+            'clickhouse': {'name': 'ClickHouse', 'connections': []},
+            'oracle_adw': {'name': 'Oracle ADW', 'connections': []},
         }
         
         for conn in connections:
-            if conn.db_type in db_type_info:
-                db_type_info[conn.db_type]['connections'].append(conn)
+            if conn.db_type not in db_type_info:
+                # Fallback for any future/unknown DB types
+                db_type_info[conn.db_type] = {
+                    'name': conn.get_db_type_display() if hasattr(conn, 'get_db_type_display') else conn.db_type,
+                    'connections': []
+                }
+            db_type_info[conn.db_type]['connections'].append(conn)
         
         # Create list of groups for template iteration
         grouped_list = []
@@ -342,12 +348,18 @@ class ConnectionTestAndListDatabasesView(LoginRequiredMixin, View):
             port = data.get('port')
             username = data.get('username')
             password = data.get('password')
-            
+            database_name = (data.get('database_name') or '').strip() or None
+
             # Validate required fields
             if not all([db_type, host, port, username, password]):
                 return JsonResponse({
                     'success': False,
                     'message': 'Missing required fields: db_type, host, port, username, password'
+                }, status=400)
+            if db_type == 'oracle_adw' and not database_name:
+                return JsonResponse({
+                    'success': False,
+                    'message': 'Service name (Oracle ADW) is required. Use the service name from your JDBC/connection string.'
                 }, status=400)
             
             # Validate port
@@ -364,16 +376,15 @@ class ConnectionTestAndListDatabasesView(LoginRequiredMixin, View):
                     'message': 'Port must be a valid number'
                 }, status=400)
             
-            # Create connector without database_name
+            # Create connector (database_name required for Oracle ADW as service name)
             try:
-                # Use get_connector from connectors module (takes individual params)
                 connector = get_connector(
                     db_type=db_type,
                     host=host,
                     port=port,
                     username=username,
                     password=password,
-                    database_name=None  # No database specified - will connect to 'master' for SQL Server
+                    database_name=database_name,
                 )
                 
                 # Try to connect and list databases in one go
@@ -459,14 +470,15 @@ class APIConnectionListView(LoginRequiredMixin, ListView):
         context = super().get_context_data(**kwargs)
         connections = self.get_queryset()
         
-        # Group by api_type
+        # Group by api_type (include all known types so SAP and others appear)
         api_type_info = {
             'zoho_crm': {'name': 'Zoho CRM', 'connections': []},
+            'sap_b1': {'name': 'SAP Business One', 'connections': []},
         }
-        
         for conn in connections:
-            if conn.api_type in api_type_info:
-                api_type_info[conn.api_type]['connections'].append(conn)
+            if conn.api_type not in api_type_info:
+                api_type_info[conn.api_type] = {'name': conn.api_type, 'connections': []}
+            api_type_info[conn.api_type]['connections'].append(conn)
         
         # Create list of groups for template iteration
         grouped_list = []
@@ -502,7 +514,13 @@ class APIConnectionCreateView(ViewerReadOnlyMixin, OperatorOrAboveMixin, CreateV
     form_class = APIConnectionForm
     template_name = 'connections/api_connection_form.html'
     success_url = reverse_lazy('connections:api_list')
-    
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from core.constants import SAP_DOCUMENT_TYPES
+        context['sap_document_types'] = json.dumps(SAP_DOCUMENT_TYPES)
+        return context
+
     def _get_client_ip(self, request):
         """Get client IP address from request"""
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
@@ -567,7 +585,13 @@ class APIConnectionUpdateView(ViewerReadOnlyMixin, OperatorOrAboveMixin, UpdateV
     form_class = APIConnectionForm
     template_name = 'connections/api_connection_form.html'
     success_url = reverse_lazy('connections:api_list')
-    
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from core.constants import SAP_DOCUMENT_TYPES
+        context['sap_document_types'] = json.dumps(SAP_DOCUMENT_TYPES)
+        return context
+
     def _get_client_ip(self, request):
         """Get client IP address from request"""
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
@@ -741,66 +765,85 @@ class APIConnectionTestView(LoginRequiredMixin, View):
             else:
                 # Test new connection from form data
                 data = json.loads(request.body)
-                
-                # Validate required fields
+                api_type = data.get('api_type', 'zoho_crm')
+                if api_type == 'sap_b1':
+                    sap_base_url = (data.get('sap_base_url') or '').strip()
+                    sap_user_name = (data.get('sap_user_name') or '').strip()
+                    sap_company_db = (data.get('sap_company_db') or '').strip()
+                    sap_password = data.get('sap_password') or ''
+                    if not sap_base_url or not sap_user_name or not sap_company_db or not sap_password:
+                        return JsonResponse({
+                            'success': False,
+                            'message': 'Missing required SAP fields: sap_base_url, sap_user_name, sap_company_db, sap_password'
+                        }, status=400)
+                    from core.constants import SAP_DOCUMENT_TYPES
+                    from connections.connectors.sap import SAPConnector
+                    temp_connection = APIConnection()
+                    temp_connection.name = data.get('name', 'Test Connection')
+                    temp_connection.api_type = 'sap_b1'
+                    temp_connection.sap_base_url = sap_base_url
+                    temp_connection.sap_username = {'UserName': sap_user_name, 'CompanyDB': sap_company_db}
+                    def get_test_sap_password():
+                        return sap_password
+                    temp_connection.get_decrypted_sap_password = get_test_sap_password
+                    temp_connection.get_sap_connection_params = lambda: {
+                        'base_url': sap_base_url.rstrip('/'),
+                        'username': {'UserName': sap_user_name, 'CompanyDB': sap_company_db},
+                        'password': sap_password,
+                    }
+                    connector = SAPConnector(temp_connection)
+                    if not connector.authenticate():
+                        return JsonResponse({
+                            'success': False,
+                            'message': 'SAP authentication failed. Please check your credentials.'
+                        })
+                    try:
+                        endpoints = connector.get_available_endpoints()
+                    except Exception as e:
+                        logger.exception('SAP get_available_endpoints failed')
+                        return JsonResponse({
+                            'success': False,
+                            'message': f'Connection authenticated but failed to fetch endpoints: {str(e)}'
+                        })
+                    return JsonResponse({
+                        'success': True,
+                        'message': 'Credentials accepted. Select endpoints below (fetched from your server).',
+                        'endpoints': endpoints,
+                        'modules': endpoints
+                    })
                 client_id = data.get('client_id', '').strip()
                 client_secret = data.get('client_secret', '').strip()
                 refresh_token = data.get('refresh_token', '').strip()
                 api_domain = data.get('api_domain', '').strip()
                 token_url = data.get('token_url', '').strip()
-                api_type = data.get('api_type', 'zoho_crm')
-                
                 if not all([client_id, client_secret, refresh_token, api_domain]):
                     return JsonResponse({
                         'success': False,
                         'message': 'Missing required fields: client_id, client_secret, refresh_token, api_domain'
                     }, status=400)
-                
-                # For new connections, test directly with plain text credentials
-                # Import here to avoid circular imports
                 from connections.connectors.zoho import ZohoConnector
-                
-                # Create a temporary connection object for testing
-                # We'll use plain text credentials directly
                 temp_connection = APIConnection()
                 temp_connection.name = data.get('name', 'Test Connection')
                 temp_connection.api_type = api_type
                 temp_connection.client_id = client_id
                 temp_connection.api_domain = api_domain
                 temp_connection.token_url = token_url or 'https://accounts.zoho.in/oauth/v2/token'
-                
-                # Store plain text credentials temporarily (will be used by connector)
-                # We need to override the decryption methods for this test
                 temp_connection._test_client_secret = client_secret
                 temp_connection._test_refresh_token = refresh_token
-                
-                # Override decryption methods for testing
                 def get_test_client_secret():
                     return client_secret
                 def get_test_refresh_token():
                     return refresh_token
-                
                 temp_connection.get_decrypted_client_secret = get_test_client_secret
                 temp_connection.get_decrypted_refresh_token = get_test_refresh_token
-                
-                # Test connection
-                if api_type != 'zoho_crm':
-                    return JsonResponse({
-                        'success': False,
-                        'message': f'Unsupported API type: {api_type}'
-                    })
-                
                 connector = ZohoConnector(temp_connection)
                 if not connector.authenticate():
                     return JsonResponse({
                         'success': False,
                         'message': 'Authentication failed. Please check your credentials.'
                     })
-                
-                # Get available modules
                 try:
                     modules = connector.get_available_modules()
-                    # Note: For new connections, last_tested_at will be set when the connection is saved
                     return JsonResponse({
                         'success': True,
                         'message': f'Connection successful! Found {len(modules)} modules.',
@@ -812,17 +855,30 @@ class APIConnectionTestView(LoginRequiredMixin, View):
                         'success': False,
                         'message': f'Connection authenticated but failed to fetch modules: {str(e)}'
                     })
-            
-            # Test existing connection
             success, message, modules = connection.test_connection()
-            
-            # Update last_tested_at if test is successful
+            if pk and connection.api_type == 'sap_b1':
+                from core.constants import SAP_DOCUMENT_TYPES
+                from connections.connectors.sap import SAPConnector
+                endpoints = list(SAP_DOCUMENT_TYPES)
+                try:
+                    sap_connector = SAPConnector(connection)
+                    if sap_connector.authenticate():
+                        endpoints = sap_connector.get_available_endpoints()
+                except Exception:
+                    pass
+                return JsonResponse({
+                    'success': True,
+                    'message': message,
+                    'modules': endpoints,
+                    'endpoints': endpoints,
+                    'selected': connection.sap_endpoints or [],
+                    'connection_id': str(connection.id),
+                    'last_tested_at': connection.last_tested_at.isoformat() if connection.last_tested_at else None
+                })
             if success and pk:
-                from django.utils import timezone
                 connection.last_tested_at = timezone.now()
                 connection.save(update_fields=['last_tested_at'])
                 logger.info(f'Updated last_tested_at for API connection {connection.id}')
-            
             return JsonResponse({
                 'success': success,
                 'message': message,
@@ -850,19 +906,30 @@ class APIConnectionTestView(LoginRequiredMixin, View):
 
 
 class APIConnectionModulesView(LoginRequiredMixin, View):
-    """AJAX endpoint to get modules for existing connection"""
+    """AJAX endpoint to get modules (Zoho) or endpoints (SAP) for existing connection"""
     
     def get(self, request, pk):
         from accounts.services.tenant_service import TenantService
-        
+        from core.constants import SAP_DOCUMENT_TYPES
         try:
             qs = APIConnection.objects.filter(pk=pk)
             qs = TenantService.get_queryset_for_user(qs, request.user)
             connection = qs.get()
-            
-            # Get available modules by testing connection
+            if connection.api_type == 'sap_b1':
+                from connections.connectors.sap import SAPConnector
+                endpoints = list(SAP_DOCUMENT_TYPES)
+                try:
+                    sap_connector = SAPConnector(connection)
+                    if sap_connector.authenticate():
+                        endpoints = sap_connector.get_available_endpoints()
+                except Exception:
+                    pass
+                return JsonResponse({
+                    'success': True,
+                    'modules': endpoints,
+                    'selected': connection.sap_endpoints or []
+                })
             success, message, modules = connection.test_connection()
-            
             if not success:
                 return JsonResponse({
                     'success': False,
@@ -870,13 +937,11 @@ class APIConnectionModulesView(LoginRequiredMixin, View):
                     'modules': [],
                     'selected': connection.selected_modules or []
                 }, status=200)
-            
             return JsonResponse({
                 'success': True,
                 'modules': modules,
                 'selected': connection.selected_modules or []
             })
-            
         except APIConnection.DoesNotExist:
             return JsonResponse({
                 'success': False,

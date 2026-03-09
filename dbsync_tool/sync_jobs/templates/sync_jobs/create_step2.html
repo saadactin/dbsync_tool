@@ -11,7 +11,7 @@
 <div class="container-fluid">
     <div class="row">
         <div class="col-12">
-            <h1 class="mb-4">Create Sync Job - Step 2: {% if source_connection_type == 'api' %}Select Modules{% else %}Select Tables{% endif %}</h1>
+            <h1 class="mb-4">Create Sync Job - Step 2: {% if source_connection_type == 'api' %}{% if is_sap %}Select SAP Endpoints{% else %}Select Modules{% endif %}{% else %}Select Tables{% endif %}</h1>
             
             <!-- Progress indicator -->
             <div class="progress mb-4" style="height: 30px;">
@@ -28,18 +28,66 @@
                         {% if source_connection_type == 'api' %}
                             <strong>Name:</strong> {{ source_api_connection.name }}<br>
                             <strong>Type:</strong> {{ source_api_connection.get_api_type_display }}<br>
+                            {% if is_sap %}
+                            <strong>Endpoints Available:</strong> {{ available_endpoints|length }}
+                            {% else %}
                             <strong>Modules Available:</strong> {{ available_modules|length }}
+                            {% endif %}
                         {% else %}
                             <strong>Name:</strong> {{ source_connection.name }}<br>
                             <strong>Type:</strong> {{ source_connection.get_db_type_display }}<br>
+                            {% if source_connection.db_type == 'oracle_adw' %}
+                            <strong>Service Name:</strong> {{ source_connection.database_name }}
+                            {% else %}
                             <strong>Database:</strong> {{ source_connection.database_name }}
+                            {% endif %}
                         {% endif %}
                     </p>
                 </div>
             </div>
             
             {% if source_connection_type == 'api' %}
-                <!-- Module Selection for API Sources -->
+                {% if is_sap %}
+                <!-- SAP Endpoint Selection -->
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Select SAP Endpoints to Sync</h5>
+                    </div>
+                    <div class="card-body">
+                        <form method="post" action="{% url 'sync_jobs:create_step2_submit' %}">
+                            {% csrf_token %}
+                            {% if available_endpoints %}
+                                <div class="mb-3">
+                                    <button type="button" class="btn btn-sm btn-primary" id="select-all-endpoints">Select All</button>
+                                    <button type="button" class="btn btn-sm btn-secondary" id="deselect-all-endpoints">Deselect All</button>
+                                </div>
+                                <div class="list-group">
+                                    {% for item in available_endpoints %}
+                                        <label class="list-group-item">
+                                            <input
+                                                type="checkbox"
+                                                name="selected_endpoints"
+                                                value="{{ item.endpoint }}"
+                                                class="form-check-input me-2"
+                                            >
+                                            {{ item.name }}
+                                        </label>
+                                    {% endfor %}
+                                </div>
+                            {% else %}
+                                <div class="alert alert-warning">
+                                    <p>No endpoints available. Please ensure the SAP connection has endpoints selected.</p>
+                                </div>
+                            {% endif %}
+                            <div class="mt-3">
+                                <button type="button" class="btn btn-secondary" onclick="window.location.href='{% url 'sync_jobs:create_step1' %}'">Back</button>
+                                <button type="submit" class="btn btn-primary" {% if not available_endpoints %}disabled{% endif %}>Next</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+                {% else %}
+                <!-- Module Selection for Zoho API Sources -->
                 <div class="card">
                     <div class="card-header">
                         <h5 class="mb-0">Select Modules to Sync</h5>
@@ -55,10 +103,10 @@
                                 <div class="list-group">
                                     {% for module in available_modules %}
                                         <label class="list-group-item">
-                                            <input 
-                                                type="checkbox" 
-                                                name="selected_modules" 
-                                                value="{{ module }}" 
+                                            <input
+                                                type="checkbox"
+                                                name="selected_modules"
+                                                value="{{ module }}"
                                                 class="form-check-input me-2"
                                             >
                                             {{ module }}
@@ -77,6 +125,7 @@
                         </form>
                     </div>
                 </div>
+                {% endif %}
             {% else %}
             
             <!-- Loading indicator -->
@@ -133,14 +182,27 @@
 {% block extra_js %}
 {% if source_connection_type == 'api' %}
 <script>
-    // Module selection handlers
-    document.getElementById('select-all-modules').addEventListener('click', function() {
-        document.querySelectorAll('input[name="selected_modules"]').forEach(cb => cb.checked = true);
-    });
-    
-    document.getElementById('deselect-all-modules').addEventListener('click', function() {
-        document.querySelectorAll('input[name="selected_modules"]').forEach(cb => cb.checked = false);
-    });
+    (function() {
+        {% if is_sap %}
+        var selectAll = document.getElementById('select-all-endpoints');
+        var deselectAll = document.getElementById('deselect-all-endpoints');
+        if (selectAll) selectAll.addEventListener('click', function() {
+            document.querySelectorAll('input[name="selected_endpoints"]').forEach(function(cb) { cb.checked = true; });
+        });
+        if (deselectAll) deselectAll.addEventListener('click', function() {
+            document.querySelectorAll('input[name="selected_endpoints"]').forEach(function(cb) { cb.checked = false; });
+        });
+        {% else %}
+        var selectAllMod = document.getElementById('select-all-modules');
+        var deselectAllMod = document.getElementById('deselect-all-modules');
+        if (selectAllMod) selectAllMod.addEventListener('click', function() {
+            document.querySelectorAll('input[name="selected_modules"]').forEach(function(cb) { cb.checked = true; });
+        });
+        if (deselectAllMod) deselectAllMod.addEventListener('click', function() {
+            document.querySelectorAll('input[name="selected_modules"]').forEach(function(cb) { cb.checked = false; });
+        });
+        {% endif %}
+    })();
 </script>
 {% else %}
 <script>

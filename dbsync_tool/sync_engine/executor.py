@@ -6,10 +6,11 @@ from django.utils import timezone
 from sync_jobs.models import SyncJob, SyncExecution
 from connections.models import DatabaseConnection, APIConnection
 from connections.connectors.factory import get_connector
-from connections.connectors.zoho import ZohoConnector
+from connections.connectors import get_api_connector
 from sync_engine.full_sync import FullSyncExecutor
 from sync_engine.incremental_sync import IncrementalSyncExecutor
 from sync_engine.api_sync import APISyncExecutor
+from sync_engine.sap_sync import SAPSyncExecutor
 from sync_engine.exceptions import SyncExecutionError, TableSyncError
 import logging
 import time
@@ -65,31 +66,39 @@ class SyncExecutor:
             
             # Check if source is API or Database
             if self.job.is_api_source():
-                # API source - use APISyncExecutor
-                logger.info(f"Job {self.job.id} has API source, using APISyncExecutor")
-                
-                # Get API connector
+                # API source - use APISyncExecutor or SAPSyncExecutor by api_type
+                logger.info(f"Job {self.job.id} has API source")
                 api_connection = self.job.source_api_connection
                 if not api_connection:
                     raise SyncExecutionError("API connection not found for API source job")
-                
-                api_connector = ZohoConnector(api_connection)
-                
-                # Get target database connector
+
+                api_connector = get_api_connector(api_connection)
                 target_connector = self._get_connector_with_retry(self.job.target_connection)
-                
-                # Execute API sync
-                executor = APISyncExecutor(
-                    job=self.job,
-                    execution=execution,
-                    api_connector=api_connector,
-                    target_connector=target_connector
-                )
-                executor.execute()
-                
-                # Close API connector (it doesn't have a close method, but we can clean up)
-                # API connectors don't maintain persistent connections
-                
+
+                if api_connection.api_type == "zoho_crm":
+                    executor = APISyncExecutor(
+                        job=self.job,
+                        execution=execution,
+                        api_connector=api_connector,
+                        target_connector=target_connector,
+                    )
+                    executor.execute()
+                elif api_connection.api_type == "sap_b1":
+                    executor = SAPSyncExecutor(
+                        job=self.job,
+                        execution=execution,
+                        api_connector=api_connector,
+                        target_connector=target_connector,
+                    )
+                    executor.execute()
+                    if hasattr(api_connector, "logout"):
+                        try:
+                            api_connector.logout()
+                        except Exception as e:
+                            logger.warning("SAP logout failed: %s", e)
+                else:
+                    raise SyncExecutionError(f"Unsupported API type: {api_connection.api_type}")
+
             else:
                 # Database source - use existing executors
                 logger.info(f"Job {self.job.id} has database source, using database sync executors")
@@ -118,33 +127,48 @@ class SyncExecutor:
                 else:
                     raise SyncExecutionError(f"Unknown sync type: {self.job.sync_type}")
             
-            # Mark execution as completed
-            execution.status = 'completed'
-            execution.completed_at = timezone.now()
-            execution.save()
-            
-            # Update job status
-            self.job.status = 'completed'
-            self.job.last_run_at = timezone.now()
-            self.job.save()
-            
-            # Recalculate next_run_at for scheduled jobs
-            try:
-                if hasattr(self.job, 'schedule') and self.job.schedule and self.job.schedule.is_enabled:
-                    from scheduler.utils import schedule_job_execution
-                    schedule_job_execution(self.job)
-                    logger.info(f"Updated next_run_at for job {self.job.id}: {self.job.next_run_at}")
-            except Exception as e:
-                logger.warning(f"Error updating next_run_at after execution: {str(e)}")
-            
-            logger.info(f"Successfully completed execution {execution.id} for job {self.job.id}")
-            
-            # Send completion notification
-            try:
-                from sync_jobs.notifications import NotificationService
-                NotificationService.send_job_completed_notification(self.job, execution)
-            except Exception as e:
-                logger.warning(f"Failed to send completion notification: {str(e)}")
+            # Execution status was set by FullSyncExecutor/IncrementalSyncExecutor (failed vs completed). Refresh and act on it.
+            # API/SAP executors may leave status as 'running'; treat that as success.
+            execution.refresh_from_db()
+            if execution.status == 'failed':
+                # All or some tables failed — do not mark job completed
+                self.job.status = 'failed'
+                self.job.last_run_at = timezone.now()
+                self.job.save()
+                logger.warning(f"Execution {execution.id} finished with status 'failed' for job {self.job.id}")
+                try:
+                    from sync_jobs.notifications import NotificationService
+                    NotificationService.send_job_failed_notification(self.job, execution)
+                except Exception as e:
+                    logger.warning(f"Failed to send failure notification: {str(e)}")
+                try:
+                    if hasattr(self.job, 'schedule') and self.job.schedule and self.job.schedule.is_enabled:
+                        from scheduler.utils import schedule_job_execution
+                        schedule_job_execution(self.job)
+                except Exception as e:
+                    logger.warning(f"Error updating next_run_at after failure: {str(e)}")
+            else:
+                # completed or still running (API/SAP path) — mark success
+                if execution.status != 'completed':
+                    execution.status = 'completed'
+                    execution.completed_at = timezone.now()
+                    execution.save()
+                self.job.status = 'completed'
+                self.job.last_run_at = timezone.now()
+                self.job.save()
+                try:
+                    if hasattr(self.job, 'schedule') and self.job.schedule and self.job.schedule.is_enabled:
+                        from scheduler.utils import schedule_job_execution
+                        schedule_job_execution(self.job)
+                        logger.info(f"Updated next_run_at for job {self.job.id}: {self.job.next_run_at}")
+                except Exception as e:
+                    logger.warning(f"Error updating next_run_at after execution: {str(e)}")
+                logger.info(f"Successfully completed execution {execution.id} for job {self.job.id}")
+                try:
+                    from sync_jobs.notifications import NotificationService
+                    NotificationService.send_job_completed_notification(self.job, execution)
+                except Exception as e:
+                    logger.warning(f"Failed to send completion notification: {str(e)}")
             
         except TableSyncError as e:
             # Table-level errors are handled by FullSyncExecutor

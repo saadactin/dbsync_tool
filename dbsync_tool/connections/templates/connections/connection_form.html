@@ -23,7 +23,7 @@
                     <h3>{% if object %}Edit{% else %}Create{% endif %} Database Connection</h3>
                     <div>
                         <a href="{% url 'connections:api_create' %}" class="btn btn-outline-success btn-sm">
-                            <span>🔌</span> Create Zoho API Connection Instead
+                            <span>🔌</span> Create API Connection Instead
                         </a>
                     </div>
                 </div>
@@ -57,6 +57,11 @@
                             {% endif %}
                         </div>
 
+                        <div class="alert alert-info py-2 small mb-3" id="oracle-adw-hint" style="display: none;">
+                            Connects to Oracle Autonomous Data Warehouse using JDBC-like host, port, service name,
+                            username, and password. Supports full and incremental sync as source or target with lossless type mapping.
+                        </div>
+
                         <div class="row">
                             <div class="col-md-8 mb-3">
                                 <label for="{{ form.host.id_for_label }}" class="form-label">Host *</label>
@@ -74,14 +79,16 @@
                             </div>
                         </div>
 
-                        <div class="mb-3" id="database-name-field" {% if not object %}style="display: none;"{% endif %}>
-                            <label for="{{ form.database_name.id_for_label }}" class="form-label">Database Name *</label>
+                        <div class="mb-3" id="database-name-field"{% if not object %} data-create-form="true"{% endif %}>
+                            <label for="{{ form.database_name.id_for_label }}" class="form-label" id="database-name-label">Database Name *</label>
                             {{ form.database_name }}
                             {% if form.database_name.errors %}
                                 <div class="text-danger small">{{ form.database_name.errors }}</div>
                             {% endif %}
                             {% if not object %}
-                            <small class="form-text text-muted">Select a database from the list below after testing connection</small>
+                            <small class="form-text text-muted" id="database-name-help">
+                                Select a database from the list below after testing connection
+                            </small>
                             {% endif %}
                         </div>
 

@@ -65,6 +65,23 @@ class DatabaseConnection(models.Model):
         valid_types = [choice[0] for choice in DB_TYPE_CHOICES]
         if self.db_type not in valid_types:
             raise ValidationError({'db_type': f'Invalid database type. Must be one of: {", ".join(valid_types)}'})
+        
+        # Additional validation for Oracle ADW connections
+        if self.db_type == 'oracle_adw':
+            errors = {}
+            if not (self.host or '').strip():
+                errors['host'] = 'Host is required for Oracle ADW connections.'
+            if not self.port:
+                errors['port'] = 'Port is required for Oracle ADW connections.'
+            if not (self.username or '').strip():
+                errors['username'] = 'Username is required for Oracle ADW connections.'
+            if not (self.password or '').strip():
+                errors['password'] = 'Password is required for Oracle ADW connections.'
+            if not (self.database_name or '').strip():
+                # We treat database_name as the Oracle service name / TNS alias.
+                errors['database_name'] = 'Service name is required for Oracle ADW connections.'
+            if errors:
+                raise ValidationError(errors)
     
     def save(self, *args, **kwargs):
         """Override save to encrypt password before saving"""
@@ -224,12 +241,12 @@ class APIConnection(models.Model):
     name = models.CharField(max_length=255, help_text="Friendly name for this connection")
     api_type = models.CharField(max_length=50, choices=API_TYPE_CHOICES, help_text="API type")
     
-    # Zoho-specific fields
-    client_id = models.CharField(max_length=255, help_text="OAuth Client ID")
-    client_secret = models.TextField(help_text="Encrypted OAuth Client Secret")  # Encrypted
-    refresh_token = models.TextField(help_text="Encrypted OAuth Refresh Token")  # Encrypted
-    api_domain = models.CharField(max_length=255, help_text="Zoho API domain")
-    token_url = models.CharField(max_length=255, help_text="OAuth token URL")
+    # Zoho-specific fields (nullable so SAP connections do not require them)
+    client_id = models.CharField(max_length=255, blank=True, null=True, help_text="OAuth Client ID")
+    client_secret = models.TextField(blank=True, null=True, help_text="Encrypted OAuth Client Secret")  # Encrypted
+    refresh_token = models.TextField(blank=True, null=True, help_text="Encrypted OAuth Refresh Token")  # Encrypted
+    api_domain = models.CharField(max_length=255, blank=True, null=True, help_text="Zoho API domain")
+    token_url = models.CharField(max_length=255, blank=True, null=True, help_text="OAuth token URL")
     
     # Module configuration
     selected_modules = models.JSONField(
@@ -237,6 +254,31 @@ class APIConnection(models.Model):
         blank=True,
         null=True,
         help_text="List of selected module names for syncing"
+    )
+    
+    # SAP-specific fields
+    sap_base_url = models.CharField(
+        max_length=512,
+        blank=True,
+        null=True,
+        help_text="SAP Business One Service Layer base URL (e.g. https://server:50000/b1s/v2/)"
+    )
+    sap_username = models.JSONField(
+        default=dict,
+        blank=True,
+        null=True,
+        help_text="SAP UserName and CompanyDB (stored as JSON: {\"UserName\": \"...\", \"CompanyDB\": \"...\"})"
+    )
+    sap_password = models.TextField(
+        blank=True,
+        null=True,
+        help_text="SAP password (encrypted at rest)"
+    )
+    sap_endpoints = models.JSONField(
+        default=list,
+        blank=True,
+        null=True,
+        help_text="Selected SAP document types/endpoints for sync"
     )
     
     # Standard fields
@@ -280,6 +322,8 @@ class APIConnection(models.Model):
     
     def clean(self):
         """Validate model data before saving"""
+        from urllib.parse import urlparse
+
         super().clean()
         
         # Validate API type
@@ -287,19 +331,45 @@ class APIConnection(models.Model):
         if self.api_type not in valid_types:
             raise ValidationError({'api_type': f'Invalid API type. Must be one of: {", ".join(valid_types)}'})
         
-        # Validate api_domain is a valid URL format
-        if self.api_domain:
-            from urllib.parse import urlparse
-            parsed = urlparse(self.api_domain)
-            if not parsed.scheme or not parsed.netloc:
-                raise ValidationError({'api_domain': 'API domain must be a valid URL (e.g., https://www.zohoapis.in)'})
+        if self.api_type == 'zoho_crm':
+            # Zoho: require Zoho-specific fields
+            if not self.client_id:
+                raise ValidationError({'client_id': 'Client ID is required for Zoho CRM connections.'})
+            if not self.client_secret or self.client_secret == 'RESET_REQUIRED':
+                raise ValidationError({'client_secret': 'Client secret is required for Zoho CRM connections.'})
+            if not self.refresh_token or self.refresh_token == 'RESET_REQUIRED':
+                raise ValidationError({'refresh_token': 'Refresh token is required for Zoho CRM connections.'})
+            if not self.api_domain:
+                raise ValidationError({'api_domain': 'API domain is required for Zoho CRM connections.'})
+            if not self.token_url:
+                raise ValidationError({'token_url': 'Token URL is required for Zoho CRM connections.'})
+            if self.api_domain:
+                parsed = urlparse(self.api_domain)
+                if not parsed.scheme or not parsed.netloc:
+                    raise ValidationError({'api_domain': 'API domain must be a valid URL (e.g., https://www.zohoapis.in)'})
+            if self.token_url:
+                parsed = urlparse(self.token_url)
+                if not parsed.scheme or not parsed.netloc:
+                    raise ValidationError({'token_url': 'Token URL must be a valid URL (e.g., https://accounts.zoho.in/oauth/v2/token)'})
         
-        # Validate token_url is a valid URL format
-        if self.token_url:
-            from urllib.parse import urlparse
-            parsed = urlparse(self.token_url)
-            if not parsed.scheme or not parsed.netloc:
-                raise ValidationError({'token_url': 'Token URL must be a valid URL (e.g., https://accounts.zoho.in/oauth/v2/token)'})
+        elif self.api_type == 'sap_b1':
+            # SAP: require SAP-specific fields
+            if not self.sap_base_url:
+                raise ValidationError({'sap_base_url': 'SAP base URL is required for SAP B1 connections.'})
+            if not self.sap_username:
+                raise ValidationError({'sap_username': 'SAP UserName and CompanyDB are required for SAP B1 connections.'})
+            if not isinstance(self.sap_username, dict):
+                raise ValidationError({'sap_username': 'SAP username must be a JSON object with UserName and CompanyDB.'})
+            if 'UserName' not in self.sap_username or 'CompanyDB' not in self.sap_username:
+                raise ValidationError({'sap_username': 'SAP username must contain UserName and CompanyDB keys.'})
+            if not self.sap_password or self.sap_password == 'RESET_REQUIRED':
+                raise ValidationError({'sap_password': 'SAP password is required for SAP B1 connections.'})
+            if self.sap_base_url:
+                parsed = urlparse(self.sap_base_url)
+                if not parsed.scheme or not parsed.netloc:
+                    raise ValidationError({'sap_base_url': 'SAP base URL must be a valid URL.'})
+            if self.sap_endpoints is not None and not isinstance(self.sap_endpoints, list):
+                raise ValidationError({'sap_endpoints': 'SAP endpoints must be a list.'})
         
         # Validate selected_modules is a list (if provided)
         if self.selected_modules is not None and not isinstance(self.selected_modules, list):
@@ -307,17 +377,20 @@ class APIConnection(models.Model):
     
     def save(self, *args, **kwargs):
         """Override save to encrypt credentials and set defaults before saving"""
-        # Set default api_domain if not provided
-        if not self.api_domain:
-            self.api_domain = 'https://www.zohoapis.in'
-        
-        # Set default token_url based on api_domain if not provided
-        if not self.token_url and self.api_domain:
-            self.token_url = ZOHO_DEFAULT_TOKEN_URLS.get(self.api_domain, 'https://accounts.zoho.in/oauth/v2/token')
+        # Zoho defaults only when API type is Zoho
+        if self.api_type == 'zoho_crm':
+            if not self.api_domain:
+                self.api_domain = 'https://www.zohoapis.in'
+            if not self.token_url and self.api_domain:
+                self.token_url = ZOHO_DEFAULT_TOKEN_URLS.get(self.api_domain, 'https://accounts.zoho.in/oauth/v2/token')
         
         # Set default selected_modules if None
         if self.selected_modules is None:
             self.selected_modules = []
+        
+        # Set default sap_endpoints for SAP
+        if self.api_type == 'sap_b1' and self.sap_endpoints is None:
+            self.sap_endpoints = []
         
         # Validate before saving
         try:
@@ -327,7 +400,6 @@ class APIConnection(models.Model):
         
         # Encrypt client_secret before saving (only if it's not already encrypted and not empty)
         if self.client_secret and self.client_secret != 'RESET_REQUIRED':
-            # Check if client_secret is already encrypted (Fernet encrypted strings start with 'gAAAAAB')
             if not self.client_secret.startswith('gAAAAAB'):
                 try:
                     self.client_secret = encrypt_password(self.client_secret)
@@ -336,12 +408,19 @@ class APIConnection(models.Model):
         
         # Encrypt refresh_token before saving (only if it's not already encrypted and not empty)
         if self.refresh_token and self.refresh_token != 'RESET_REQUIRED':
-            # Check if refresh_token is already encrypted (Fernet encrypted strings start with 'gAAAAAB')
             if not self.refresh_token.startswith('gAAAAAB'):
                 try:
                     self.refresh_token = encrypt_password(self.refresh_token)
                 except Exception as e:
                     raise EncryptionError(f"Failed to encrypt refresh token: {str(e)}")
+        
+        # Encrypt sap_password before saving (only if it's not already encrypted and not empty)
+        if self.sap_password and self.sap_password != 'RESET_REQUIRED':
+            if not self.sap_password.startswith('gAAAAAB'):
+                try:
+                    self.sap_password = encrypt_password(self.sap_password)
+                except Exception as e:
+                    raise EncryptionError(f"Failed to encrypt SAP password: {str(e)}")
         
         super().save(*args, **kwargs)
     
@@ -407,13 +486,57 @@ class APIConnection(models.Model):
         except Exception as e:
             raise EncryptionError(f"Failed to decrypt refresh token: {str(e)}")
     
+    def get_decrypted_sap_password(self):
+        """
+        Get decrypted SAP password for connection.
+
+        Returns:
+            str: Decrypted SAP password.
+
+        Raises:
+            EncryptionError: If decryption fails or password is not set.
+        """
+        if not self.sap_password or self.sap_password == 'RESET_REQUIRED':
+            raise EncryptionError(
+                f"SAP password is not set for connection '{self.name}'. "
+                f"Please update the password in the Connections page (Edit connection)."
+            )
+        try:
+            return decrypt_password(self.sap_password)
+        except ValueError as e:
+            error_msg = str(e)
+            if "Decryption failed" in error_msg or "Invalid token" in error_msg or "InvalidSignature" in str(type(e).__name__):
+                raise EncryptionError(
+                    f"Failed to decrypt SAP password for connection '{self.name}'. "
+                    f"The encryption key may have changed. "
+                    f"Please update the password by editing this connection in the Connections page."
+                )
+            raise EncryptionError(f"Failed to decrypt SAP password: {error_msg}")
+        except Exception as e:
+            raise EncryptionError(f"Failed to decrypt SAP password: {str(e)}")
+    
+    def get_sap_connection_params(self):
+        """
+        Get SAP connection parameters as dictionary (for use by SAP connector).
+
+        Returns:
+            dict: base_url, username (dict with UserName, CompanyDB), password (decrypted).
+        """
+        return {
+            'base_url': self.sap_base_url,
+            'username': self.sap_username,
+            'password': self.get_decrypted_sap_password(),
+        }
+    
     def get_connection_params(self):
         """
-        Get connection parameters as dictionary
-        
+        Get connection parameters as dictionary (type-specific).
+
         Returns:
-            dict: Connection parameters with decrypted credentials
+            dict: Connection parameters with decrypted credentials (Zoho or SAP).
         """
+        if self.api_type == 'sap_b1':
+            return self.get_sap_connection_params()
         return {
             'client_id': self.client_id,
             'client_secret': self.get_decrypted_client_secret(),
@@ -433,10 +556,20 @@ class APIConnection(models.Model):
             Exception: If connection test fails with error details
         """
         try:
-            # Import here to avoid circular imports
+            if self.api_type == 'sap_b1':
+                from connections.connectors.sap import SAPConnector
+                connector = SAPConnector(self)
+                if not connector.authenticate():
+                    return (False, "Authentication failed. Please check your SAP credentials.", [])
+                try:
+                    modules = connector.get_available_modules()
+                    if not modules:
+                        return (True, "Connection successful, but no endpoints found.", [])
+                    return (True, f"Connection successful. Found {len(modules)} endpoints.", modules)
+                except Exception as e:
+                    logger.error("SAP get_available_modules failed: %s", e)
+                    return (False, f"Connection successful, but failed to fetch endpoints: {str(e)}", [])
             from connections.connectors.zoho import ZohoConnector
-            
-            # Only support Zoho CRM for now
             if self.api_type != 'zoho_crm':
                 return (False, f"Unsupported API type: {self.api_type}", [])
             

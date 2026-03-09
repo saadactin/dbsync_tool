@@ -100,6 +100,10 @@ class ConnectionPool:
                         # ClickHouse doesn't support session-level read-only transactions
                         # Read-only is enforced at user/role level in ClickHouse
                         pass
+                    elif connection.db_type == 'oracle_adw':
+                        # Oracle will typically enforce permissions at user/role level;
+                        # we don't change transaction mode here.
+                        pass
                 except Exception as e:
                     logger.warning(f"Failed to set read-only mode: {str(e)}")
                     # Continue anyway - read-only is a best practice, not required
@@ -176,6 +180,10 @@ class ConnectionPool:
                         elif connection.db_type == 'clickhouse':
                             # ClickHouse uses query() method
                             connector._connection.query("SELECT 1")
+                        elif connection.db_type == 'oracle_adw':
+                            # Oracle ADW quick validation
+                            with connector._connection.cursor() as cursor:
+                                cursor.execute("SELECT 1 FROM DUAL")
                         
                         # Connection is valid, return it
                         return connector

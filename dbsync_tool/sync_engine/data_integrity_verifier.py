@@ -15,9 +15,22 @@ from sync_engine.transformation_engine import TransformationEngine
 from sync_jobs.models import SyncJobTable
 import logging
 from decimal import Decimal
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 
 logger = logging.getLogger(__name__)
+
+
+def _utc_normalize(dt: Any) -> Optional[datetime]:
+    """Normalize datetime to UTC for comparison. Returns None for non-datetime."""
+    if dt is None:
+        return None
+    if not isinstance(dt, (datetime, date)):
+        return None
+    if isinstance(dt, date) and not isinstance(dt, datetime):
+        return datetime.combine(dt, datetime.min.time(), tzinfo=timezone.utc)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 class DataIntegrityVerifier:
@@ -97,9 +110,14 @@ class DataIntegrityVerifier:
             accuracy_report['row_count_match'] = row_count_match
             
             if not row_count_match:
+                source_db = QueryBuilder.get_db_type(self.source_connector)
+                target_db = QueryBuilder.get_db_type(self.target_connector)
+                db_context = ""
+                if source_db == 'oracle' or target_db == 'oracle':
+                    db_context = " (Oracle ADW involved; schema=%s, table=%s)" % (target_schema, table)
                 error_msg = (
                     f"Row count mismatch: expected {expected_row_count}, "
-                    f"got {actual_count}. {row_count_error or ''}"
+                    f"got {actual_count}. {row_count_error or ''}{db_context}"
                 )
                 logger.error(f"Data accuracy verification failed for {source_schema}.{table}: {error_msg}")
                 return False, error_msg, accuracy_report
@@ -330,7 +348,9 @@ class DataIntegrityVerifier:
                         break
             
             if mismatched_count > 0:
-                # Log first few mismatches for debugging
+                source_db = QueryBuilder.get_db_type(self.source_connector)
+                target_db = QueryBuilder.get_db_type(self.target_connector)
+                db_context = " (Oracle ADW involved)" if (source_db == 'oracle' or target_db == 'oracle') else ""
                 for mismatch in comparison_report['mismatched_rows'][:3]:
                     logger.error(
                         f"Mismatch details: {mismatch.get('error', 'Unknown error')}, "
@@ -338,13 +358,16 @@ class DataIntegrityVerifier:
                         f"source: {mismatch.get('source_row', 'N/A')}, "
                         f"target: {mismatch.get('target_row', 'N/A')}"
                     )
-                error_msg = f"Found {mismatched_count} mismatched row(s)"
+                error_msg = f"Found {mismatched_count} mismatched row(s){db_context}"
                 return False, error_msg, comparison_report
             
             return True, None, comparison_report
             
         except Exception as e:
-            error_msg = f"Error comparing rows: {str(e)}"
+            source_db = QueryBuilder.get_db_type(self.source_connector)
+            target_db = QueryBuilder.get_db_type(self.target_connector)
+            db_context = " Oracle ADW:" if (source_db == 'oracle' or target_db == 'oracle') else " "
+            error_msg = f"Error comparing rows:{db_context}{str(e)}"
             logger.error(error_msg, exc_info=True)
             return False, error_msg, comparison_report
     
@@ -441,27 +464,20 @@ class DataIntegrityVerifier:
                 elif transformation_upper == 'LOWER':
                     value = value.lower()
         
-        # Normalize data types for comparison
-        # Convert Decimal to float for comparison
+        # Keep Decimal for exact high-precision comparison (Oracle NUMBER, etc.)
         if isinstance(value, Decimal):
-            return float(value)
-        
-        # Normalize datetime/date objects
-        if isinstance(value, (datetime, date)):
             return value
+        
+        # Normalize datetime to UTC for cross-DB comparison (Oracle TIMESTAMP WITH TIME ZONE, etc.)
+        if isinstance(value, (datetime, date)):
+            return _utc_normalize(value)
         
         return value
     
     def _values_equal(self, val1: Any, val2: Any) -> bool:
         """
-        Compare two values for equality, handling type conversions
-        
-        Args:
-            val1: First value
-            val2: Second value
-            
-        Returns:
-            True if values are equal, False otherwise
+        Compare two values for equality, handling type conversions and cross-DB differences.
+        Oracle NUMBER, timestamps, and text are compared in a type-safe way.
         """
         # Handle NULL values
         if val1 is None and val2 is None:
@@ -469,39 +485,45 @@ class DataIntegrityVerifier:
         if val1 is None or val2 is None:
             return False
         
-        # Convert both to same type for comparison
-        # Try numeric conversion first (handles cross-database type differences)
+        # Exact Decimal comparison (Oracle NUMBER, high-precision numerics)
+        if isinstance(val1, Decimal) and isinstance(val2, Decimal):
+            return val1 == val2
+        if isinstance(val1, Decimal) or isinstance(val2, Decimal):
+            try:
+                d1 = Decimal(str(val1)) if not isinstance(val1, Decimal) else val1
+                d2 = Decimal(str(val2)) if not isinstance(val2, Decimal) else val2
+                return d1 == d2
+            except (ValueError, TypeError, ArithmeticError):
+                pass
+        
+        # UTC-normalized datetime comparison (Oracle TIMESTAMP WITH TIME ZONE, etc.)
+        n1, n2 = _utc_normalize(val1), _utc_normalize(val2)
+        if n1 is not None and n2 is not None:
+            return n1 == n2
+        
+        # Float/int with tolerance for non-Decimal numerics
         try:
-            # If either is numeric, try to compare as numbers
             val1_num = None
             val2_num = None
-            
-            if isinstance(val1, (int, float, Decimal)) or (isinstance(val1, str) and val1.replace('.', '', 1).replace('-', '', 1).isdigit()):
+            if isinstance(val1, (int, float)) or (isinstance(val1, str) and val1.replace('.', '', 1).replace('-', '', 1).replace('e', '', 1).replace('E', '', 1).isdigit()):
                 try:
                     val1_num = float(val1)
                 except (ValueError, TypeError):
                     pass
-            
-            if isinstance(val2, (int, float, Decimal)) or (isinstance(val2, str) and val2.replace('.', '', 1).replace('-', '', 1).isdigit()):
+            if isinstance(val2, (int, float)) or (isinstance(val2, str) and val2.replace('.', '', 1).replace('-', '', 1).replace('e', '', 1).replace('E', '', 1).isdigit()):
                 try:
                     val2_num = float(val2)
                 except (ValueError, TypeError):
                     pass
-            
-            # If both are numeric, compare as numbers
             if val1_num is not None and val2_num is not None:
-                # Use tolerance for floating point comparison
-                if abs(val1_num - val2_num) < 0.0001:
-                    return True
                 return abs(val1_num - val2_num) < 0.0001
         except (ValueError, TypeError, AttributeError):
             pass
         
-        # Handle numeric types (same database type)
-        if isinstance(val1, (int, float, Decimal)) and isinstance(val2, (int, float, Decimal)):
+        if isinstance(val1, (int, float)) and isinstance(val2, (int, float)):
             try:
-                return abs(float(val1) - float(val2)) < 0.0001  # Allow small floating point differences
-            except:
+                return abs(float(val1) - float(val2)) < 0.0001
+            except Exception:
                 return val1 == val2
         
         # Handle string types - normalize whitespace

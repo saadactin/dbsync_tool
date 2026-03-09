@@ -2,7 +2,12 @@
 Comprehensive unit tests for type mapping system
 """
 import unittest
-from core.type_mapping import map_data_type, get_default_length, normalize_data_type
+from core.type_mapping import (
+    map_data_type,
+    get_default_length,
+    normalize_data_type,
+    map_source_to_oracle_type,
+)
 
 
 class TestTypeMapping(unittest.TestCase):
@@ -66,6 +71,13 @@ class TestTypeMapping(unittest.TestCase):
     def test_mysql_to_postgres_varchar(self):
         result = map_data_type('VARCHAR', 'mysql', 'postgres', max_length=255)
         self.assertEqual(result, 'VARCHAR(255)')
+
+    def test_mysql_to_postgres_bit_year_enum(self):
+        """Complete MySQL schema: BIT, YEAR, ENUM map to postgres."""
+        self.assertEqual(map_data_type('BIT', 'mysql', 'postgres'), 'BYTEA')
+        self.assertEqual(map_data_type('YEAR', 'mysql', 'postgres'), 'INTEGER')
+        self.assertEqual(map_data_type('ENUM', 'mysql', 'postgres'), 'TEXT')
+        self.assertEqual(map_data_type('SET', 'mysql', 'postgres'), 'TEXT')
     
     def test_mysql_to_postgres_datetime(self):
         result = map_data_type('DATETIME', 'mysql', 'postgres')
@@ -195,7 +207,22 @@ class TestTypeMapping(unittest.TestCase):
         self.assertIsNone(max_length)
         self.assertEqual(precision, 10)
         self.assertEqual(scale, 2)
-    
+
+    def test_normalize_data_type_enum_set(self):
+        """ENUM/SET have quoted params; do not parse as precision/scale."""
+        base_type, max_length, precision, scale = normalize_data_type("enum('ACTIVE','INACTIVE')", 'mysql')
+        self.assertEqual(base_type, 'ENUM')
+        self.assertIsNone(precision)
+        self.assertIsNone(scale)
+        base_type2, _, _, _ = normalize_data_type("set('READ','WRITE')", 'mysql')
+        self.assertEqual(base_type2, 'SET')
+
+    def test_normalize_data_type_mysql_unsigned(self):
+        """MySQL int(11) unsigned -> base_type INT UNSIGNED for mapping."""
+        base_type, max_length, precision, scale = normalize_data_type('int(11) unsigned', 'mysql')
+        self.assertEqual(base_type, 'INT UNSIGNED')
+        self.assertEqual(max_length, 11)
+
     def test_normalize_data_type_simple(self):
         base_type, max_length, precision, scale = normalize_data_type('INT', 'postgres')
         self.assertEqual(base_type, 'INT')
@@ -399,6 +426,31 @@ class TestTypeMapping(unittest.TestCase):
         # When mapping FROM ClickHouse to other DBs, fallback should be target DB's fallback
         result = map_data_type('UNKNOWN_TYPE', 'clickhouse', 'postgres')
         self.assertEqual(result, 'TEXT')  # Postgres fallback is TEXT
+
+    # MySQL -> Oracle (complete schema: YEAR, BIT, ENUM, SET, spatial)
+    def test_map_source_to_oracle_year_bit_enum_set_spatial(self):
+        """Complete MySQL schema types map to Oracle without loss."""
+        self.assertEqual(map_source_to_oracle_type('YEAR', 'mysql'), 'NUMBER(4)')
+        self.assertEqual(map_source_to_oracle_type('bit(1)', 'mysql'), 'BLOB')
+        self.assertEqual(map_source_to_oracle_type("enum('A','B')", 'mysql'), 'CLOB')
+        self.assertEqual(map_source_to_oracle_type("set('X','Y')", 'mysql'), 'CLOB')
+        self.assertEqual(map_source_to_oracle_type('GEOMETRY', 'mysql'), 'BLOB')
+        self.assertEqual(map_source_to_oracle_type('POINT', 'mysql'), 'BLOB')
+        self.assertEqual(map_source_to_oracle_type('int(11) unsigned', 'mysql'), 'NUMBER(10)')
+        # BIGINT UNSIGNED max 2^64-1 needs 20 digits (ORA-01438 otherwise)
+        self.assertEqual(map_source_to_oracle_type('bigint unsigned', 'mysql'), 'NUMBER(20)')
+        # DECIMAL(65,30) exceeds Oracle max 38; use CLOB to avoid DPY-4003
+        self.assertEqual(map_source_to_oracle_type('decimal(65,30)', 'mysql'), 'CLOB')
+
+    def test_map_source_to_oracle_floating_types(self):
+        """MySQL floating types must map to Oracle binary floats (not NUMBER)."""
+        self.assertEqual(map_source_to_oracle_type('DOUBLE', 'mysql'), 'BINARY_DOUBLE')
+        self.assertEqual(map_source_to_oracle_type('DOUBLE PRECISION', 'mysql'), 'BINARY_DOUBLE')
+        self.assertEqual(map_source_to_oracle_type('REAL', 'mysql'), 'BINARY_DOUBLE')
+        self.assertEqual(map_source_to_oracle_type('FLOAT', 'mysql'), 'BINARY_FLOAT')
+        # MySQL can specify precision for FLOAT/DOUBLE; still binary float/double in Oracle
+        self.assertEqual(map_source_to_oracle_type('float(7,4)', 'mysql'), 'BINARY_FLOAT')
+        self.assertEqual(map_source_to_oracle_type('double(53,10)', 'mysql'), 'BINARY_DOUBLE')
 
 
 if __name__ == '__main__':

@@ -3,7 +3,12 @@ Table creation and management utilities
 """
 from typing import List, Optional
 from connections.connectors.base import DBConnector, ColumnInfo
-from core.type_mapping import map_data_type
+from core.type_mapping import (
+    map_data_type,
+    map_oracle_to_target_type,
+    map_source_to_oracle_type,
+    normalize_data_type,
+)
 from sync_engine.exceptions import SchemaCreationError, TableCreationError
 import logging
 
@@ -36,6 +41,9 @@ class TableHandler:
             return 'sqlserver'
         elif 'ClickHouse' in class_name:
             return 'clickhouse'
+        elif 'Oracle' in class_name:
+            # Covers OracleADWConnector and similar Oracle connectors
+            return 'oracle'
         else:
             raise ValueError(f"Unknown connector type: {class_name}")
     
@@ -122,7 +130,7 @@ class TableHandler:
         """
         if source_schema is None:
             source_schema = schema
-        
+
         # Schema mapping for different database combinations
         # For databases WITH schemas (PostgreSQL, SQL Server): always use target's default schema
         # For databases WITHOUT schemas (MySQL, ClickHouse): use database name directly
@@ -148,7 +156,23 @@ class TableHandler:
             # SQL Server: Always use 'dbo' schema regardless of source schema
             target_schema = 'dbo'
             logger.info(f"Mapping source schema '{schema}' to SQL Server schema 'dbo' (all tables in dbo schema)")
-        
+        elif self.target_db_type == 'oracle':
+            # Oracle: schema = owner = database user. Use the connected user so tables are created in their schema.
+            target_schema = (getattr(self.target_connector, 'username', None) or '').strip().upper() or schema
+            logger.info(
+                f"Mapping source schema '{schema}' to Oracle owner '{target_schema}' (connected user; ORA-01918 avoided)"
+            )
+
+        # Oracle-aware flows (either source or target participates as Oracle ADW).
+        # We handle these separately to leverage the dedicated Oracle type-mapping
+        # helpers and to enforce strict non-lossy schema rules.
+        if self.source_db_type == 'oracle' or self.target_db_type == 'oracle':
+            return self._create_table_oracle_aware(
+                source_schema=source_schema,
+                target_schema=target_schema,
+                table=table,
+            )
+
         # Check if table exists (with error handling for transaction issues)
         try:
             if self.target_connector.table_exists(target_schema, table):
@@ -251,6 +275,255 @@ class TableHandler:
             List of ColumnInfo objects
         """
         return self.target_connector.get_columns(schema, table)
+
+    def _create_table_oracle_aware(
+        self,
+        source_schema: str,
+        target_schema: str,
+        table: str,
+    ) -> bool:
+        """
+        Oracle-aware table creation logic.
+
+        Handles both:
+        - Oracle (source) -> Postgres/MySQL/ClickHouse (target)
+        - Postgres/MySQL/ClickHouse (source) -> Oracle (target)
+
+        The goal is to:
+        - Use rich Oracle type mappings (no silent truncation/rounding).
+        - Reuse existing target tables when they are compatible.
+        - Fail fast with a clear message when a mismatch could cause data loss.
+        """
+        source_is_oracle = self.source_db_type == 'oracle'
+        target_is_oracle = self.target_db_type == 'oracle'
+
+        # Load source columns
+        try:
+            source_columns = self.source_connector.get_columns(source_schema, table)
+        except Exception as e:
+            raise TableCreationError(
+                f"Failed to get source columns for {source_schema}.{table}: {str(e)}"
+            )
+
+        if not source_columns:
+            raise TableCreationError(
+                f"No columns found for source table {source_schema}.{table}"
+            )
+
+        # Build target column specs using Oracle-aware type mapping helpers.
+        target_columns: List[ColumnInfo] = []
+
+        if target_is_oracle and not source_is_oracle:
+            # Postgres/MySQL/ClickHouse -> Oracle
+            for col in source_columns:
+                base_type, max_len, prec, scale = normalize_data_type(
+                    col.data_type, self.source_db_type
+                )
+                oracle_type = map_source_to_oracle_type(
+                    source_type=col.data_type,
+                    source_db=self.source_db_type,
+                    max_length=col.max_length or max_len,
+                    precision=prec,
+                    scale=scale,
+                )
+                target_columns.append(
+                    ColumnInfo(
+                        name=col.name,
+                        data_type=oracle_type,
+                        is_nullable=col.is_nullable,
+                        is_primary_key=col.is_primary_key,
+                        max_length=col.max_length or max_len,
+                        default_value=col.default_value,
+                    )
+                )
+        elif source_is_oracle and not target_is_oracle:
+            # Oracle -> Postgres/MySQL/ClickHouse
+            for col in source_columns:
+                base_type, max_len, prec, scale = normalize_data_type(
+                    col.data_type, "oracle"
+                )
+                target_type = map_oracle_to_target_type(
+                    oracle_type=col.data_type,
+                    target_db=self.target_db_type,
+                    max_length=col.max_length or max_len,
+                    precision=prec,
+                    scale=scale,
+                )
+                target_columns.append(
+                    ColumnInfo(
+                        name=col.name,
+                        data_type=target_type,
+                        is_nullable=col.is_nullable,
+                        is_primary_key=col.is_primary_key,
+                        max_length=col.max_length or max_len,
+                        default_value=col.default_value,
+                    )
+                )
+        else:
+            # Oracle -> Oracle (rare; mostly for copy-within-Oracle). In this case
+            # we preserve the original column definitions.
+            target_columns = source_columns
+
+        # Check if target table already exists.
+        try:
+            exists = self.target_connector.table_exists(target_schema, table)
+        except Exception as e:
+            logger.warning(
+                "Oracle-based sync: error checking if table %s.%s exists: %s",
+                target_schema,
+                table,
+                str(e),
+            )
+            exists = False
+
+        if exists:
+            # Compare existing target schema to desired schema to prevent
+            # destructive or lossy changes.
+            try:
+                existing_columns = self.target_connector.get_columns(
+                    target_schema, table
+                )
+            except Exception as e:
+                raise TableCreationError(
+                    f"Failed to inspect existing target table {target_schema}.{table}: {str(e)}"
+                )
+
+            existing_by_name = {
+                col.name.upper(): col for col in existing_columns
+            }
+            expected_by_name = {
+                col.name.upper(): col for col in target_columns
+            }
+
+            schema_mismatch = False
+            mismatch_col_name = None
+            mismatch_exp_base = None
+            mismatch_act_base = None
+
+            for name, expected_col in expected_by_name.items():
+                if name not in existing_by_name:
+                    raise TableCreationError(
+                        f"Existing Oracle-based target table {target_schema}.{table} "
+                        f"is missing column {expected_col.name}. Schema must be aligned manually."
+                    )
+
+                actual_col = existing_by_name[name]
+
+                # Normalize both type strings for comparison.
+                exp_base, exp_len, exp_prec, exp_scale = normalize_data_type(
+                    expected_col.data_type, self.target_db_type if not target_is_oracle else "oracle"
+                )
+                act_base, act_len, act_prec, act_scale = normalize_data_type(
+                    actual_col.data_type, self.target_db_type if not target_is_oracle else "oracle"
+                )
+
+                # If base types differ (e.g. CLOB vs NUMBER) treat as schema mismatch.
+                # We will drop and recreate instead of failing, since full sync re-inserts anyway.
+                if exp_base != act_base:
+                    schema_mismatch = True
+                    mismatch_col_name = expected_col.name
+                    mismatch_exp_base = exp_base
+                    mismatch_act_base = act_base
+                    break
+
+                # For VARCHAR-like types, ensure target length is at least expected.
+                if any(t in exp_base for t in ("CHAR", "VARCHAR")):
+                    if exp_len is not None and act_len is not None and act_len < exp_len:
+                        raise TableCreationError(
+                            f"Column {expected_col.name} in target table {target_schema}.{table} "
+                            f"has length {act_len}, which is smaller than required {exp_len}. "
+                            f"Increase the column length in Oracle to avoid truncation."
+                        )
+
+                # For numeric types, ensure precision/scale are sufficient where known.
+                if exp_base in ("NUMBER", "DECIMAL", "NUMERIC"):
+                    if (
+                        exp_prec is not None
+                        and act_prec is not None
+                        and act_prec < exp_prec
+                    ):
+                        raise TableCreationError(
+                            f"Column {expected_col.name} in target table {target_schema}.{table} "
+                            f"has precision {act_prec}, which is smaller than required {exp_prec}. "
+                            f"Increase the precision to avoid overflow or rounding."
+                        )
+                    if (
+                        exp_scale is not None
+                        and act_scale is not None
+                        and act_scale < exp_scale
+                    ):
+                        raise TableCreationError(
+                            f"Column {expected_col.name} in target table {target_schema}.{table} "
+                            f"has scale {act_scale}, which is smaller than required {exp_scale}. "
+                            f"Increase the scale to avoid rounding."
+                        )
+
+            else:
+                # No break - all columns compatible
+                logger.info(
+                    "Oracle-based sync detected (source_db_type=%s, target_db_type=%s). "
+                    "Existing target table %s.%s is compatible; reusing without DDL.",
+                    self.source_db_type,
+                    self.target_db_type,
+                    target_schema,
+                    table,
+                )
+                return False
+
+            if schema_mismatch:
+                logger.warning(
+                    "Type mismatch for column %s in target table %s.%s: expected %s, found %s. "
+                    "Dropping table and recreating with correct schema.",
+                    mismatch_col_name,
+                    target_schema,
+                    table,
+                    mismatch_exp_base,
+                    mismatch_act_base,
+                )
+                try:
+                    owner = (target_schema or "").upper()
+                    tbl = (table or "").upper()
+                    self.target_connector.execute_query(
+                        f'DROP TABLE "{owner}"."{tbl}"'
+                    )
+                except Exception as e:
+                    raise TableCreationError(
+                        f"Failed to drop table {target_schema}.{table} for schema mismatch: {str(e)}"
+                    )
+                # Fall through to create block below
+
+        # Table does not exist yet – create it safely.
+        try:
+            # For non-Oracle targets we still ensure schema exists. For Oracle,
+            # ensure_schema_exists is a no-op (schema/owner is managed by DBAs).
+            self.ensure_schema_exists(target_schema)
+        except Exception as e:
+            raise TableCreationError(
+                f"Failed to ensure target schema {target_schema}: {str(e)}"
+            )
+
+        try:
+            # ClickHouse create_table expects an extra target_db_type kwarg to
+            # know where the columns originated; others (including Oracle) use
+            # the ColumnInfo list verbatim.
+            if self.target_db_type == "clickhouse":
+                self.target_connector.create_table(
+                    target_schema, table, target_columns, target_db_type=self.source_db_type
+                )
+            else:
+                self.target_connector.create_table(target_schema, table, target_columns)
+            logger.info(
+                "Created target table %s.%s for Oracle-based sync (source_db_type=%s, target_db_type=%s)",
+                target_schema,
+                table,
+                self.source_db_type,
+                self.target_db_type,
+            )
+            return True
+        except Exception as e:
+            raise TableCreationError(
+                f"Failed to create target table {target_schema}.{table}: {str(e)}"
+            )
     
     def verify_table_structure(
         self,

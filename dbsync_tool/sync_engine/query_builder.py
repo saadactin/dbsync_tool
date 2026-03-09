@@ -21,7 +21,7 @@ class QueryBuilder:
             connector: Database connector instance
             
         Returns:
-            Database type string ('postgres', 'mysql', 'sqlserver', 'clickhouse')
+            Database type string ('postgres', 'mysql', 'sqlserver', 'clickhouse', 'oracle')
         """
         class_name = connector.__class__.__name__
         if 'Postgres' in class_name:
@@ -32,6 +32,9 @@ class QueryBuilder:
             return 'sqlserver'
         elif 'ClickHouse' in class_name:
             return 'clickhouse'
+        elif 'Oracle' in class_name:
+            # Covers OracleADWConnector and similar Oracle connectors
+            return 'oracle'
         else:
             raise QueryBuilderError(f"Unknown connector type: {class_name}")
     
@@ -67,7 +70,7 @@ class QueryBuilder:
         db_type = QueryBuilder.get_db_type(connector)
         
         # Build schema.table identifier based on DB type
-        if db_type == 'postgres':
+        if db_type == 'postgres' or db_type == 'oracle':
             schema_part = f'"{schema}"."{table}"'
         elif db_type == 'mysql':
             schema_part = f'`{schema}`.`{table}`'
@@ -85,7 +88,7 @@ class QueryBuilder:
                     columns, column_transformations, db_type
                 )
             else:
-                if db_type == 'postgres':
+                if db_type == 'postgres' or db_type == 'oracle':
                     col_list = ', '.join(f'"{col}"' for col in columns)
                 elif db_type == 'mysql':
                     col_list = ', '.join(f'`{col}`' for col in columns)
@@ -108,7 +111,7 @@ class QueryBuilder:
         
         if order_by:
             # Format order_by columns with proper quoting for the database type
-            if db_type == 'postgres':
+            if db_type == 'postgres' or db_type == 'oracle':
                 # Split by comma, strip, and quote each column
                 order_cols = ', '.join(f'"{col.strip()}"' for col in order_by.split(','))
             elif db_type == 'mysql':
@@ -128,11 +131,14 @@ class QueryBuilder:
             elif limit is not None:
                 query += f' OFFSET 0 ROWS FETCH NEXT {limit} ROWS ONLY'
         else:
-            # PostgreSQL, MySQL, and ClickHouse all support LIMIT/OFFSET
-            if limit is not None:
-                query += f' LIMIT {limit}'
-            if offset is not None:
-                query += f' OFFSET {offset}'
+            # PostgreSQL, MySQL, and ClickHouse all support LIMIT/OFFSET.
+            # Oracle ADW uses OFFSET/FETCH at the connector layer, so we do
+            # NOT append LIMIT/OFFSET here for db_type == 'oracle'.
+            if db_type != 'oracle':
+                if limit is not None:
+                    query += f' LIMIT {limit}'
+                if offset is not None:
+                    query += f' OFFSET {offset}'
         
         return query
     
@@ -157,7 +163,7 @@ class QueryBuilder:
         """
         db_type = QueryBuilder.get_db_type(connector)
         
-        if db_type == 'postgres':
+        if db_type == 'postgres' or db_type == 'oracle':
             schema_part = f'"{schema}"."{table}"'
         elif db_type == 'mysql':
             schema_part = f'`{schema}`.`{table}`'
@@ -213,7 +219,7 @@ class QueryBuilder:
         db_type = QueryBuilder.get_db_type(connector)
         
         # Build schema.table identifier
-        if db_type == 'postgres':
+        if db_type == 'postgres' or db_type == 'oracle':
             schema_part = f'"{schema}"."{table}"'
             col_identifier = lambda c: f'"{c}"'
         elif db_type == 'mysql':
@@ -262,7 +268,7 @@ class QueryBuilder:
         # Add ORDER BY
         if order_by:
             # Format order_by columns
-            if db_type == 'postgres':
+            if db_type == 'postgres' or db_type == 'oracle':
                 order_cols = ', '.join(f'"{col.strip()}"' for col in order_by.split(','))
             elif db_type == 'mysql':
                 order_cols = ', '.join(f'`{col.strip()}`' for col in order_by.split(','))
@@ -306,6 +312,10 @@ class QueryBuilder:
                 elif db_type == 'clickhouse':
                     # ClickHouse uses toDateTime() for timestamp conversion
                     return f"toDateTime('{escaped}')"
+                elif db_type == 'oracle':
+                    # For Oracle we rely on implicit conversion based on column type;
+                    # avoid PostgreSQL-style casts or ClickHouse functions.
+                    return f"'{escaped}'"
                 else:
                     return f"'{escaped}'"
         else:
@@ -339,7 +349,7 @@ class QueryBuilder:
         
         db_type = QueryBuilder.get_db_type(connector)
         
-        if db_type == 'postgres':
+        if db_type == 'postgres' or db_type == 'oracle':
             schema_part = f'"{schema}"."{table}"'
             col = f'"{column}"'
         elif db_type == 'mysql':
@@ -475,6 +485,10 @@ class QueryBuilder:
         # Replace PostgreSQL-style quotes (") with target database quotes
         if db_type == 'postgres':
             # Replace backticks and brackets with double quotes
+            where_clause = re.sub(r'`([^`]+)`', r'"\1"', where_clause)  # `col` -> "col"
+            where_clause = re.sub(r'\[([^\]]+)\]', r'"\1"', where_clause)  # [col] -> "col"
+        elif db_type == 'oracle':
+            # Oracle uses double quotes for identifiers, same normalization as PostgreSQL
             where_clause = re.sub(r'`([^`]+)`', r'"\1"', where_clause)  # `col` -> "col"
             where_clause = re.sub(r'\[([^\]]+)\]', r'"\1"', where_clause)  # [col] -> "col"
         elif db_type == 'mysql':

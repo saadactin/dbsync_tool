@@ -3,11 +3,15 @@ Constants used throughout the application
 """
 
 # Database type choices
+# NOTE: When adding new database backends, update DB_TYPES, DEFAULT_PORTS,
+# and CONNECTION_STRING_TEMPLATES so they can be surfaced consistently in
+# forms, views, and tests.
 DB_TYPES = [
     ('postgres', 'PostgreSQL'),
     ('mysql', 'MySQL'),
     ('sqlserver', 'SQL Server'),
-    ('clickhouse', 'ClickHouse'),  # NEW
+    ('clickhouse', 'ClickHouse'),
+    ('oracle_adw', 'Oracle ADW'),
 ]
 
 DB_TYPE_CHOICES = DB_TYPES
@@ -17,7 +21,9 @@ DEFAULT_PORTS = {
     'postgres': 5432,
     'mysql': 3306,
     'sqlserver': 1433,
-    'clickhouse': 9000,  # NEW - Native protocol port (HTTP is 8123)
+    'clickhouse': 9000,  # Native protocol port (HTTP is 8123)
+    # Oracle Autonomous Data Warehouse typically uses TCPS on 1522
+    'oracle_adw': 1522,
 }
 
 # Connection string templates (for reference, not used directly)
@@ -25,7 +31,11 @@ CONNECTION_STRING_TEMPLATES = {
     'postgres': 'postgresql://{username}:{password}@{host}:{port}/{database}',
     'mysql': 'mysql+connector://{username}:{password}@{host}:{port}/{database}',
     'sqlserver': 'mssql+pyodbc://{username}:{password}@{host}:{port}/{database}?driver=ODBC+Driver+17+for+SQL+Server',
-    'clickhouse': 'clickhouse://{username}:{password}@{host}:{port}/{database}',  # NEW
+    'clickhouse': 'clickhouse://{username}:{password}@{host}:{port}/{database}',
+    # Reference JDBC-style template for Oracle ADW. The actual Python connector
+    # will use an oracledb DSN built from host/port/service name, but we keep
+    # this here to clarify the expected pieces of the JDBC string.
+    'oracle_adw': 'jdbc:oracle:thin:@//{host}:{port}/{database}',
 }
 
 # Sync job status choices
@@ -72,6 +82,42 @@ TYPE_MAPPING_MODULE = 'core.type_mapping'
 # API type choices
 API_TYPE_CHOICES = [
     ('zoho_crm', 'Zoho CRM'),
+    ('sap_b1', 'SAP Business One'),
+]
+
+# SAP API region mappings (for future multi-region/custom server support)
+SAP_API_REGIONS = {
+    'default': 'Custom SAP Server',
+}
+
+# SAP Business One document types / endpoints for sync (full list – all 25)
+# Endpoints match SAP B1 Service Layer OData entity names; id_field used for incremental sync.
+SAP_DOCUMENT_TYPES = [
+    {"name": "Journal Entries", "endpoint": "JournalEntries", "id_field": "JdtNum"},
+    {"name": "Chart Of Accounts", "endpoint": "ChartOfAccounts", "id_field": "Code"},
+    {"name": "Item Master", "endpoint": "Items", "id_field": "ItemCode"},
+    {"name": "Capitalization", "endpoint": "AssetCapitalization", "id_field": "DocEntry"},
+    {"name": "Manual Depreciation", "endpoint": "AssetDepreciation", "id_field": "DocEntry"},
+    {"name": "Sales Orders", "endpoint": "Orders", "id_field": "DocEntry"},
+    {"name": "Delivery Notes", "endpoint": "DeliveryNotes", "id_field": "DocEntry"},
+    {"name": "A/R Invoices", "endpoint": "Invoices", "id_field": "DocEntry"},
+    {"name": "Returns", "endpoint": "Returns", "id_field": "DocEntry"},
+    {"name": "A/R Credit Memos", "endpoint": "CreditNotes", "id_field": "DocEntry"},
+    {"name": "Purchase Orders", "endpoint": "PurchaseOrders", "id_field": "DocEntry"},
+    {"name": "GRPO", "endpoint": "PurchaseDeliveryNotes", "id_field": "DocEntry"},
+    {"name": "Goods Return", "endpoint": "PurchaseReturns", "id_field": "DocEntry"},
+    {"name": "A/P Invoices", "endpoint": "PurchaseInvoices", "id_field": "DocEntry"},
+    {"name": "A/P Credit Memos", "endpoint": "PurchaseCreditNotes", "id_field": "DocEntry"},
+    {"name": "BP Master", "endpoint": "BusinessPartners", "id_field": "CardCode"},
+    {"name": "Incoming Payments", "endpoint": "IncomingPayments", "id_field": "DocEntry"},
+    {"name": "Outgoing Payments", "endpoint": "VendorPayments", "id_field": "DocEntry"},
+    {"name": "Items - Warehouse", "endpoint": "ItemsWarehouse", "id_field": "ItemCode"},
+    {"name": "Goods Receipt", "endpoint": "InventoryGenEntry", "id_field": "DocEntry"},
+    {"name": "Goods Issue", "endpoint": "InventoryGenExit", "id_field": "DocEntry"},
+    {"name": "Inventory Transfer", "endpoint": "StockTransfers", "id_field": "DocEntry"},
+    {"name": "Bill Of Materials", "endpoint": "BillOfMaterials", "id_field": "ItemCode"},
+    {"name": "Production Orders", "endpoint": "ProductionOrders", "id_field": "DocEntry"},
+    {"name": "Price Lists", "endpoint": "PriceLists", "id_field": "PriceListNo"},
 ]
 
 # Connection category choices (for future use)

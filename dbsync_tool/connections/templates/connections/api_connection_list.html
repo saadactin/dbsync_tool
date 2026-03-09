@@ -64,9 +64,21 @@
                                                             {{ connection.name }}
                                                         </a>
                                                     </td>
-                                                    <td>{{ connection.api_domain }}</td>
                                                     <td>
-                                                        {% if connection.selected_modules %}
+                                                        {% if connection.api_type == 'sap_b1' %}
+                                                            <span class="text-muted small">{{ connection.sap_base_url|truncatechars:40|default:"—" }}</span>
+                                                        {% else %}
+                                                            {{ connection.api_domain }}
+                                                        {% endif %}
+                                                    </td>
+                                                    <td>
+                                                        {% if connection.api_type == 'sap_b1' %}
+                                                            {% if connection.sap_endpoints %}
+                                                                <span class="badge bg-info">{{ connection.sap_endpoints|length }} endpoint{{ connection.sap_endpoints|length|pluralize }}</span>
+                                                            {% else %}
+                                                                <span class="text-muted">No endpoints selected</span>
+                                                            {% endif %}
+                                                        {% elif connection.selected_modules %}
                                                             <span class="badge bg-info">{{ connection.selected_modules|length }} module{{ connection.selected_modules|length|pluralize }}</span>
                                                         {% else %}
                                                             <span class="text-muted">No modules selected</span>

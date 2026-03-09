@@ -1,6 +1,8 @@
 """
 Tests for connection views
 """
+import json
+from unittest.mock import patch, MagicMock
 from django.test import TestCase, Client
 from django.contrib.auth.models import User
 from django.urls import reverse
@@ -171,4 +173,68 @@ class ConnectionViewTests(TestCase):
         )
         response = self.client.post(reverse('connections:delete', args=[other_conn.id]))
         self.assertEqual(response.status_code, 404)
+
+
+class ConnectionTestAndListDatabasesViewTests(TestCase):
+    """Tests for test-and-list-databases endpoint (create form test connection)."""
+
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(
+            username='testuser',
+            password='testpass123',
+            email='test@example.com'
+        )
+        from accounts.models import UserProfile, Role
+        UserProfile.objects.update_or_create(
+            user=self.user,
+            defaults={'role': Role.ADMIN, 'tenant': None}
+        )
+        self.url = reverse('connections:test_and_list_databases')
+
+    def _post(self, data):
+        self.client.login(username='testuser', password='testpass123')
+        return self.client.post(
+            self.url,
+            data=json.dumps(data),
+            content_type='application/json',
+        )
+
+    def test_oracle_adw_requires_service_name(self):
+        """Oracle ADW without service name (database_name) must return 400."""
+        resp = self._post({
+            'db_type': 'oracle_adw',
+            'host': 'adb.ap-mumbai-1.oraclecloud.com',
+            'port': 1522,
+            'username': 'admin',
+            'password': 'secret',
+        })
+        self.assertEqual(resp.status_code, 400)
+        body = json.loads(resp.content)
+        self.assertFalse(body.get('success', True))
+        self.assertIn('Service name', body.get('message', ''))
+
+    def test_oracle_adw_test_connection_receives_service_name(self):
+        """Oracle ADW test uses database_name (service name) when building connector."""
+        with patch('connections.views.get_connector') as mock_get_connector:
+            mock_conn = MagicMock()
+            mock_conn.list_databases.return_value = ['ge3cf99f4b998df_ktestadw_high.adb.oraclecloud.com']
+            mock_get_connector.return_value = mock_conn
+
+            resp = self._post({
+                'db_type': 'oracle_adw',
+                'host': 'adb.ap-mumbai-1.oraclecloud.com',
+                'port': 1522,
+                'username': 'admin',
+                'password': 'KOEL$$adw1234',
+                'database_name': 'ge3cf99f4b998df_ktestadw_high.adb.oraclecloud.com',
+            })
+            self.assertEqual(resp.status_code, 200)
+            mock_get_connector.assert_called_once()
+            call_kw = mock_get_connector.call_args[1]
+            self.assertEqual(call_kw.get('database_name'), 'ge3cf99f4b998df_ktestadw_high.adb.oraclecloud.com')
+            self.assertEqual(call_kw.get('db_type'), 'oracle_adw')
+            body = json.loads(resp.content)
+            self.assertTrue(body.get('success'))
+            self.assertIn('ge3cf99f4b998df_ktestadw_high.adb.oraclecloud.com', body.get('databases', []))
 

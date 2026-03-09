@@ -318,6 +318,9 @@ class SyncExecutionLog(models.Model):
     rows_inserted = models.BigIntegerField(default=0)
     batch_number = models.IntegerField(default=0)
     error_message = models.TextField(null=True, blank=True)
+    # Verification summary for post-migration accuracy (e.g. "Rows: 100/100, Perfect accuracy: Yes")
+    # Used by job/execution UI; Oracle-inclusive flows surface expected/actual counts and perfect_accuracy here.
+    verification_summary = models.TextField(null=True, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     
@@ -357,6 +360,12 @@ class APISyncState(models.Model):
     records_synced = models.BigIntegerField(
         default=0,
         help_text="Total number of records synced for this module"
+    )
+    record_hashes = models.JSONField(
+        default=dict,
+        null=True,
+        blank=True,
+        help_text="Map of record_id -> hash for hash-based change detection (e.g. SAP incremental)"
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -244,7 +244,7 @@ class IncrementalSyncExecutor:
         self._validate_incremental_column(schema, table, incremental_column)
         
         # Determine target schema
-        # For databases WITH schemas (PostgreSQL, SQL Server): always use target's default schema
+        # For databases WITH schemas (PostgreSQL, SQL Server, Oracle): use target's default schema/owner
         # For databases WITHOUT schemas (MySQL, ClickHouse): use database name directly
         if self.table_handler.target_db_type == 'mysql':
             # MySQL: Use database name directly (no schema concept)
@@ -254,15 +254,31 @@ class IncrementalSyncExecutor:
             # ClickHouse: Use database name directly (ClickHouse uses databases, not schemas)
             # Map source schema to ClickHouse database name
             target_schema = schema  # Use source schema as ClickHouse database name
-            logger.info(f"Mapping source schema '{schema}' to ClickHouse database '{target_schema}' (ClickHouse uses databases, not schemas)")
+            logger.info(
+                f"Mapping source schema '{schema}' to ClickHouse database '{target_schema}' "
+                f"(ClickHouse uses databases, not schemas)"
+            )
         elif self.table_handler.target_db_type == 'postgres':
             # PostgreSQL: Always use 'public' schema regardless of source schema
             target_schema = 'public'
-            logger.info(f"Mapping source schema '{schema}' to PostgreSQL schema 'public' (all tables in public schema)")
+            logger.info(
+                f"Mapping source schema '{schema}' to PostgreSQL schema 'public' "
+                f"(all tables in public schema)"
+            )
         elif self.table_handler.target_db_type == 'sqlserver':
             # SQL Server: Always use 'dbo' schema regardless of source schema
             target_schema = 'dbo'
-            logger.info(f"Mapping source schema '{schema}' to SQL Server schema 'dbo' (all tables in dbo schema)")
+            logger.info(
+                f"Mapping source schema '{schema}' to SQL Server schema 'dbo' "
+                f"(all tables in dbo schema)"
+            )
+        elif self.table_handler.target_db_type == 'oracle':
+            # Oracle: use connected user as schema/owner so tables are in their schema
+            target_schema = (getattr(self.target_connector, 'username', None) or '').strip().upper() or schema
+            logger.info(
+                f"Mapping source schema '{schema}' to Oracle owner '{target_schema}' "
+                f"(connected user)"
+            )
         else:
             target_schema = schema
         
@@ -506,6 +522,7 @@ class IncrementalSyncExecutor:
                 )
             
             # NEW: Post-migration data accuracy verification
+            accuracy_report = None
             if transformation_where or column_transformations:
                 # Only verify if transformations were applied
                 if expected_row_count is not None:
@@ -532,6 +549,18 @@ class IncrementalSyncExecutor:
                             f"Zero data loss, zero inaccuracy, 100% accuracy verified"
                         )
             
+            # Surface verification summary for job/execution UI (Oracle-inclusive)
+            if accuracy_report is not None:
+                exp = accuracy_report.get('expected_row_count')
+                act = accuracy_report.get('actual_row_count')
+                perfect = accuracy_report.get('perfect_accuracy', False)
+                mismatched = len(accuracy_report.get('mismatched_rows', []))
+                parts = [f"Rows: {act}/{exp}" if exp is not None and act is not None else f"Rows inserted: {total_rows_inserted}"]
+                parts.append("Perfect accuracy: Yes" if perfect else "Perfect accuracy: No")
+                if mismatched > 0:
+                    parts.append(f"Mismatched rows: {mismatched}")
+                log.verification_summary = "; ".join(parts)
+            
             # Mark log as completed
             log.status = 'completed'
             log.completed_at = timezone.now()
@@ -543,8 +572,16 @@ class IncrementalSyncExecutor:
             )
             
         except Exception as e:
+            try:
+                source_db = QueryBuilder.get_db_type(self.source_connector)
+                target_db = QueryBuilder.get_db_type(self.target_connector)
+                db_context = f" [Source: {source_db}, Target: {target_db}]"
+                oracle_note = " Oracle ADW:" if (source_db == 'oracle' or target_db == 'oracle') else ""
+            except Exception:
+                db_context = ""
+                oracle_note = ""
             log.status = 'failed'
-            log.error_message = str(e)
+            log.error_message = f"{oracle_note}{str(e)}{db_context}"[:5000]
             log.completed_at = timezone.now()
             log.save()
             

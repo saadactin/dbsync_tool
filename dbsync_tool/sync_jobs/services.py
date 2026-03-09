@@ -111,6 +111,8 @@ class DashboardService:
             'active': user_api_connections.filter(is_active=True).count(),
             'inactive': user_api_connections.filter(is_active=False).count(),
             'by_type': list(user_api_connections.values('api_type').annotate(count=Count('id'))),
+            'zoho': user_api_connections.filter(api_type='zoho_crm').count(),
+            'sap': user_api_connections.filter(api_type='sap_b1').count(),
         }
         
         # API sync job statistics

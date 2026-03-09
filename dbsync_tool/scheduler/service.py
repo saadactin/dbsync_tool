@@ -53,6 +53,19 @@ def start_scheduler():
             # Load all existing scheduled jobs
             load_all_jobs()
             
+            # Add periodic checker: runs every minute to trigger due jobs
+            # This ensures jobs run at their scheduled times even if per-job triggers miss,
+            # and picks up jobs created before the scheduler was ready
+            _scheduler.add_job(
+                func=trigger_due_jobs,
+                trigger=IntervalTrigger(minutes=1),
+                id='trigger_due_jobs_checker',
+                name='Check and trigger due sync jobs',
+                replace_existing=True,
+                misfire_grace_time=60,
+            )
+            logger.info("Added periodic due-jobs checker (every 1 minute)")
+            
             # Register shutdown handler
             atexit.register(stop_scheduler)
             

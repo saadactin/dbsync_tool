@@ -189,13 +189,20 @@
                 <div class="info-row">
                     <div class="info-label">Source Connection:</div>
                     <div class="info-value">
-                        <strong>{{ job.source_connection.name }}</strong>
-                        <br>
-                        <small class="text-muted">
-                            {{ job.source_connection.get_db_type_display }} - 
-                            {{ job.source_connection.host }}:{{ job.source_connection.port }} / 
-                            {{ job.source_connection.database_name }}
-                        </small>
+                        {% if job.source_connection_type == 'api' and job.source_api_connection %}
+                            <strong>{{ job.source_api_connection.name }}</strong>
+                            <span class="text-muted">({{ job.source_api_connection.get_api_type_display }})</span>
+                            <br>
+                            <a href="{% url 'connections:api_detail' job.source_api_connection.id %}" class="small">View API connection</a>
+                        {% else %}
+                            <strong>{{ job.source_connection.name }}</strong>
+                            <br>
+                            <small class="text-muted">
+                                {{ job.source_connection.get_db_type_display }} - 
+                                {{ job.source_connection.host }}:{{ job.source_connection.port }} / 
+                                {{ job.source_connection.database_name }}
+                            </small>
+                        {% endif %}
                     </div>
                 </div>
                 <div class="info-row">
@@ -212,16 +219,22 @@
                 </div>
             </div>
             
-            <!-- Tables Included -->
+            <!-- Tables / Endpoints Included -->
             <div class="info-card">
-                <h5 class="mb-3">Tables Included ({{ job.tables.count }})</h5>
+                <h5 class="mb-3">
+                    {% if job.source_connection_type == 'api' and job.source_api_connection and job.source_api_connection.api_type == 'sap_b1' %}
+                        SAP Endpoints Included ({{ job.tables.count }})
+                    {% else %}
+                        Tables Included ({{ job.tables.count }})
+                    {% endif %}
+                </h5>
                 {% if job.tables.all %}
                     <div class="table-responsive">
                         <table class="table table-sm">
                             <thead>
                                 <tr>
                                     <th>Schema</th>
-                                    <th>Table Name</th>
+                                    <th>{% if job.source_connection_type == 'api' and job.source_api_connection and job.source_api_connection.api_type == 'sap_b1' %}Endpoint{% else %}Table Name{% endif %}</th>
                                     <th>Incremental Column</th>
                                     <th>Status</th>
                                 </tr>

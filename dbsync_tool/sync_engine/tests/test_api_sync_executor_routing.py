@@ -22,10 +22,10 @@ class APISyncExecutorRoutingTests(TestCase):
             password='testpass123'
         )
         
-        # Create user profile
-        UserProfile.objects.create(
+        # Create user profile (get_or_create in case signal already created one)
+        UserProfile.objects.get_or_create(
             user=self.user,
-            role=Role.ADMIN
+            defaults={'role': Role.ADMIN}
         )
         
         # Create database connection
@@ -41,7 +41,7 @@ class APISyncExecutorRoutingTests(TestCase):
             tenant=self.user
         )
         
-        # Create API connection
+        # Create API connection (Zoho)
         self.api_conn = APIConnection.objects.create(
             name='Test Zoho API',
             api_type='zoho_crm',
@@ -54,8 +54,19 @@ class APISyncExecutorRoutingTests(TestCase):
             tenant=self.user,
             created_by=self.user
         )
+        # Create SAP API connection for SAP routing test
+        self.sap_api_conn = APIConnection.objects.create(
+            name='Test SAP API',
+            api_type='sap_b1',
+            sap_base_url='https://sap.example.com/b1s/v1',
+            sap_username={'UserName': 'test', 'CompanyDB': 'SBODEMO'},
+            sap_password='test',
+            sap_endpoints=['JournalEntries'],
+            tenant=self.user,
+            created_by=self.user
+        )
         
-        # Create sync job with API source
+        # Create sync job with API source (Zoho)
         self.api_job = SyncJob.objects.create(
             name='Test API Job',
             source_api_connection=self.api_conn,
@@ -66,7 +77,17 @@ class APISyncExecutorRoutingTests(TestCase):
             created_by=self.user,
             tenant=self.user
         )
-        
+        # Create sync job with SAP API source
+        self.sap_job = SyncJob.objects.create(
+            name='Test SAP Job',
+            source_api_connection=self.sap_api_conn,
+            source_connection_type='api',
+            target_connection=self.target_conn,
+            sync_type='full',
+            status='pending',
+            created_by=self.user,
+            tenant=self.user
+        )
         # Create sync job with database source
         self.db_job = SyncJob.objects.create(
             name='Test DB Job',
@@ -79,34 +100,44 @@ class APISyncExecutorRoutingTests(TestCase):
             tenant=self.user
         )
     
-    @patch('sync_engine.executor.ZohoConnector')
+    @patch('sync_engine.executor.get_api_connector')
     @patch('sync_engine.executor.get_connector')
     @patch('sync_engine.executor.APISyncExecutor')
-    def test_executor_routes_to_api_sync_for_api_source(self, mock_api_executor, mock_get_connector, mock_zoho):
-        """Test executor routes to APISyncExecutor for API source"""
-        # Mock API connector
+    def test_executor_routes_to_api_sync_for_api_source(self, mock_api_executor, mock_get_connector, mock_get_api_connector):
+        """Test executor routes to APISyncExecutor for Zoho API source"""
         mock_api_connector = Mock()
-        mock_zoho.return_value = mock_api_connector
-        
-        # Mock target connector
+        mock_get_api_connector.return_value = mock_api_connector
         mock_target_connector = Mock()
         mock_get_connector.return_value = mock_target_connector
-        
-        # Mock API executor
         mock_executor_instance = Mock()
         mock_api_executor.return_value = mock_executor_instance
-        
-        # Create executor and execute
+
         executor = SyncExecutor(self.api_job)
         executor.execute()
-        
-        # Verify ZohoConnector was created
-        mock_zoho.assert_called_once_with(self.api_conn)
-        
-        # Verify APISyncExecutor was created and executed
+
+        mock_get_api_connector.assert_called_once_with(self.api_conn)
         mock_api_executor.assert_called_once()
         mock_executor_instance.execute.assert_called_once()
     
+    @patch('sync_engine.executor.get_api_connector')
+    @patch('sync_engine.executor.get_connector')
+    @patch('sync_engine.executor.SAPSyncExecutor')
+    def test_executor_routes_to_sap_sync_for_sap_api_source(self, mock_sap_executor, mock_get_connector, mock_get_api_connector):
+        """Test executor routes to SAPSyncExecutor for SAP B1 API source"""
+        mock_api_connector = Mock()
+        mock_get_api_connector.return_value = mock_api_connector
+        mock_target_connector = Mock()
+        mock_get_connector.return_value = mock_target_connector
+        mock_executor_instance = Mock()
+        mock_sap_executor.return_value = mock_executor_instance
+
+        executor = SyncExecutor(self.sap_job)
+        executor.execute()
+
+        mock_get_api_connector.assert_called_once_with(self.sap_api_conn)
+        mock_sap_executor.assert_called_once()
+        mock_executor_instance.execute.assert_called_once()
+
     @patch('sync_engine.executor.get_connector')
     @patch('sync_engine.executor.FullSyncExecutor')
     def test_executor_routes_to_full_sync_for_database_source(self, mock_full_executor, mock_get_connector):

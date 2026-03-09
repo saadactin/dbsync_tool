@@ -44,10 +44,17 @@
                             <th>Port:</th>
                             <td>{{ connection.port }}</td>
                         </tr>
+                        {% if connection.db_type == 'oracle_adw' %}
+                        <tr>
+                            <th>Service Name:</th>
+                            <td>{{ connection.database_name }}</td>
+                        </tr>
+                        {% else %}
                         <tr>
                             <th>Database Name:</th>
                             <td>{{ connection.database_name }}</td>
                         </tr>
+                        {% endif %}
                         <tr>
                             <th>Username:</th>
                             <td>{{ connection.username }}</td>
@@ -75,6 +82,11 @@
                             <td>{{ connection.created_by.username }}</td>
                         </tr>
                     </table>
+                    {% if connection.db_type == 'oracle_adw' %}
+                    <p class="text-muted small mb-0">
+                        Can be used as source or target in sync jobs. Type mapping ensures lossless migration to/from Postgres, MySQL, and ClickHouse.
+                    </p>
+                    {% endif %}
                 </div>
             </div>
 

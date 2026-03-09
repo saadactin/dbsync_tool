@@ -111,9 +111,20 @@ def job_list(request):
         from accounts.services.tenant_service import TenantService
         # Get jobs with proper relationships
         jobs = SyncJob.objects.all().select_related(
-            'source_connection', 'target_connection', 'schedule', 'tenant'
+            'source_connection', 'source_api_connection', 'target_connection', 'schedule', 'tenant'
         ).prefetch_related('tables')
         jobs = TenantService.get_queryset_for_user(jobs, request.user)
+        
+        # Filter by source type (database, api, zoho_crm, sap_b1)
+        source_type_filter = request.GET.get('source_type', '')
+        if source_type_filter == 'database':
+            jobs = jobs.filter(source_connection_type='database')
+        elif source_type_filter == 'api':
+            jobs = jobs.filter(source_connection_type='api')
+        elif source_type_filter == 'zoho_crm':
+            jobs = jobs.filter(source_connection_type='api', source_api_connection__api_type='zoho_crm')
+        elif source_type_filter == 'sap_b1':
+            jobs = jobs.filter(source_connection_type='api', source_api_connection__api_type='sap_b1')
         
         # Filter by status
         status_filter = request.GET.get('status', '')
@@ -158,6 +169,7 @@ def job_list(request):
         context = {
             'jobs': jobs_list,
             'page_title': 'Sync Jobs',
+            'source_type_filter': source_type_filter,
             'status_filter': status_filter,
             'sync_type_filter': sync_type_filter,
             'search_query': search_query,
@@ -180,6 +192,7 @@ def job_list(request):
         return render(request, 'sync_jobs/job_list.html', {
             'jobs': [],
             'page_title': 'Sync Jobs',
+            'source_type_filter': '',
             'status_filter': '',
             'sync_type_filter': '',
             'search_query': '',
@@ -195,6 +208,7 @@ def job_list(request):
         return render(request, 'sync_jobs/job_list.html', {
             'jobs': [],
             'page_title': 'Sync Jobs',
+            'source_type_filter': '',
             'status_filter': '',
             'sync_type_filter': '',
             'search_query': '',
@@ -395,15 +409,32 @@ def create_job_step2_view(request):
             user_api_conns = TenantService.get_queryset_for_user(api_qs, request.user)
             source_api_connection = user_api_conns.get(id=source_api_connection_id)
             
-            # Get available modules from API connection
-            available_modules = source_api_connection.selected_modules or []
+            # Branch on API type: Zoho (modules) vs SAP (endpoints)
+            is_sap = getattr(source_api_connection, 'api_type', None) == 'sap_b1'
+            available_modules = []
+            available_endpoints = []
+            if is_sap:
+                sap_endpoints_raw = source_api_connection.sap_endpoints or []
+                for e in sap_endpoints_raw:
+                    if isinstance(e, dict):
+                        ep = e.get('endpoint') or e.get('name')
+                        name = e.get('name') or ep or str(e)
+                        if ep:
+                            available_endpoints.append({'endpoint': ep, 'name': name})
+                    else:
+                        ep = str(e)
+                        available_endpoints.append({'endpoint': ep, 'name': ep})
+            else:
+                available_modules = source_api_connection.selected_modules or []
             
             context = {
                 'source_connection_type': 'api',
                 'source_api_connection': source_api_connection,
                 'available_modules': available_modules,
+                'available_endpoints': available_endpoints,
+                'is_sap': is_sap,
                 'job_name': job_name,
-                'page_title': 'Select Modules - Step 2',
+                'page_title': 'Select Modules - Step 2' if not is_sap else 'Select SAP Endpoints - Step 2',
             }
             
             return render(request, 'sync_jobs/create_step2.html', context)
@@ -631,29 +662,45 @@ def create_job_step2_submit(request):
     source_connection_type = request.session.get('sync_job_source_connection_type', 'database')
     
     if source_connection_type == 'api':
-        # API source - handle module selection
-        selected_modules = request.POST.getlist('selected_modules')
-        
-        if not selected_modules:
-            messages.error(request, 'Please select at least one module.')
+        # API source - handle module (Zoho) or endpoint (SAP) selection
+        source_api_connection_id = request.session.get('sync_job_source_api_connection_id')
+        if not source_api_connection_id:
+            messages.error(request, 'Please complete Step 1 first.')
             return redirect('sync_jobs:create_step2')
-        
-        # Store selected modules in session (format similar to tables for consistency)
-        modules = []
-        for module_name in selected_modules:
-            modules.append({
-                'schema_name': 'api',  # Use 'api' as schema for API sources
-                'table_name': module_name  # Module name becomes table name
-            })
-        
-        # Store in session for step 3
-        request.session['sync_job_selected_tables'] = modules  # Reuse same session key
-        
-        # API sources don't have transformations (for now)
-        request.session['sync_job_table_transformations'] = {}
-        
-        # Redirect to step 3
-        messages.success(request, f'Selected {len(modules)} module(s).')
+        from accounts.services.tenant_service import TenantService
+        try:
+            api_qs = APIConnection.objects.filter(is_active=True)
+            user_api_conns = TenantService.get_queryset_for_user(api_qs, request.user)
+            source_api_connection = user_api_conns.get(id=source_api_connection_id)
+        except APIConnection.DoesNotExist:
+            messages.error(request, 'Source API connection not found or inactive.')
+            return redirect('sync_jobs:create_step2')
+
+        is_sap = getattr(source_api_connection, 'api_type', None) == 'sap_b1'
+        if is_sap:
+            selected_endpoints = request.POST.getlist('selected_endpoints')
+            if not selected_endpoints:
+                messages.error(request, 'Please select at least one endpoint.')
+                return redirect('sync_jobs:create_step2')
+            tables = [
+                {'schema_name': 'sap_api', 'table_name': endpoint_name}
+                for endpoint_name in selected_endpoints
+            ]
+            request.session['sync_job_selected_tables'] = tables
+            request.session['sync_job_table_transformations'] = {}
+            messages.success(request, f'Selected {len(tables)} endpoint(s).')
+        else:
+            selected_modules = request.POST.getlist('selected_modules')
+            if not selected_modules:
+                messages.error(request, 'Please select at least one module.')
+                return redirect('sync_jobs:create_step2')
+            modules = [
+                {'schema_name': 'api', 'table_name': module_name}
+                for module_name in selected_modules
+            ]
+            request.session['sync_job_selected_tables'] = modules
+            request.session['sync_job_table_transformations'] = {}
+            messages.success(request, f'Selected {len(modules)} module(s).')
         return redirect('sync_jobs:create_step3')
     
     else:
@@ -1140,7 +1187,7 @@ def job_detail(request, job_id):
     from accounts.services.tenant_service import TenantService
     try:
         jobs_qs = SyncJob.objects.select_related(
-            'source_connection', 'target_connection', 'schedule', 'created_by', 'tenant'
+            'source_connection', 'source_api_connection', 'target_connection', 'schedule', 'created_by', 'tenant'
         ).prefetch_related('tables', 'checkpoints')
         user_jobs = TenantService.get_queryset_for_user(jobs_qs, request.user)
         job = user_jobs.get(id=job_id)

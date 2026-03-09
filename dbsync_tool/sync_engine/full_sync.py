@@ -13,6 +13,7 @@ from sync_engine.transformation_engine import TransformationEngine
 from sync_engine.transformation_validator import TransformationValidator
 from sync_engine.exceptions import TableSyncError
 from core.constants import DEFAULT_BATCH_SIZE, MAX_BATCH_SIZE, MIN_BATCH_SIZE
+from core.type_mapping import map_source_to_oracle_type, normalize_data_type
 import logging
 
 logger = logging.getLogger(__name__)
@@ -357,17 +358,19 @@ class FullSyncExecutor:
     
     def sync_table(self, job_table: SyncJobTable):
         """
-        Sync a single table using full sync
-        
+        Full sync one table: destination table ends up with exactly the same rows as source (no duplicates).
+
         Steps:
         1. Create execution log entry
         2. Ensure target table exists (create if not)
-        3. Truncate target table
+        3. Truncate target table (remove all existing rows so re-runs replace, not append)
         4. Get primary key for ordering
         5. Build source query
         6. Fetch batches from source
-        7. Insert batches into target
+        7. Insert all batches into target
         8. Update execution log
+
+        Result: target row set equals source row set; no duplicates.
         """
         schema = job_table.schema_name
         table = job_table.table_name
@@ -396,6 +399,10 @@ class FullSyncExecutor:
             # SQL Server: Always use 'dbo' schema regardless of source schema
             target_schema = 'dbo'
             logger.info(f"Mapping source schema '{schema}' to SQL Server schema 'dbo' (all tables in dbo schema)")
+        elif self.table_handler.target_db_type == 'oracle':
+            # Oracle: use connected user as schema/owner so tables are in their schema (avoid ORA-01918)
+            target_schema = (getattr(self.target_connector, 'username', None) or '').strip().upper() or schema
+            logger.info(f"Mapping source schema '{schema}' to Oracle owner '{target_schema}' (connected user)")
         else:
             target_schema = schema
         
@@ -420,24 +427,23 @@ class FullSyncExecutor:
                 logger.error(f"Table creation error for {schema}.{table}: {error_msg}", exc_info=True)
                 raise TableSyncError(error_msg) from e
             
-            # Truncate target table (use target_schema for MySQL)
+            # Truncate target table so destination holds exactly source data (no duplicates).
+            # Full sync = replace all rows: truncate then insert.
             try:
-                # Check if table exists before truncating (some databases fail if table doesn't exist)
                 try:
                     target_tables = self.target_connector.get_tables(target_schema)
-                    # For case-insensitive databases (like SQL Server), check case-insensitively
                     target_db_type = self.table_handler.target_db_type
-                    if target_db_type == 'sqlserver':
-                        table_exists = any(t.lower() == table.lower() for t in target_tables)
+                    # Oracle and SQL Server return uppercase/case-insensitive names; match case-insensitively.
+                    if target_db_type in ('sqlserver', 'oracle'):
+                        table_exists = any(t.upper() == table.upper() for t in target_tables)
                     else:
                         table_exists = table in target_tables
-                    
                     if table_exists:
                         self.target_connector.truncate_table(target_schema, table)
+                        logger.debug(f"Truncated {target_schema}.{table} for full sync replace")
                     else:
                         logger.info(f"Target table {target_schema}.{table} does not exist yet, skipping truncate")
                 except Exception as check_error:
-                    # If we can't check table existence, try truncate anyway (might work)
                     logger.debug(f"Could not check table existence: {check_error}, trying truncate anyway")
                     self.target_connector.truncate_table(target_schema, table)
             except Exception as e:
@@ -559,12 +565,30 @@ class FullSyncExecutor:
                 
                 # Insert batch (use target_schema for MySQL)
                 try:
-                    self.target_connector.bulk_insert(
-                        schema=target_schema,
-                        table=table,
-                        columns=column_names,
-                        rows=batch
-                    )
+                    bulk_kwargs = {
+                        "schema": target_schema,
+                        "table": table,
+                        "columns": column_names,
+                        "rows": batch,
+                    }
+                    # Oracle: pass target column types for BLOB/CLOB value normalization
+                    if self.table_handler.target_db_type == "oracle":
+                        target_types = []
+                        for col in columns:
+                            _, max_len, prec, scale = normalize_data_type(
+                                col.data_type, self.table_handler.source_db_type
+                            )
+                            target_types.append(
+                                map_source_to_oracle_type(
+                                    col.data_type,
+                                    self.table_handler.source_db_type,
+                                    max_length=col.max_length or max_len,
+                                    precision=prec,
+                                    scale=scale,
+                                )
+                            )
+                        bulk_kwargs["target_column_types"] = target_types
+                    self.target_connector.bulk_insert(**bulk_kwargs)
                     total_rows_inserted += len(batch)
                 except Exception as e:
                     raise TableSyncError(
@@ -593,7 +617,13 @@ class FullSyncExecutor:
                 if len(batch) < self.batch_size:
                     break
             
+            # Ensure log has final counts (e.g. empty table: 0 rows)
+            log.rows_fetched = total_rows_fetched
+            log.rows_inserted = total_rows_inserted
+            log.batch_number = batch_number
+            
             # NEW: Post-migration data accuracy verification
+            accuracy_report = None
             if job_table.transformation_query or job_table.column_transformations:
                 # Only verify if transformations were applied
                 if expected_row_count is not None:
@@ -635,6 +665,18 @@ class FullSyncExecutor:
                             f"Zero data loss, zero inaccuracy, 100% accuracy verified"
                         )
             
+            # Surface verification summary for job/execution UI (Oracle-inclusive; no credentials)
+            if accuracy_report is not None:
+                exp = accuracy_report.get('expected_row_count')
+                act = accuracy_report.get('actual_row_count')
+                perfect = accuracy_report.get('perfect_accuracy', False)
+                mismatched = len(accuracy_report.get('mismatched_rows', []))
+                parts = [f"Rows: {act}/{exp}" if exp is not None and act is not None else f"Rows inserted: {total_rows_inserted}"]
+                parts.append("Perfect accuracy: Yes" if perfect else "Perfect accuracy: No")
+                if mismatched > 0:
+                    parts.append(f"Mismatched rows: {mismatched}")
+                log.verification_summary = "; ".join(parts)
+            
             # Mark log as completed
             log.status = 'completed'
             log.completed_at = timezone.now()
@@ -646,9 +688,17 @@ class FullSyncExecutor:
             )
             
         except Exception as e:
-            # Capture full error details including traceback
+            # Capture error details; include DB types for Oracle-inclusive flows (no credentials/DSN)
             import traceback
-            error_details = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            try:
+                source_db = QueryBuilder.get_db_type(self.source_connector)
+                target_db = QueryBuilder.get_db_type(self.target_connector)
+                db_context = f" [Source: {source_db}, Target: {target_db}]"
+                oracle_note = " Oracle ADW:" if (source_db == 'oracle' or target_db == 'oracle') else ""
+            except Exception:
+                db_context = ""
+                oracle_note = ""
+            error_details = f"{oracle_note}{str(e)}{db_context}\n\nTraceback:\n{traceback.format_exc()}"
             
             log.status = 'failed'
             log.error_message = error_details[:5000]  # Limit to 5000 chars for database field
@@ -704,8 +754,13 @@ class FullSyncExecutor:
                 accuracy_report['row_count_match'] = (actual_count == expected_row_count)
                 
                 if actual_count != expected_row_count:
+                    source_db = QueryBuilder.get_db_type(self.source_connector)
+                    target_db = QueryBuilder.get_db_type(self.target_connector)
+                    db_context = ""
+                    if source_db == 'oracle' or target_db == 'oracle':
+                        db_context = " (Oracle ADW involved; schema=%s, table=%s)" % (target_schema, job_table.table_name)
                     error_msg = (
-                        f"Row count mismatch: expected {expected_row_count}, got {actual_count}"
+                        f"Row count mismatch: expected {expected_row_count}, got {actual_count}{db_context}"
                     )
                     logger.error(f"Post-migration verification failed for {source_schema}.{job_table.table_name}: {error_msg}")
                     return False, error_msg, accuracy_report
@@ -750,7 +805,7 @@ class FullSyncExecutor:
                                 order_by_part = order_by_part[:limit_idx].strip()
                             # Unquote to get raw column names
                             db_type = QueryBuilder.get_db_type(self.source_connector)
-                            if db_type == 'postgres':
+                            if db_type == 'postgres' or db_type == 'oracle':
                                 cols = [col.strip().strip('"') for col in order_by_part.split(',')]
                             elif db_type == 'mysql':
                                 cols = [col.strip().strip('`') for col in order_by_part.split(',')]

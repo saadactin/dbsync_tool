@@ -136,12 +136,16 @@ class MySQLConnector(DBConnector):
             cursor.close()
             raise TableNotFoundError(f"Table {schema}.{table} does not exist")
         
-        # Get column information
+        # Get column information. Use COLUMN_TYPE for full type (e.g. decimal(10,2), enum('a','b'), bit(64))
+        # so type mapping can handle precision/scale/length and enum/set/spatial correctly.
         cursor.execute("""
             SELECT 
                 COLUMN_NAME,
+                COLUMN_TYPE,
                 DATA_TYPE,
                 CHARACTER_MAXIMUM_LENGTH,
+                NUMERIC_PRECISION,
+                NUMERIC_SCALE,
                 IS_NULLABLE,
                 COLUMN_KEY,
                 COLUMN_DEFAULT
@@ -152,10 +156,12 @@ class MySQLConnector(DBConnector):
         
         columns = []
         for row in cursor.fetchall():
-            col_name, data_type, max_length, is_nullable, col_key, default_value = row
+            col_name, column_type, data_type, max_length, num_precision, num_scale, is_nullable, col_key, default_value = row
+            # Use full COLUMN_TYPE (e.g. decimal(10,2), enum('a','b')) when available for accurate mapping
+            use_type = (column_type or data_type or "").strip()
             columns.append(ColumnInfo(
                 name=col_name,
-                data_type=data_type,
+                data_type=use_type,
                 is_nullable=is_nullable == 'YES',
                 is_primary_key=col_key == 'PRI',
                 max_length=max_length,

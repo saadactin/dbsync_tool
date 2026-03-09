@@ -9,9 +9,36 @@
     {% if object %}
     const TEST_CONNECTION_URL = "{% url 'connections:api_test' object.pk %}";
     const MODULES_URL = "{% url 'connections:api_modules' object.pk %}";
+    const IS_EDIT_MODE = true;
     {% else %}
     const TEST_CONNECTION_URL = "{% url 'connections:api_test_new' %}";
+    const IS_EDIT_MODE = false;
     {% endif %}
+    // SAP document types for endpoint selection (static list / fallback)
+    const SAP_DOCUMENT_TYPES = {{ sap_document_types|default:"[]"|safe }};
+
+    // Toggle API type fields when dropdown changes (so selecting SAP Business One shows SAP inputs)
+    function toggleApiTypeFields() {
+        var sel = document.getElementById('id_api_type');
+        var zohoBlock = document.getElementById('zoho-fields');
+        var sapBlock = document.getElementById('sap-fields');
+        var moduleSection = document.getElementById('module-selection-section');
+        var endpointSection = document.getElementById('endpoint-selection-section');
+        if (!sel || !zohoBlock || !sapBlock) return;
+        var isSap = (String(sel.value || '').trim() === 'sap_b1');
+        zohoBlock.style.display = isSap ? 'none' : 'block';
+        sapBlock.style.display = isSap ? 'block' : 'none';
+        if (moduleSection) moduleSection.style.display = isSap ? 'none' : 'block';
+        if (endpointSection) endpointSection.style.display = isSap ? 'block' : 'none';
+    }
+    document.addEventListener('DOMContentLoaded', function() {
+        toggleApiTypeFields();
+        var sel = document.getElementById('id_api_type');
+        if (sel) {
+            sel.addEventListener('change', toggleApiTypeFields);
+            sel.addEventListener('input', toggleApiTypeFields);
+        }
+    });
 </script>
 <script src="{% static 'js/api_connection_form.js' %}"></script>
 {% endblock %}
@@ -22,7 +49,7 @@
         <div class="col-md-8 offset-md-2">
             <div class="card">
                 <div class="card-header d-flex justify-content-between align-items-center">
-                    <h3>{% if object %}Edit{% else %}Create{% endif %} API Connection (Zoho CRM)</h3>
+                    <h3>{% if object %}Edit{% else %}Create{% endif %} API Connection</h3>
                     <div>
                         <a href="{% url 'connections:create' %}" class="btn btn-outline-primary btn-sm">
                             <span>🗄️</span> Create Database Connection Instead
@@ -39,7 +66,7 @@
                         {% endfor %}
                     {% endif %}
 
-                    <form method="post" id="api-connection-form">
+                    <form method="post" id="api-connection-form" action="{% if object %}{% url 'connections:api_update' object.pk %}{% else %}{% url 'connections:api_create' %}{% endif %}">
                         {% csrf_token %}
                         
                         <div class="mb-3">
@@ -59,52 +86,86 @@
                             {% endif %}
                         </div>
 
-                        <div class="mb-3">
-                            <label for="{{ form.client_id.id_for_label }}" class="form-label">Client ID *</label>
-                            {{ form.client_id }}
-                            {% if form.client_id.errors %}
-                                <div class="text-danger small">{{ form.client_id.errors }}</div>
-                            {% endif %}
-                            <small class="form-text text-muted">OAuth Client ID from Zoho</small>
+                        <div id="zoho-fields" class="api-type-fields">
+                            <div class="mb-3">
+                                <label for="{{ form.client_id.id_for_label }}" class="form-label">Client ID *</label>
+                                {{ form.client_id }}
+                                {% if form.client_id.errors %}
+                                    <div class="text-danger small">{{ form.client_id.errors }}</div>
+                                {% endif %}
+                                <small class="form-text text-muted">OAuth Client ID from Zoho</small>
+                            </div>
+                            <div class="mb-3">
+                                <label for="{{ form.client_secret.id_for_label }}" class="form-label">Client Secret {% if not object %}*{% endif %}</label>
+                                {{ form.client_secret }}
+                                {% if form.client_secret.errors %}
+                                    <div class="text-danger small">{{ form.client_secret.errors }}</div>
+                                {% endif %}
+                                <small class="form-text text-muted">{{ form.client_secret.help_text }}</small>
+                            </div>
+                            <div class="mb-3">
+                                <label for="{{ form.refresh_token.id_for_label }}" class="form-label">Refresh Token {% if not object %}*{% endif %}</label>
+                                {{ form.refresh_token }}
+                                {% if form.refresh_token.errors %}
+                                    <div class="text-danger small">{{ form.refresh_token.errors }}</div>
+                                {% endif %}
+                                <small class="form-text text-muted">{{ form.refresh_token.help_text }}</small>
+                            </div>
+                            <div class="mb-3">
+                                <label for="{{ form.api_domain.id_for_label }}" class="form-label">API Domain *</label>
+                                {{ form.api_domain }}
+                                {% if form.api_domain.errors %}
+                                    <div class="text-danger small">{{ form.api_domain.errors }}</div>
+                                {% endif %}
+                                <small class="form-text text-muted">Zoho API domain based on your region</small>
+                            </div>
+                            <div class="mb-3">
+                                <label for="{{ form.token_url.id_for_label }}" class="form-label">Token URL *</label>
+                                {{ form.token_url }}
+                                {% if form.token_url.errors %}
+                                    <div class="text-danger small">{{ form.token_url.errors }}</div>
+                                {% endif %}
+                                <small class="form-text text-muted">OAuth token URL (auto-populated based on API domain - read-only)</small>
+                            </div>
                         </div>
 
-                        <div class="mb-3">
-                            <label for="{{ form.client_secret.id_for_label }}" class="form-label">Client Secret {% if not object %}*{% endif %}</label>
-                            {{ form.client_secret }}
-                            {% if form.client_secret.errors %}
-                                <div class="text-danger small">{{ form.client_secret.errors }}</div>
-                            {% endif %}
-                            <small class="form-text text-muted">{{ form.client_secret.help_text }}</small>
-                        </div>
-
-                        <div class="mb-3">
-                            <label for="{{ form.refresh_token.id_for_label }}" class="form-label">Refresh Token {% if not object %}*{% endif %}</label>
-                            {{ form.refresh_token }}
-                            {% if form.refresh_token.errors %}
-                                <div class="text-danger small">{{ form.refresh_token.errors }}</div>
-                            {% endif %}
-                            <small class="form-text text-muted">{{ form.refresh_token.help_text }}</small>
-                        </div>
-
-                        <div class="mb-3">
-                            <label for="{{ form.api_domain.id_for_label }}" class="form-label">API Domain *</label>
-                            {{ form.api_domain }}
-                            {% if form.api_domain.errors %}
-                                <div class="text-danger small">{{ form.api_domain.errors }}</div>
-                            {% endif %}
-                            <small class="form-text text-muted">Zoho API domain based on your region</small>
-                        </div>
-
-                        <div class="mb-3">
-                            <label for="{{ form.token_url.id_for_label }}" class="form-label">Token URL *</label>
-                            {{ form.token_url }}
-                            {% if form.token_url.errors %}
-                                <div class="text-danger small">{{ form.token_url.errors }}</div>
-                            {% endif %}
-                            <small class="form-text text-muted">OAuth token URL (auto-populated based on API domain - read-only)</small>
+                        <div id="sap-fields" class="api-type-fields" style="display: none;">
+                            <div class="mb-3">
+                                <label for="{{ form.sap_base_url.id_for_label }}" class="form-label" title="Service Layer URL, e.g. https://server:50000/b1s/v2/">SAP Base URL *</label>
+                                {{ form.sap_base_url }}
+                                {% if form.sap_base_url.errors %}
+                                    <div class="text-danger small">{{ form.sap_base_url.errors }}</div>
+                                {% endif %}
+                                <small class="form-text text-muted">{{ form.sap_base_url.help_text }}</small>
+                            </div>
+                            <div class="mb-3">
+                                <label for="{{ form.sap_user_name.id_for_label }}" class="form-label" title="SAP B1 user login name (from B1 admin)">SAP User Name *</label>
+                                {{ form.sap_user_name }}
+                                {% if form.sap_user_name.errors %}
+                                    <div class="text-danger small">{{ form.sap_user_name.errors }}</div>
+                                {% endif %}
+                                <small class="form-text text-muted">{{ form.sap_user_name.help_text }}</small>
+                            </div>
+                            <div class="mb-3">
+                                <label for="{{ form.sap_company_db.id_for_label }}" class="form-label" title="Company database name (e.g. SBODEMO)">SAP Company DB *</label>
+                                {{ form.sap_company_db }}
+                                {% if form.sap_company_db.errors %}
+                                    <div class="text-danger small">{{ form.sap_company_db.errors }}</div>
+                                {% endif %}
+                                <small class="form-text text-muted">{{ form.sap_company_db.help_text }}</small>
+                            </div>
+                            <div class="mb-3">
+                                <label for="{{ form.sap_password.id_for_label }}" class="form-label" title="SAP user password (stored encrypted; never logged)">SAP Password {% if not object %}*{% endif %}</label>
+                                {{ form.sap_password }}
+                                {% if form.sap_password.errors %}
+                                    <div class="text-danger small">{{ form.sap_password.errors }}</div>
+                                {% endif %}
+                                <small class="form-text text-muted">{{ form.sap_password.help_text }}</small>
+                            </div>
                         </div>
 
                         {{ form.selected_modules }}
+                        {{ form.sap_endpoints }}
 
                         <div class="mb-3" id="test-connection-section">
                             <button type="button" id="test-connection-btn" class="btn btn-info">
@@ -121,6 +182,22 @@
                             </div>
                             <small class="form-text text-muted">Select one or more modules to sync. At least one module must be selected.</small>
                             <div id="module-selection-error" class="text-danger small mt-1" style="display: none;"></div>
+                        </div>
+
+                        <div class="mb-3" id="endpoint-selection-section" style="display: none;">
+                            <label class="form-label">Select SAP Endpoints to Sync *</label>
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" id="sap-select-all-cb" title="Select or deselect all endpoints">
+                                <label class="form-check-label fw-semibold" for="sap-select-all-cb">Select all</label>
+                            </div>
+                            <div id="endpoint-checkboxes" class="border rounded p-3" style="max-height: 300px; overflow-y: auto;">
+                                <!-- Endpoint checkboxes will be populated here -->
+                            </div>
+                            <small class="form-text text-muted">Select one or more SAP document types to sync. At least one must be selected.</small>
+                            <div id="endpoint-selection-error" class="text-danger small mt-1" style="display: none;"></div>
+                            {% if form.sap_endpoints.errors %}
+                                <div class="alert alert-danger mt-2 mb-0">{% for err in form.sap_endpoints.errors %}{{ err }}{% endfor %}</div>
+                            {% endif %}
                         </div>
 
                         <div class="mb-3 form-check">

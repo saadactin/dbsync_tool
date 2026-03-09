@@ -153,6 +153,20 @@
             </div>
         </div>
     </div>
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-primary">{{ stats.api_connections.zoho|default:0 }}</h3>
+                <p>Zoho API Connections</p>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card">
+                <h3 class="text-success">{{ stats.api_connections.sap|default:0 }}</h3>
+                <p>SAP API Connections</p>
+            </div>
+        </div>
+    </div>
     
     <!-- API Job Statistics -->
     {% if stats.api_jobs.total > 0 %}

@@ -9,22 +9,78 @@ document.addEventListener('DOMContentLoaded', function() {
     const databaseNameInput = document.getElementById('id_database_name');
     const databaseSelectionSection = document.getElementById('database-selection-section');
     const form = document.querySelector('form');
+    const databaseNameLabel = document.getElementById('database-name-label');
+    const databaseNameHelp = document.getElementById('database-name-help');
+    const oracleAdwHint = document.getElementById('oracle-adw-hint');
     
     const defaultPorts = {
         'postgres': '5432',
         'mysql': '3306',
         'sqlserver': '1433',
-        'clickhouse': '9000'
+        'clickhouse': '9000',
+        'oracle_adw': '1522'
     };
     
-    // Set default port based on database type
-    if (dbTypeSelect && portInput) {
-        dbTypeSelect.addEventListener('change', function() {
-            const selectedType = this.value;
-            if (selectedType in defaultPorts && !portInput.value) {
-                portInput.value = defaultPorts[selectedType];
+    function updateDbTypeUI() {
+        if (!dbTypeSelect) return;
+        const selectedType = dbTypeSelect.value;
+
+        // Set default port if empty and we know a default for this type
+        if (portInput && selectedType in defaultPorts && !portInput.value) {
+            portInput.value = defaultPorts[selectedType];
+        }
+
+        const isOracle = selectedType === 'oracle_adw';
+
+        // Toggle Oracle-specific hint
+        if (oracleAdwHint) {
+            oracleAdwHint.style.display = isOracle ? 'block' : 'none';
+        }
+
+        // Set or clear placeholders for Oracle
+        const hostInput = document.getElementById('id_host');
+        if (hostInput) {
+            hostInput.placeholder = isOracle ? 'adw-instance.region.tenant.oraclecloud.com' : '';
+            hostInput.title = isOracle ? 'Oracle ADW host from your cloud console or connection string.' : '';
+        }
+        if (portInput) {
+            portInput.placeholder = isOracle ? '1522' : '';
+        }
+        if (databaseNameInput) {
+            databaseNameInput.placeholder = isOracle ? 'mytpdb_high' : '';
+            databaseNameInput.title = isOracle ? 'Use the service name from your JDBC/connection string (e.g. mytpdb_high). Required for Oracle ADW.' : '';
+        }
+
+        // Adjust database/service name label & help text
+        if (databaseNameLabel) {
+            databaseNameLabel.textContent = isOracle
+                ? 'Service Name (Oracle ADW) *'
+                : 'Database Name *';
+        }
+        if (databaseNameHelp) {
+            if (isOracle) {
+                databaseNameHelp.textContent =
+                    'Use the Oracle ADW service name from your JDBC/connection string, e.g. mytpdb_high.';
+            } else {
+                databaseNameHelp.textContent =
+                    'Select a database from the list below after testing connection';
             }
-        });
+        }
+
+        // For Oracle ADW always show the Service Name field; on create form hide it for other types.
+        if (databaseNameField) {
+            databaseNameField.style.display = isOracle ? 'block' : (databaseNameField.dataset.createForm === 'true' ? 'none' : 'block');
+        }
+        if (databaseSelectionSection) {
+            databaseSelectionSection.style.display = isOracle ? 'none' : (databaseSelectionSection.style.display || 'none');
+        }
+    }
+
+    // Set default port and Oracle-specific UI based on database type
+    if (dbTypeSelect) {
+        dbTypeSelect.addEventListener('change', updateDbTypeUI);
+        // Initialize on load
+        updateDbTypeUI();
     }
     
     // Test connection and list databases (only for create mode)
@@ -37,12 +93,18 @@ document.addEventListener('DOMContentLoaded', function() {
             const port = document.getElementById('id_port').value.trim();
             const username = document.getElementById('id_username').value.trim();
             const password = document.getElementById('id_password').value;
+                const databaseName = databaseNameInput ? databaseNameInput.value.trim() : '';
             
             // Validate required fields
-            if (!name || !dbType || !host || !port || !username || !password) {
-                showTestMessage('Please fill in all required fields (Name, Database Type, Host, Port, Username, Password)', 'danger');
-                return;
-            }
+                if (!name || !dbType || !host || !port || !username || !password ||
+                    (dbType === 'oracle_adw' && !databaseName)) {
+                    if (dbType === 'oracle_adw' && !databaseName) {
+                        showTestMessage('Service name is required for Oracle ADW before testing the connection.', 'danger');
+                    } else {
+                        showTestMessage('Please fill in all required fields (Name, Database Type, Host, Port, Username, Password)', 'danger');
+                    }
+                    return;
+                }
             
             // Validate port
             const portNum = parseInt(port);
@@ -59,12 +121,16 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Prepare request data
             const requestData = {
+                    name: name,
                 db_type: dbType,
                 host: host,
                 port: portNum,
                 username: username,
-                password: password
+                    password: password
             };
+                if (databaseName) {
+                    requestData.database_name = databaseName;
+                }
             
             // Get CSRF token
             const csrfInput = document.querySelector('[name=csrfmiddlewaretoken]');
@@ -131,9 +197,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 } else {
                     showTestMessage(data.message || 'Connection test failed', 'danger');
-                    // Hide database selection if it was shown
                     databaseSelectionSection.style.display = 'none';
-                    if (databaseNameField) {
+                    // Keep Service Name field visible for Oracle ADW so user can correct it
+                    if (databaseNameField && (!dbTypeSelect || dbTypeSelect.value !== 'oracle_adw')) {
                         databaseNameField.style.display = 'none';
                     }
                 }
@@ -147,7 +213,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (testSpinner) testSpinner.classList.add('d-none');
                 showTestMessage('An error occurred while testing the connection: ' + error.message, 'danger');
                 if (databaseSelectionSection) databaseSelectionSection.style.display = 'none';
-                if (databaseNameField) {
+                if (databaseNameField && (!dbTypeSelect || dbTypeSelect.value !== 'oracle_adw')) {
                     databaseNameField.style.display = 'none';
                 }
             });

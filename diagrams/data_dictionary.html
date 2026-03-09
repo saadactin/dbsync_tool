@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DBSync Tool - Data Dictionary</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+
+        h1 {
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        h2 {
+            color: #2980b9;
+            margin-top: 40px;
+            margin-bottom: 15px;
+            border-left: 5px solid #3498db;
+            padding-left: 10px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background-color: white;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+            margin-bottom: 30px;
+        }
+
+        th,
+        td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        th {
+            background-color: #34495e;
+            color: white;
+            font-weight: 600;
+        }
+
+        tr:hover {
+            background-color: #f5f5f5;
+        }
+
+        a {
+            text-decoration: none;
+            color: #3498db;
+            font-weight: bold;
+            display: inline-block;
+            margin-bottom: 20px;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+
+<body>
+    <a href="project_diagrams.html">← Back to Index</a>
+    <h1>Data Dictionary / Table Structure</h1>
+
+    <h2>Connections Table</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Attribute Name</th>
+                <th>Data Type</th>
+                <th>Constraints</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>id</td>
+                <td>Integer</td>
+                <td>PK, Auto-increment</td>
+                <td>Unique identifier for the connection.</td>
+            </tr>
+            <tr>
+                <td>name</td>
+                <td>Varchar(100)</td>
+                <td>Not Null</td>
+                <td>Friendly name for the connection.</td>
+            </tr>
+            <tr>
+                <td>type</td>
+                <td>Varchar(50)</td>
+                <td>Not Null</td>
+                <td>Database type (PostgreSQL, MySQL, SQLServer, ClickHouse, Zoho).</td>
+            </tr>
+            <tr>
+                <td>host</td>
+                <td>Varchar(255)</td>
+                <td>Nullable</td>
+                <td>Hostname or IP address of the database server.</td>
+            </tr>
+            <tr>
+                <td>port</td>
+                <td>Integer</td>
+                <td>Nullable</td>
+                <td>Port number for the database connection.</td>
+            </tr>
+            <tr>
+                <td>username</td>
+                <td>Varchar(150)</td>
+                <td>Nullable</td>
+                <td>Database username.</td>
+            </tr>
+            <tr>
+                <td>password_encrypted</td>
+                <td>Text</td>
+                <td>Nullable</td>
+                <td>Encrypted database password.</td>
+            </tr>
+            <tr>
+                <td>database_name</td>
+                <td>Varchar(150)</td>
+                <td>Nullable</td>
+                <td>Name of the database/schema.</td>
+            </tr>
+            <tr>
+                <td>extra_params</td>
+                <td>JSON</td>
+                <td>Nullable</td>
+                <td>Additional connection parameters (e.g., SSL settings).</td>
+            </tr>
+            <tr>
+                <td>is_active</td>
+                <td>Boolean</td>
+                <td>Default True</td>
+                <td>Status of the connection configuration.</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h2>Sync Jobs Table</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Attribute Name</th>
+                <th>Data Type</th>
+                <th>Constraints</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>id</td>
+                <td>Integer</td>
+                <td>PK, Auto-increment</td>
+                <td>Unique identifier for the sync job.</td>
+            </tr>
+            <tr>
+                <td>name</td>
+                <td>Varchar(100)</td>
+                <td>Not Null</td>
+                <td>Name of the sync job.</td>
+            </tr>
+            <tr>
+                <td>source_connection_id</td>
+                <td>Integer</td>
+                <td>FK to Connections</td>
+                <td>Reference to the source database connection.</td>
+            </tr>
+            <tr>
+                <td>target_connection_id</td>
+                <td>Integer</td>
+                <td>FK to Connections</td>
+                <td>Reference to the target database connection.</td>
+            </tr>
+            <tr>
+                <td>sync_type</td>
+                <td>Varchar(20)</td>
+                <td>Not Null</td>
+                <td>Type of sync: 'Full' or 'Incremental'.</td>
+            </tr>
+            <tr>
+                <td>schedule_cron</td>
+                <td>Varchar(100)</td>
+                <td>Nullable</td>
+                <td>Cron expression for scheduled execution.</td>
+            </tr>
+            <tr>
+                <td>table_mapping</td>
+                <td>JSON</td>
+                <td>Not Null</td>
+                <td>Configuration of tables to sync and their mappings.</td>
+            </tr>
+            <tr>
+                <td>status</td>
+                <td>Varchar(20)</td>
+                <td>Default 'Idle'</td>
+                <td>Current operational status of the job.</td>
+            </tr>
+            <tr>
+                <td>last_run</td>
+                <td>DateTime</td>
+                <td>Nullable</td>
+                <td>Timestamp of the last execution.</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h2>Sync Executions Table</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Attribute Name</th>
+                <th>Data Type</th>
+                <th>Constraints</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>id</td>
+                <td>Integer</td>
+                <td>PK, Auto-increment</td>
+                <td>Unique identifier for the execution record.</td>
+            </tr>
+            <tr>
+                <td>job_id</td>
+                <td>Integer</td>
+                <td>FK to SyncJobs</td>
+                <td>Reference to the sync job being executed.</td>
+            </tr>
+            <tr>
+                <td>start_time</td>
+                <td>DateTime</td>
+                <td>Not Null</td>
+                <td>Timestamp when the execution started.</td>
+            </tr>
+            <tr>
+                <td>end_time</td>
+                <td>DateTime</td>
+                <td>Nullable</td>
+                <td>Timestamp when the execution finished.</td>
+            </tr>
+            <tr>
+                <td>status</td>
+                <td>Varchar(20)</td>
+                <td>Not Null</td>
+                <td>Outcome: 'Success', 'Failed', 'Partial'.</td>
+            </tr>
+            <tr>
+                <td>total_rows_processed</td>
+                <td>Integer</td>
+                <td>Default 0</td>
+                <td>Total number of rows processed across all tables.</td>
+            </tr>
+            <tr>
+                <td>log_file_path</td>
+                <td>Varchar(255)</td>
+                <td>Nullable</td>
+                <td>Path to the detailed execution log file.</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h2>Table Results Table</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Attribute Name</th>
+                <th>Data Type</th>
+                <th>Constraints</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>id</td>
+                <td>Integer</td>
+                <td>PK, Auto-increment</td>
+                <td>Unique identifier for the table result.</td>
+            </tr>
+            <tr>
+                <td>execution_id</td>
+                <td>Integer</td>
+                <td>FK to SyncExecutions</td>
+                <td>Reference to the parent execution.</td>
+            </tr>
+            <tr>
+                <td>table_name</td>
+                <td>Varchar(150)</td>
+                <td>Not Null</td>
+                <td>Name of the table that was synced.</td>
+            </tr>
+            <tr>
+                <td>status</td>
+                <td>Varchar(20)</td>
+                <td>Not Null</td>
+                <td>Outcome for this specific table.</td>
+            </tr>
+            <tr>
+                <td>rows_synced</td>
+                <td>Integer</td>
+                <td>Default 0</td>
+                <td>Number of rows successfully synced.</td>
+            </tr>
+            <tr>
+                <td>rows_failed</td>
+                <td>Integer</td>
+                <td>Default 0</td>
+                <td>Number of rows that failed to sync.</td>
+            </tr>
+            <tr>
+                <td>error_message</td>
+                <td>Text</td>
+                <td>Nullable</td>
+                <td>Error message if the table sync failed.</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h2>Users Table</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Attribute Name</th>
+                <th>Data Type</th>
+                <th>Constraints</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>id</td>
+                <td>Integer</td>
+                <td>PK, Auto-increment</td>
+                <td>Unique identifier for the user.</td>
+            </tr>
+            <tr>
+                <td>username</td>
+                <td>Varchar(150)</td>
+                <td>Unique, Not Null</td>
+                <td>User's login name.</td>
+            </tr>
+            <tr>
+                <td>email</td>
+                <td>Varchar(254)</td>
+                <td>Unique, Not Null</td>
+                <td>User's email address.</td>
+            </tr>
+            <tr>
+                <td>password_hash</td>
+                <td>Varchar(128)</td>
+                <td>Not Null</td>
+                <td>Securely hashed password.</td>
+            </tr>
+            <tr>
+                <td>role</td>
+                <td>Varchar(20)</td>
+                <td>Not Null</td>
+                <td>User role (SuperAdmin, Admin, Operator, Viewer).</td>
+            </tr>
+            <tr>
+                <td>is_active</td>
+                <td>Boolean</td>
+                <td>Default True</td>
+                <td>Designates whether this user should be treated as active.</td>
+            </tr>
+            <tr>
+                <td>date_joined</td>
+                <td>DateTime</td>
+                <td>Default Now</td>
+                <td>Timestamp when the user account was created.</td>
+            </tr>
+        </tbody>
+    </table>
+</body>
+
+</html>

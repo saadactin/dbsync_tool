@@ -109,10 +109,16 @@ TYPE_MAPPING: Dict[str, Dict[str, Dict[str, str]]] = {
     'mysql': {
         'postgres': {
             'INT': 'INTEGER',
+            'INTEGER': 'INTEGER',
             'BIGINT': 'BIGINT',
             'SMALLINT': 'SMALLINT',
             'TINYINT': 'SMALLINT',
             'MEDIUMINT': 'INTEGER',
+            'INT UNSIGNED': 'BIGINT',
+            'BIGINT UNSIGNED': 'NUMERIC(20)',
+            'SMALLINT UNSIGNED': 'INTEGER',
+            'TINYINT UNSIGNED': 'INTEGER',
+            'MEDIUMINT UNSIGNED': 'INTEGER',
             'INT AUTO_INCREMENT': 'SERIAL',
             'BIGINT AUTO_INCREMENT': 'BIGSERIAL',
             'VARCHAR': 'VARCHAR',
@@ -127,23 +133,45 @@ TYPE_MAPPING: Dict[str, Dict[str, Dict[str, str]]] = {
             'TIMESTAMP': 'TIMESTAMP',
             'YEAR': 'INTEGER',
             'BOOLEAN': 'BOOLEAN',
+            'BOOL': 'BOOLEAN',
             'TINYINT(1)': 'BOOLEAN',
             'DECIMAL': 'NUMERIC',
             'NUMERIC': 'NUMERIC',
             'DOUBLE': 'DOUBLE PRECISION',
+            'DOUBLE PRECISION': 'DOUBLE PRECISION',
+            'REAL': 'REAL',
             'FLOAT': 'REAL',
+            'BIT': 'BYTEA',
             'JSON': 'JSONB',
             'BLOB': 'BYTEA',
             'LONGBLOB': 'BYTEA',
             'MEDIUMBLOB': 'BYTEA',
             'TINYBLOB': 'BYTEA',
+            'BINARY': 'BYTEA',
+            'VARBINARY': 'BYTEA',
+            'ENUM': 'TEXT',
+            'SET': 'TEXT',
+            'GEOMETRY': 'BYTEA',
+            'POINT': 'BYTEA',
+            'LINESTRING': 'BYTEA',
+            'POLYGON': 'BYTEA',
+            'MULTIPOINT': 'BYTEA',
+            'MULTILINESTRING': 'BYTEA',
+            'MULTIPOLYGON': 'BYTEA',
+            'GEOMETRYCOLLECTION': 'BYTEA',
         },
         'sqlserver': {
             'INT': 'INT',
+            'INTEGER': 'INT',
             'BIGINT': 'BIGINT',
             'SMALLINT': 'SMALLINT',
             'TINYINT': 'TINYINT',
             'MEDIUMINT': 'INT',
+            'INT UNSIGNED': 'BIGINT',
+            'BIGINT UNSIGNED': 'BIGINT',
+            'SMALLINT UNSIGNED': 'INT',
+            'TINYINT UNSIGNED': 'TINYINT',
+            'MEDIUMINT UNSIGNED': 'INT',
             'INT AUTO_INCREMENT': 'INT IDENTITY(1,1)',
             'BIGINT AUTO_INCREMENT': 'BIGINT IDENTITY(1,1)',
             'VARCHAR': 'NVARCHAR',
@@ -158,23 +186,45 @@ TYPE_MAPPING: Dict[str, Dict[str, Dict[str, str]]] = {
             'TIMESTAMP': 'DATETIME2',
             'YEAR': 'INT',
             'BOOLEAN': 'BIT',
+            'BOOL': 'BIT',
             'TINYINT(1)': 'BIT',
             'DECIMAL': 'DECIMAL',
             'NUMERIC': 'NUMERIC',
             'DOUBLE': 'FLOAT',
+            'DOUBLE PRECISION': 'FLOAT',
+            'REAL': 'REAL',
             'FLOAT': 'REAL',
+            'BIT': 'VARBINARY(MAX)',
             'JSON': 'NVARCHAR(MAX)',
             'BLOB': 'VARBINARY(MAX)',
             'LONGBLOB': 'VARBINARY(MAX)',
             'MEDIUMBLOB': 'VARBINARY(MAX)',
             'TINYBLOB': 'VARBINARY(MAX)',
+            'BINARY': 'BINARY',
+            'VARBINARY': 'VARBINARY(MAX)',
+            'ENUM': 'NVARCHAR(MAX)',
+            'SET': 'NVARCHAR(MAX)',
+            'GEOMETRY': 'VARBINARY(MAX)',
+            'POINT': 'VARBINARY(MAX)',
+            'LINESTRING': 'VARBINARY(MAX)',
+            'POLYGON': 'VARBINARY(MAX)',
+            'MULTIPOINT': 'VARBINARY(MAX)',
+            'MULTILINESTRING': 'VARBINARY(MAX)',
+            'MULTIPOLYGON': 'VARBINARY(MAX)',
+            'GEOMETRYCOLLECTION': 'VARBINARY(MAX)',
         },
         'clickhouse': {
             'INT': 'Int32',
+            'INTEGER': 'Int32',
             'BIGINT': 'Int64',
             'SMALLINT': 'Int16',
             'TINYINT': 'Int8',
             'MEDIUMINT': 'Int32',
+            'INT UNSIGNED': 'UInt32',
+            'BIGINT UNSIGNED': 'UInt64',
+            'SMALLINT UNSIGNED': 'UInt16',
+            'TINYINT UNSIGNED': 'UInt8',
+            'MEDIUMINT UNSIGNED': 'UInt32',
             'INT AUTO_INCREMENT': 'Int32',
             'BIGINT AUTO_INCREMENT': 'Int64',
             'VARCHAR': 'String',
@@ -189,16 +239,32 @@ TYPE_MAPPING: Dict[str, Dict[str, Dict[str, str]]] = {
             'TIMESTAMP': 'DateTime',
             'YEAR': 'Int16',
             'BOOLEAN': 'UInt8',
+            'BOOL': 'UInt8',
             'TINYINT(1)': 'UInt8',
             'DECIMAL': 'Decimal',
             'NUMERIC': 'Decimal',
             'DOUBLE': 'Float64',
+            'DOUBLE PRECISION': 'Float64',
+            'REAL': 'Float32',
             'FLOAT': 'Float32',
+            'BIT': 'String',
             'JSON': 'String',
             'BLOB': 'String',
             'LONGBLOB': 'String',
             'MEDIUMBLOB': 'String',
             'TINYBLOB': 'String',
+            'BINARY': 'String',
+            'VARBINARY': 'String',
+            'ENUM': 'String',
+            'SET': 'String',
+            'GEOMETRY': 'String',
+            'POINT': 'String',
+            'LINESTRING': 'String',
+            'POLYGON': 'String',
+            'MULTIPOINT': 'String',
+            'MULTILINESTRING': 'String',
+            'MULTIPOLYGON': 'String',
+            'GEOMETRYCOLLECTION': 'String',
         },
     },
     'sqlserver': {
@@ -515,6 +581,314 @@ def map_data_type(
     
     return mapped_type
 
+
+def _normalize_with_overrides(
+    data_type: str,
+    max_length: Optional[int],
+    precision: Optional[int],
+    scale: Optional[int],
+) -> Tuple[str, Optional[int], Optional[int], Optional[int]]:
+    """
+    Helper to normalize a type string but prefer explicit precision/scale/length
+    passed by callers when available.
+    """
+    base_type, parsed_length, parsed_precision, parsed_scale = normalize_data_type(
+        data_type, db_type=""
+    )
+
+    final_length = max_length if max_length is not None else parsed_length
+    final_precision = precision if precision is not None else parsed_precision
+    final_scale = scale if scale is not None else parsed_scale
+
+    return base_type, final_length, final_precision, final_scale
+
+
+def map_oracle_to_target_type(
+    oracle_type: str,
+    target_db: str,
+    max_length: Optional[int] = None,
+    precision: Optional[int] = None,
+    scale: Optional[int] = None,
+) -> str:
+    """
+    Map an Oracle column type to a target database type (postgres/mysql/clickhouse)
+    with a strong bias towards non-lossy mappings.
+
+    This helper is intentionally Oracle-specific and is used by the sync engine
+    and table handler for Oracle-as-source flows. It does NOT rely on the generic
+    TYPE_MAPPING matrix to keep the Oracle rules explicit and auditable.
+    """
+    target_db = target_db.lower()
+    if target_db not in ("postgres", "mysql", "clickhouse"):
+        raise ValueError(f"Unsupported target_db for Oracle mapping: {target_db}")
+
+    base_type, eff_length, eff_precision, eff_scale = _normalize_with_overrides(
+        oracle_type, max_length, precision, scale
+    )
+    base_upper = base_type.upper()
+
+    # ---------- Unsupported Oracle types (fail early, no silent fallback) ----------
+    UNSUPPORTED_ORACLE_TYPES = ("LONG RAW", "RAW", "BFILE", "SDO_GEOMETRY")
+    if base_upper in UNSUPPORTED_ORACLE_TYPES:
+        raise ValueError(
+            f"Unsupported Oracle type for migration: {oracle_type}. "
+            "Use a supported type or exclude this column."
+        )
+
+    # ---------- Numeric ----------
+    if base_upper in ("NUMBER", "DECIMAL", "NUMERIC", "FLOAT", "BINARY_FLOAT", "BINARY_DOUBLE"):
+        # FLOAT / BINARY_* map to floating types; NUMBER/DECIMAL/NUMERIC map to exact numerics
+        if base_upper in ("FLOAT", "BINARY_FLOAT", "BINARY_DOUBLE"):
+            if target_db == "postgres":
+                return "DOUBLE PRECISION"
+            if target_db == "mysql":
+                return "DOUBLE"
+            return "Float64"  # clickhouse
+
+        # NUMBER family – preserve precision/scale where possible
+        p = eff_precision
+        s = eff_scale or 0
+
+        # Integer-like NUMBER
+        if s == 0 and (p is None or p <= 18):
+            if target_db == "postgres":
+                return "BIGINT"
+            if target_db == "mysql":
+                return "BIGINT"
+            return "Int64"
+
+        # High-precision or scaled NUMBER -> DECIMAL/NUMERIC
+        if target_db == "postgres":
+            if p is not None:
+                return f"NUMERIC({p},{s})" if s is not None else f"NUMERIC({p})"
+            return "NUMERIC"
+        if target_db == "mysql":
+            if p is not None:
+                return f"DECIMAL({p},{s})" if s is not None else f"DECIMAL({p})"
+            return "DECIMAL"
+        # clickhouse
+        if p is not None:
+            if s is not None:
+                return f"Decimal({p},{s})"
+            return f"Decimal({p})"
+        return "Decimal(38,10)"
+
+    # ---------- Character / LOB ----------
+    if base_upper in ("VARCHAR2", "NVARCHAR2", "CHAR", "NCHAR"):
+        length = eff_length or get_default_length(base_type, "oracle") or 255
+        # Avoid truncation by using TEXT-style types when lengths are large
+        if target_db == "postgres":
+            if length > 10_000:
+                return "TEXT"
+            return f"VARCHAR({length})"
+        if target_db == "mysql":
+            # MySQL VARCHAR upper bound depends on charset; use TEXT above a conservative threshold
+            if length > 16_000:
+                return "LONGTEXT"
+            return f"VARCHAR({length})"
+        # clickhouse
+        if length > 65535:
+            return "String"
+        return "String"
+
+    if base_upper in ("CLOB", "NCLOB", "LONG"):
+        if target_db == "postgres":
+            return "TEXT"
+        if target_db == "mysql":
+            return "LONGTEXT"
+        return "String"
+
+    # ---------- Temporal ----------
+    if base_upper in ("DATE", "TIMESTAMP", "TIMESTAMP WITH TIME ZONE", "TIMESTAMP WITH LOCAL TIME ZONE"):
+        if target_db == "postgres":
+            # Prefer timestamptz semantics; actual TZ normalization is handled at value level
+            return "TIMESTAMP"
+        if target_db == "mysql":
+            return "DATETIME"
+        return "DateTime"
+
+    # ---------- Binary ----------
+    if base_upper == "BLOB":
+        if target_db == "postgres":
+            return "BYTEA"
+        if target_db == "mysql":
+            return "LONGBLOB"
+        return "String"
+
+    # ---------- Fallback ----------
+    logger.warning(
+        "No explicit Oracle→%s mapping for type '%s', "
+        "falling back to large text representation to avoid data loss.",
+        target_db,
+        oracle_type,
+    )
+    if target_db == "postgres":
+        return "TEXT"
+    if target_db == "mysql":
+        return "LONGTEXT"
+    return "String"
+
+
+def map_source_to_oracle_type(
+    source_type: str,
+    source_db: str,
+    max_length: Optional[int] = None,
+    precision: Optional[int] = None,
+    scale: Optional[int] = None,
+) -> str:
+    """
+    Map a Postgres/MySQL/ClickHouse type to an Oracle column type.
+
+    This is used for Oracle-as-target flows. The goal is to always choose an
+    Oracle type that can represent the full range/precision of the source
+    column, even if that means using a wider NUMBER or CLOB.
+    """
+    source_db = source_db.lower()
+    if source_db not in ("postgres", "mysql", "clickhouse"):
+        raise ValueError(f"Unsupported source_db for Oracle mapping: {source_db}")
+
+    base_type, eff_length, eff_precision, eff_scale = _normalize_with_overrides(
+        source_type, max_length, precision, scale
+    )
+    base_upper = base_type.upper()
+
+    # ---------- Floating point (approximate) ----------
+    #
+    # Oracle NUMBER is an exact decimal type with max precision 38 and max
+    # magnitude about 1e126. MySQL DOUBLE can represent values up to ~1.7e308.
+    # Mapping DOUBLE/FLOAT to NUMBER will fail at insert-time for large values
+    # (DPY-4003: value cannot be represented as an Oracle number).
+    #
+    # Use Oracle binary floating types instead to preserve IEEE-754 ranges.
+    if base_upper in ("DOUBLE", "DOUBLE PRECISION"):
+        return "BINARY_DOUBLE"
+    if base_upper in ("FLOAT", "REAL"):
+        # In MySQL, FLOAT is 32-bit and DOUBLE is 64-bit. REAL is usually a
+        # synonym for DOUBLE unless REAL_AS_FLOAT is enabled; we still prefer a
+        # safe, wide representation in Oracle.
+        return "BINARY_FLOAT" if base_upper == "FLOAT" else "BINARY_DOUBLE"
+
+    # ---------- Numeric ----------
+    numeric_like = {
+        "INT",
+        "INT2",
+        "INT4",
+        "INT8",
+        "INTEGER",
+        "BIGINT",
+        "SMALLINT",
+        "TINYINT",
+        "MEDIUMINT",
+        "INT UNSIGNED",
+        "BIGINT UNSIGNED",
+        "SMALLINT UNSIGNED",
+        "TINYINT UNSIGNED",
+        "MEDIUMINT UNSIGNED",
+        "REAL",
+        "DOUBLE",
+        "DOUBLE PRECISION",
+        "FLOAT",
+        "DECIMAL",
+        "NUMERIC",
+    }
+    if base_upper in numeric_like:
+        # use precision/scale when provided, otherwise choose safe defaults
+        p = eff_precision
+        s = eff_scale or 0
+
+        if p is None:
+            # Pick a generous precision if original type had no explicit precision
+            # BIGINT UNSIGNED max 2^64-1 = 20 digits; Oracle NUMBER(20) required
+            if base_upper == "BIGINT UNSIGNED":
+                p, s = 20, 0
+            elif base_upper in ("BIGINT", "INT8"):
+                p, s = 19, 0
+            elif base_upper in ("INT", "INTEGER", "INT4", "MEDIUMINT", "INT UNSIGNED", "MEDIUMINT UNSIGNED"):
+                p, s = 10, 0
+            elif base_upper in ("SMALLINT", "INT2", "TINYINT", "SMALLINT UNSIGNED", "TINYINT UNSIGNED"):
+                p, s = 5, 0
+            elif base_upper in ("DECIMAL", "NUMERIC"):
+                p, s = 38, 10
+            else:
+                p, s = 38, 10
+
+        # Oracle NUMBER max precision is 38; use CLOB for higher precision (DPY-4003)
+        if p is not None and p > 38:
+            return "CLOB"
+
+        # Scale of 0 -> integer-like
+        if s == 0:
+            return f"NUMBER({p})"
+        return f"NUMBER({p},{s})"
+
+    # ---------- MySQL YEAR (1901-2155) ----------
+    if base_upper == "YEAR":
+        return "NUMBER(4)"
+
+    # ---------- MySQL BIT(n): store as BLOB for any n (MySQL returns bytes) ----------
+    if base_upper == "BIT":
+        return "BLOB"
+
+    # ---------- MySQL ENUM / SET: store as CLOB to preserve any length ----------
+    if base_upper in ("ENUM", "SET"):
+        return "CLOB"
+
+    # ---------- MySQL spatial types: store WKB as BLOB ----------
+    spatial_types = (
+        "GEOMETRY", "POINT", "LINESTRING", "POLYGON",
+        "MULTIPOINT", "MULTILINESTRING", "MULTIPOLYGON", "GEOMETRYCOLLECTION",
+    )
+    if base_upper in spatial_types:
+        return "BLOB"
+
+    # ---------- Character / Text ----------
+    char_like = {"CHAR", "NCHAR", "VARCHAR", "VARCHAR2", "NVARCHAR", "NVARCHAR2"}
+    text_like = {"TEXT", "LONGTEXT", "MEDIUMTEXT", "TINYTEXT", "JSON", "JSONB", "STRING"}
+
+    if base_upper in char_like:
+        length = eff_length or get_default_length(base_type, source_db) or 255
+        # Oracle VARCHAR2 max is 4000 (in bytes) for many setups; above that we should use CLOB
+        if length > 4000:
+            return "CLOB"
+        return f"VARCHAR2({length})"
+
+    if base_upper in text_like:
+        return "CLOB"
+
+    # ---------- Temporal ----------
+    # TIME: MySQL returns timedelta; we map to TIMESTAMP(6) and normalize timedelta->datetime in Oracle connector.
+    temporal = {
+        "TIMESTAMP",
+        "TIMESTAMPTZ",
+        "TIMESTAMP WITH TIME ZONE",
+        "TIMESTAMP WITHOUT TIME ZONE",
+        "DATETIME",
+        "DATE",
+        "TIME",
+        "DATEONLY",
+    }
+    if base_upper in temporal or "TIMESTAMP" in base_upper:
+        return "TIMESTAMP(6)"
+
+    # ---------- Binary ----------
+    binary_like = {"BYTEA", "BLOB", "LONGBLOB", "MEDIUMBLOB", "TINYBLOB", "VARBINARY", "BINARY"}
+    if base_upper in binary_like:
+        return "BLOB"
+
+    # ---------- Boolean ----------
+    if base_upper in ("BOOLEAN", "BOOL", "BIT", "TINYINT(1)"):
+        # Standardise on NUMBER(1) 0/1 representation
+        return "NUMBER(1)"
+
+    # ---------- Fallback ----------
+    logger.warning(
+        "No explicit %s→Oracle mapping for type '%s', "
+        "falling back to CLOB to avoid truncation.",
+        source_db,
+        source_type,
+    )
+    return "CLOB"
+
 def get_default_length(data_type: str, source_db: str) -> Optional[int]:
     """
     Get default length for data types that require it
@@ -546,12 +920,19 @@ def normalize_data_type(data_type: str, db_type: str) -> Tuple[str, Optional[int
     """
     data_type_upper = data_type.upper().strip()
     
+    # MySQL: int(11) unsigned -> base_type INT UNSIGNED for mapping
+    if db_type == 'mysql' and ' UNSIGNED' in data_type_upper:
+        data_type_upper = data_type_upper.replace(' UNSIGNED', '')  # strip for param parsing
+        unsigned_suffix = ' UNSIGNED'
+    else:
+        unsigned_suffix = ''
+    
     # Extract base type
     if '(' in data_type_upper:
-        base_type = data_type_upper.split('(')[0].strip()
+        base_type = data_type_upper.split('(')[0].strip() + unsigned_suffix
         params = data_type_upper.split('(')[1].split(')')[0].strip()
     else:
-        base_type = data_type_upper
+        base_type = data_type_upper.strip() + unsigned_suffix
         params = None
     
     max_length = None
@@ -559,21 +940,25 @@ def normalize_data_type(data_type: str, db_type: str) -> Tuple[str, Optional[int
     scale = None
     
     if params:
-        # Check if it's numeric (precision,scale) or string (length)
-        if ',' in params:
-            # Numeric type with precision and scale
+        # ENUM('a','b') and SET('x','y') have quoted params — do not parse as numbers
+        if base_type in ('ENUM', 'SET') or ("'" in params or '"' in params):
+            # Use params length as rough max_length for VARCHAR mapping if needed
+            max_length = min(len(params), 4000) if params else None
+        elif ',' in params:
+            # Numeric type with precision and scale (e.g. decimal(10,2), float(7,4))
             parts = params.split(',')
-            try:
-                precision = int(parts[0].strip())
-                scale = int(parts[1].strip())
-            except ValueError:
-                pass
+            if parts and parts[0].strip().isdigit():
+                try:
+                    precision = int(parts[0].strip())
+                    scale = int(parts[1].strip()) if len(parts) > 1 and parts[1].strip().isdigit() else None
+                except (ValueError, IndexError):
+                    pass
         else:
-            # String type with length
-            try:
-                max_length = int(params.strip())
-            except ValueError:
-                pass
-    
+            # Single numeric param: length or bit size (e.g. varchar(255), bit(64))
+            if params.strip().isdigit():
+                try:
+                    max_length = int(params.strip())
+                except ValueError:
+                    pass
     return (base_type, max_length, precision, scale)
 

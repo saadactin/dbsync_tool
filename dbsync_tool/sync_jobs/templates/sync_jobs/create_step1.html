@@ -121,11 +121,15 @@
                             <select class="form-select" id="source_connection_type_select" name="source_connection_type" required>
                                 <option value="">-- Select Source Type --</option>
                                 <option value="database" {% if selected_source_type == 'database' %}selected{% endif %}>Database Connection</option>
-                                <option value="api" {% if selected_source_type == 'api' %}selected{% endif %}>API Connection (Zoho)</option>
+                                <option value="api" {% if selected_source_type == 'api' %}selected{% endif %}>API Connection</option>
                             </select>
                             <input type="hidden" name="source_connection_type" id="source_connection_type" value="{{ selected_source_type|default:'' }}">
                         </div>
                         
+                        <!-- Oracle as source hint (shown when Oracle ADW is selected as source) -->
+                        <div class="alert alert-info py-2 small mb-3" id="oracle-source-hint" style="display: none;">
+                            Choose a stable incremental column (e.g. TIMESTAMP or numeric) for incremental sync to avoid gaps or duplicates.
+                        </div>
                         <!-- Database Connections Dropdown -->
                         <div class="mb-3" id="source-db-connections-container" style="display: {% if selected_source_type == 'database' %}block{% else %}none{% endif %};">
                             <label for="source_db_connection" class="form-label"><strong>Database Connection *</strong></label>
@@ -179,6 +183,10 @@
                         <h5 class="card-title mb-3">Target Connection *</h5>
                         <p class="text-muted mb-3">Select the database connection where data will be written to.</p>
                         
+                        <!-- Oracle as target hint (shown when Oracle ADW is selected as target) -->
+                        <div class="alert alert-info py-2 small mb-3" id="oracle-target-hint" style="display: none;">
+                            Target tables will be created with safe types (no truncation). Job fails early if any column cannot be mapped safely.
+                        </div>
                         {% if db_connections %}
                             <div class="mb-3">
                                 <label for="target_connection" class="form-label"><strong>Database Connection *</strong></label>
@@ -227,6 +235,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const sourceConnectionTypeHidden = document.getElementById('source_connection_type');
     const targetConnectionSelect = document.getElementById('target_connection');
     const nextBtn = document.getElementById('next-btn');
+    const oracleSourceHint = document.getElementById('oracle-source-hint');
+    const oracleTargetHint = document.getElementById('oracle-target-hint');
     
     // Handle source connection type selection
     if (sourceTypeSelect) {
@@ -265,7 +275,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Function to update disabled state based on selected database types
     function updateDisabledConnections() {
         // Get selected source connection
-        const sourceType = sourceConnectionTypeHidden.value;
+        const sourceType = sourceConnectionTypeHidden ? sourceConnectionTypeHidden.value : '';
         let selectedSourceId = null;
         let selectedSourceDbType = null;
         
@@ -327,6 +337,15 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Re-validate form after disabling
         validateForm();
+
+        // Show/hide Oracle-specific hints
+        if (oracleSourceHint) {
+            const showSourceHint = sourceType === 'database' && selectedSourceDbType === 'oracle_adw';
+            oracleSourceHint.style.display = showSourceHint ? 'block' : 'none';
+        }
+        if (oracleTargetHint && selectedTargetDbType) {
+            oracleTargetHint.style.display = selectedTargetDbType === 'oracle_adw' ? 'block' : 'none';
+        }
     }
     
     // Hidden field for source connection (used for form submission)
@@ -380,6 +399,28 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initial update of disabled connections
     updateDisabledConnections();
+
+    // Initial Oracle hints (in case of pre-selected values)
+    function refreshOracleHints() {
+        const sourceType = sourceConnectionTypeHidden ? sourceConnectionTypeHidden.value : '';
+        let selectedSourceDbType = null;
+        if (sourceType === 'database' && sourceDbSelect && sourceDbSelect.value) {
+            const opt = sourceDbSelect.options[sourceDbSelect.selectedIndex];
+            selectedSourceDbType = opt ? opt.dataset.dbType : null;
+        }
+        let selectedTargetDbType = null;
+        if (targetConnectionSelect && targetConnectionSelect.value) {
+            const opt = targetConnectionSelect.options[targetConnectionSelect.selectedIndex];
+            selectedTargetDbType = opt ? opt.dataset.dbType : null;
+        }
+        if (oracleSourceHint) {
+            oracleSourceHint.style.display = (sourceType === 'database' && selectedSourceDbType === 'oracle_adw') ? 'block' : 'none';
+        }
+        if (oracleTargetHint) {
+            oracleTargetHint.style.display = selectedTargetDbType === 'oracle_adw' ? 'block' : 'none';
+        }
+    }
+    refreshOracleHints();
     
     // Form validation
     function validateForm() {

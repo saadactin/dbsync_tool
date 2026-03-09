@@ -23,6 +23,9 @@ class TestQueryBuilder(unittest.TestCase):
         
         self.clickhouse_connector = Mock()
         self.clickhouse_connector.__class__.__name__ = 'ClickHouseConnector'
+
+        self.oracle_connector = Mock()
+        self.oracle_connector.__class__.__name__ = 'OracleADWConnector'
     
     def test_get_db_type_postgres(self):
         """Test database type detection for PostgreSQL"""
@@ -43,6 +46,11 @@ class TestQueryBuilder(unittest.TestCase):
         """Test database type detection for ClickHouse"""
         db_type = QueryBuilder.get_db_type(self.clickhouse_connector)
         self.assertEqual(db_type, 'clickhouse')
+
+    def test_get_db_type_oracle(self):
+        """Test database type detection for Oracle ADW"""
+        db_type = QueryBuilder.get_db_type(self.oracle_connector)
+        self.assertEqual(db_type, 'oracle')
     
     def test_get_db_type_unknown(self):
         """Test database type detection for unknown connector"""
@@ -308,6 +316,36 @@ class TestQueryBuilder(unittest.TestCase):
             column='id'
         )
         self.assertEqual(query, 'SELECT MAX(`id`) FROM `test_db`.`users`')
+
+    def test_build_select_and_incremental_query_oracle(self):
+        """Test basic SELECT and incremental queries for Oracle ADW"""
+        # SELECT should use double quotes for identifiers and no LIMIT/OFFSET
+        select_query = QueryBuilder.build_select_query(
+            self.oracle_connector,
+            'ADW_SCHEMA',
+            'USERS',
+            columns=['ID', 'NAME'],
+            order_by='ID'
+        )
+        self.assertIn('"ADW_SCHEMA"."USERS"', select_query)
+        self.assertIn('"ID"', select_query)
+        self.assertIn('"NAME"', select_query)
+        self.assertIn('ORDER BY "ID"', select_query)
+        self.assertNotIn('LIMIT', select_query)
+
+        # Incremental query should quote identifiers and use formatted checkpoint value
+        inc_query = QueryBuilder.build_incremental_query(
+            connector=self.oracle_connector,
+            schema='ADW_SCHEMA',
+            table='USERS',
+            incremental_column='UPDATED_AT',
+            checkpoint_value='2024-01-01 00:00:00',
+            columns=['ID', 'UPDATED_AT'],
+            order_by='UPDATED_AT, ID'
+        )
+        self.assertIn('FROM "ADW_SCHEMA"."USERS"', inc_query)
+        self.assertIn('WHERE "UPDATED_AT" >', inc_query)
+        self.assertIn("ORDER BY \"UPDATED_AT\", \"ID\"", inc_query)
     
     def test_format_checkpoint_value_integer(self):
         """Test formatting integer checkpoint value"""
