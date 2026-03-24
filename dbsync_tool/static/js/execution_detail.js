@@ -168,7 +168,7 @@ function updateLogsTable(logs) {
 
 function updateLogRow(row, log) {
     const cells = row.querySelectorAll('td');
-    if (cells.length < 7) return;
+    if (cells.length < 8) return;
     
     // Update status
     cells[1].innerHTML = `
@@ -187,7 +187,7 @@ function updateLogRow(row, log) {
     // Update rows inserted
     cells[4].textContent = formatNumber(log.rows_inserted);
     
-    // Update duration (if completed)
+    // Duration column
     if (log.completed_at && log.started_at) {
         const start = new Date(log.started_at);
         const end = new Date(log.completed_at);
@@ -195,18 +195,43 @@ function updateLogRow(row, log) {
         cells[5].textContent = duration;
     } else if (log.status === 'running') {
         cells[5].innerHTML = '<span class="text-info">Running...</span>';
+    } else if (log.verification_summary && log.verification_summary.startsWith('Duration:')) {
+        cells[5].textContent = log.verification_summary;
+    } else {
+        cells[5].textContent = '-';
     }
     
-    // Update error message
+    // Verification column
+    const ver = log.verification_summary || '';
+    if (ver) {
+        const short = ver.split(/\s+/).slice(0, 8).join(' ');
+        cells[6].innerHTML = `<span class="badge bg-info" title="${escapeHtmlAttr(ver)}">${escapeHtml(short)}</span>`;
+    } else {
+        cells[6].textContent = '-';
+    }
+    
+    // Error column
     if (log.error_message) {
-        cells[6].innerHTML = `
+        cells[7].innerHTML = `
             <button class="btn btn-sm btn-outline-danger" 
                     data-bs-toggle="modal" 
                     data-bs-target="#errorModal${log.id}">
                 View Error
             </button>
         `;
+    } else {
+        cells[7].textContent = '-';
     }
+}
+
+function escapeHtmlAttr(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function escapeHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
 }
 
 function addLogRow(tbody, log) {
@@ -214,19 +239,38 @@ function addLogRow(tbody, log) {
     row.setAttribute('data-log-id', log.id);
     row.className = 'log-row';
     
+    const ver = log.verification_summary || '';
+    let durCell = '-';
+    if (log.status === 'running') {
+        durCell = '<span class="text-info">Running...</span>';
+    } else if (log.completed_at && log.started_at) {
+        const start = new Date(log.started_at);
+        const end = new Date(log.completed_at);
+        durCell = formatDuration((end - start) / 1000);
+    } else if (ver.startsWith('Duration:')) {
+        durCell = escapeHtml(ver);
+    }
+    const verCell = ver
+        ? `<span class="badge bg-info" title="${escapeHtmlAttr(ver)}">${escapeHtml(ver.split(/\s+/).slice(0, 8).join(' '))}</span>`
+        : '-';
+    const errCell = log.error_message
+        ? `<button class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#errorModal${log.id}">View Error</button>`
+        : '-';
+    
     row.innerHTML = `
-        <td><strong>${log.schema_name}.${log.table_name}</strong></td>
+        <td><strong>${escapeHtml(log.schema_name)}.${escapeHtml(log.table_name)}</strong></td>
         <td>
             <span class="badge bg-${getStatusBadgeClass(log.status)}">
-                ${log.status_display}
+                ${escapeHtml(log.status_display)}
             </span>
             ${log.status === 'running' ? '<span class="spinner-border spinner-border-sm ms-1"></span>' : ''}
         </td>
         <td>${log.batch_number || '-'}</td>
         <td>${formatNumber(log.rows_fetched)}</td>
         <td>${formatNumber(log.rows_inserted)}</td>
-        <td>${log.status === 'running' ? '<span class="text-info">Running...</span>' : '-'}</td>
-        <td>${log.error_message ? '<button class="btn btn-sm btn-outline-danger">View Error</button>' : '-'}</td>
+        <td>${durCell}</td>
+        <td>${verCell}</td>
+        <td>${errCell}</td>
     `;
     
     tbody.appendChild(row);

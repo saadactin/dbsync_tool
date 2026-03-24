@@ -21,7 +21,7 @@ class CreateJobStep2TestCase(TestCase):
             email='test@example.com',
             password='testpass123'
         )
-        UserProfile.objects.get_or_create(
+        UserProfile.objects.update_or_create(
             user=self.user,
             defaults={'role': Role.ADMIN, 'tenant': self.user}
         )
@@ -60,7 +60,7 @@ class CreateJobStep2TestCase(TestCase):
         
         # Should contain source connection info
         self.assertContains(response, self.connection.name)
-        self.assertContains(response, 'Step 2 of 3')
+        self.assertContains(response, 'Step 2 of 4')
         
         # Should contain required DOM elements
         self.assertContains(response, 'id="loading-indicator"')

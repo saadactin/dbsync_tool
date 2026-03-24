@@ -1,13 +1,14 @@
 """
-Unit tests for SAP Business One connector (SAPConnector).
-Uses mocked requests.Session to avoid real HTTP calls.
+Unit tests for SAP Business One connector (SAPConnector/AsyncSAPConnector).
+Uses mocked network/session behavior to avoid real HTTP calls.
 """
+import asyncio
 from unittest.mock import Mock, patch, MagicMock
 from django.test import TestCase
 from django.contrib.auth.models import User
 
 from connections.models import APIConnection
-from connections.connectors.sap import SAPConnector
+from connections.connectors.sap import SAPConnector, AsyncSAPConnector
 from connections.connectors.api_base import APIConnector
 from core.constants import SAP_DOCUMENT_TYPES
 
@@ -217,3 +218,89 @@ class SAPConnectorTests(TestCase):
         mock_session.post.assert_called_once()
         self.assertIn('/Logout', mock_session.post.call_args[0][0])
         mock_session.close.assert_called_once()
+
+
+class AsyncSAPConnectorTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="asyncsapuser",
+            password="testpass123",
+            email="asyncsap@example.com",
+        )
+        self.api_connection = APIConnection.objects.create(
+            name="Test Async SAP Connection",
+            api_type="sap_b1",
+            sap_base_url="https://sap.example.com:50000/b1s/v2",
+            sap_username={"UserName": "API_USER", "CompanyDB": "SBODEMO"},
+            sap_password="sap_secret_123",
+            sap_endpoints=[],
+            tenant=self.user,
+            created_by=self.user,
+        )
+
+    def test_stream_all_records_fallbacks_when_filter_unsupported(self):
+        connector = AsyncSAPConnector(self.api_connection)
+
+        async def _fake_fetch_page(endpoint, skip, page_size=500, filter_query=None):
+            # Simulate HTTP 400 for filtered request.
+            if filter_query:
+                return None
+            return [{"DocEntry": 1}, {"DocEntry": 2}]
+
+        async def _fake_fetch_pages_parallel(
+            endpoint, start_skip, num_pages, page_size=500, filter_query=None
+        ):
+            if start_skip == 0:
+                return [{"DocEntry": 1}, {"DocEntry": 2}]
+            return []
+
+        connector.fetch_page = _fake_fetch_page
+        connector.fetch_pages_parallel = _fake_fetch_pages_parallel
+
+        async def _collect():
+            out = []
+            async for batch in connector.stream_all_records(
+                endpoint="ChartOfAccounts",
+                page_size=100,
+                parallel_workers=2,
+                batch_size=10,
+                filter_query="UpdateDate ge '2026-03-23'",
+            ):
+                out.extend(batch)
+            return out
+
+        records = asyncio.run(_collect())
+        self.assertEqual(len(records), 2)
+
+    def test_filter_warning_logged_once_per_endpoint(self):
+        connector = AsyncSAPConnector(self.api_connection)
+        connector._semaphore = asyncio.Semaphore(1)
+
+        class _Resp:
+            status = 400
+
+            async def __aenter__(self_inner):
+                return self_inner
+
+            async def __aexit__(self_inner, exc_type, exc, tb):
+                return False
+
+        class _Session:
+            def get(self_inner, *args, **kwargs):
+                return _Resp()
+
+        connector.session = _Session()
+        connector._base_url = "https://sap.example.com:50000/b1s/v2"
+
+        with patch("connections.connectors.sap.logger.warning") as warn_mock:
+            asyncio.run(
+                connector.fetch_page(
+                    "PriceLists", 0, page_size=100, filter_query="DocDate ge '2026-03-23'"
+                )
+            )
+            asyncio.run(
+                connector.fetch_page(
+                    "PriceLists", 100, page_size=100, filter_query="DocDate ge '2026-03-23'"
+                )
+            )
+            self.assertEqual(warn_mock.call_count, 1)

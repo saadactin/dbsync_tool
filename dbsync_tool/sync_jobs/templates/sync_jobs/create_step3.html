@@ -46,12 +46,12 @@
 <div class="container-fluid">
     <div class="row">
         <div class="col-12">
-            <h1 class="mb-4">Create Sync Job - Step 3: Configure Sync</h1>
+            <h1 class="mb-4">Create Sync Job - Step 4: Configure Sync</h1>
             
             <!-- Progress indicator -->
             <div class="progress mb-4" style="height: 30px;">
                 <div class="progress-bar" role="progressbar" style="width: 100%;" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100">
-                    Step 3 of 3
+                    Step 4 of 4
                 </div>
             </div>
             
@@ -60,13 +60,56 @@
                 <div class="card-body">
                     <h5 class="card-title">Job Summary</h5>
                     <p><strong>Job Name:</strong> {{ job_name }}</p>
-                    <p><strong>Source:</strong> {{ source_connection.name }} ({{ source_connection.get_db_type_display }})</p>
-                    <p><strong>Tables Selected:</strong> {{ selected_tables|length }} table(s)</p>
+                    <p><strong>Source:</strong>
+                        {% if source_connection_type == 'api' and source_api_connection %}
+                            {{ source_api_connection.name }} ({{ source_api_connection.get_api_type_display }})
+                        {% elif source_connection_type == 'flat_file' and source_file_connection %}
+                            {{ source_file_connection.name }} (Flat file)
+                        {% else %}
+                            {{ source_connection.name }} ({{ source_connection.get_db_type_display }})
+                        {% endif %}
+                    </p>
+                    <p><strong>
+                        {% if source_connection_type == 'api' and source_api_connection %}
+                            {% if source_api_connection.api_type == 'sap_b1' %}
+                                Endpoints Selected:
+                            {% elif source_api_connection.api_type == 'azure_devops' %}
+                                Projects Selected:
+                            {% else %}
+                                Modules Selected:
+                            {% endif %}
+                        {% else %}
+                            Tables Selected:
+                        {% endif %}
+                    </strong> {{ selected_tables|length }}</p>
                 </div>
             </div>
             
-            <form method="post" id="step3-form" action="{% url 'sync_jobs:create_step3_submit' %}">
+            <form method="post" id="step3-form" action="{% url 'sync_jobs:create_step4_submit' %}">
                 {% csrf_token %}
+                
+                <!-- Target table prefix (optional) -->
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Target table prefix <span class="text-muted">(optional)</span></h5>
+                        <div class="form-group">
+                            <input
+                                type="text"
+                                name="target_table_prefix"
+                                id="target_table_prefix"
+                                class="form-control"
+                                placeholder="e.g. POST"
+                                maxlength="64"
+                            >
+                            <small class="form-text text-muted">
+                                If set, target tables will be named PREFIX_tablename (e.g. POST_auth_user). Leave empty to keep original table names.
+                            </small>
+                            <small class="form-text text-warning d-block mt-1">
+                                Incremental sync updates existing prefixed tables only. Missing tables are skipped with a warning and are not auto-created.
+                            </small>
+                        </div>
+                    </div>
+                </div>
                 
                 <!-- Sync Type Selection -->
                 <div class="card mb-4">
@@ -103,49 +146,34 @@
                                 >
                                 <label class="form-check-label" for="sync_type_incremental">
                                     <strong>Incremental Sync</strong>
-                                    <p class="text-muted mb-0">Sync only new or updated records based on a timestamp or ID column. Existing data is preserved.</p>
+                                    {% if source_connection_type == 'api' %}
+                                        <p class="text-muted mb-0">
+                                            {% if is_sap %}
+                                                For SAP Business One, incremental logic is handled automatically using pre-defined fields (UpdateDate, TaxDate, etc.). No manual configuration is required.
+                                            {% else %}
+                                                For API sources, incremental logic is handled by the API integration. No incremental column configuration is required here.
+                                            {% endif %}
+                                        </p>
+                                    {% elif source_connection_type == 'flat_file' %}
+                                        <p class="text-muted mb-0">Flat-file source currently supports full sync only.</p>
+                                    {% else %}
+                                        <p class="text-muted mb-0">
+                                            Sync only new or updated records based on a timestamp or ID column. Existing data is preserved.
+                                        </p>
+                                    {% endif %}
                                 </label>
                             </div>
                         </div>
                         
-                        <!-- Incremental Column Configuration -->
-                        <div id="incremental-column-section" class="incremental-column-section">
-                            <h6 class="mt-4 mb-3">Configure Incremental Columns</h6>
-                            <p class="text-muted">Select the column to use for tracking incremental changes for each table.</p>
-                            
-                            {% for table_info in selected_tables %}
-                                {% with table_key=table_info.schema_name|add:"."|add:table_info.table_name %}
-                                    <div class="table-config-row">
-                                        <label><strong>{{ table_key }}</strong></label>
-                                        <select 
-                                            class="form-select mt-2" 
-                                            name="incremental_column_{{ table_key }}" 
-                                            id="inc_col_{{ table_key|slugify }}"
-                                            required
-                                        >
-                                            <option value="">-- Select Column --</option>
-                                            {% with table_data=table_columns|get_item:table_key %}
-                                                {% if table_data and table_data.incremental_candidates %}
-                                                    {% for col in table_data.incremental_candidates %}
-                                                        <option value="{{ col.name }}">
-                                                            {{ col.name }} ({{ col.data_type }})
-                                                            {% if 'time' in col.data_type|lower or 'date' in col.data_type|lower %}
-                                                                - Recommended
-                                                            {% endif %}
-                                                        </option>
-                                                    {% endfor %}
-                                                {% endif %}
-                                            {% endwith %}
-                                        </select>
-                                        {% with table_data=table_columns|get_item:table_key %}
-                                            {% if not table_data or not table_data.incremental_candidates %}
-                                                <small class="text-warning">No suitable incremental columns found. Please use Full Sync for this table.</small>
-                                            {% endif %}
-                                        {% endwith %}
-                                    </div>
-                                {% endwith %}
-                            {% endfor %}
-                        </div>
+                        {% if source_connection_type == 'database' %}
+                            <div id="incremental-column-section" class="incremental-column-section">
+                                <h6 class="mt-4 mb-3">Incremental Strategy</h6>
+                                <p class="text-muted mb-0">
+                                    Incremental columns are selected automatically per table using the best available strategy for your source database.
+                                    If no safe incremental column is found for a table, that table is skipped with a detailed warning and the job continues.
+                                </p>
+                            </div>
+                        {% endif %}
                     </div>
                 </div>
                 
@@ -158,11 +186,33 @@
                             <label for="schedule_type"><strong>Schedule Type</strong></label>
                             <select class="form-select" id="schedule_type" name="schedule_type" required>
                                 <option value="once">Run Once (Manual)</option>
-                                <option value="hourly">Hourly</option>
-                                <option value="daily">Daily</option>
+                                <option value="hourly">Hourly (every N hours)</option>
+                                <option value="daily">Daily (fixed time each day)</option>
                                 <option value="weekly">Weekly</option>
                                 <option value="custom">Custom Cron Expression</option>
                             </select>
+                        </div>
+                        
+                        <!-- Hourly: interval N hours (anchor grid) -->
+                        <div id="hourly-interval-section" class="form-group mb-3" style="display: none;">
+                            <label for="interval_hours" class="form-label"><strong>Every</strong></label>
+                            <div class="input-group" style="max-width: 220px;">
+                                <input
+                                    type="number"
+                                    class="form-control"
+                                    id="interval_hours"
+                                    name="interval_hours"
+                                    min="1"
+                                    max="24"
+                                    step="1"
+                                    value="1"
+                                    autocomplete="off"
+                                >
+                                <span class="input-group-text">hour(s)</span>
+                            </div>
+                            <small class="form-text text-muted d-block mt-1">
+                                Runs on a repeating schedule every N hours from your first-run time below (same minute; e.g. 10:15 &rarr; 13:15 when N=3).
+                            </small>
                         </div>
                         
                         <!-- Custom Cron Expression -->
@@ -182,23 +232,49 @@
                             </small>
                         </div>
                         
-                        <!-- Start Date/Time -->
+                        <!-- First run: date + time (24h); merged into start_datetime hidden -->
                         <div id="start-datetime-section" class="form-group mb-3" style="display: none;">
-                            <label for="start_datetime"><strong>Start Date/Time</strong></label>
-                            <input 
-                                type="datetime-local" 
-                                class="form-control" 
-                                id="start_datetime" 
-                                name="start_datetime"
-                            >
-                            <small class="form-text text-muted">When should the scheduled sync start? (Leave empty to start now)</small>
+                            <label class="form-label"><strong>First run schedule</strong></label>
+                            <div class="row g-2">
+                                <div class="col-md-6">
+                                    <label for="start_date" class="form-label small text-muted">First run date (optional)</label>
+                                    <input
+                                        type="date"
+                                        class="form-control"
+                                        id="start_date"
+                                        name="start_date"
+                                        autocomplete="off"
+                                    >
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="start_time" class="form-label small text-muted">Run at (24-hour)</label>
+                                    <input
+                                        type="text"
+                                        class="form-control"
+                                        id="start_time"
+                                        name="start_time"
+                                        placeholder="HH:mm (e.g. 14:40) or h:mm AM/PM"
+                                        autocomplete="off"
+                                    >
+                                </div>
+                            </div>
+                            <input type="hidden" id="start_datetime" name="start_datetime" value="">
+                            <small class="form-text text-muted d-block mt-2">
+                                <span id="daily-schedule-hint" style="display: none;">
+                                    For <strong>Daily</strong>: runs once per calendar day at the time below (24-hour).
+                                </span>
+                                <span id="generic-schedule-hint">
+                                    Shown in your browser&apos;s local time. Leave both empty to start at the next eligible time after you save.
+                                </span>
+                                The server uses Django <code>TIME_ZONE</code> for stored schedule anchors.
+                            </small>
                         </div>
                     </div>
                 </div>
                 
                 <!-- Form Actions -->
                 <div class="mb-4">
-                    <button type="button" class="btn btn-secondary" onclick="window.location.href='{% url 'sync_jobs:create_step2' %}'">Back</button>
+                    <a class="btn btn-secondary" href="{% url 'sync_jobs:create_step2' %}">Back</a>
                     <button type="submit" class="btn btn-primary" id="create-btn">Create Sync Job</button>
                 </div>
             </form>
@@ -222,82 +298,155 @@ document.addEventListener('DOMContentLoaded', function() {
         radio.addEventListener('change', updateSyncTypeUI);
     });
     
+    const sourceType = "{{ source_connection_type }}";
+
     function updateSyncTypeUI() {
         const selectedType = document.querySelector('input[name="sync_type"]:checked').value;
         const incrementalSection = document.getElementById('incremental-column-section');
+        const incrementalRadio = document.getElementById('sync_type_incremental');
         
         document.querySelectorAll('.sync-type-card').forEach(card => {
             card.classList.remove('selected');
         });
         document.querySelector(`[data-sync-type="${selectedType}"]`).classList.add('selected');
         
-        if (selectedType === 'incremental') {
-            incrementalSection.classList.add('active');
-            // Make incremental columns required
-            document.querySelectorAll('#incremental-column-section select').forEach(select => {
-                select.required = true;
-            });
-        } else {
-            incrementalSection.classList.remove('active');
-            // Make incremental columns not required
-            document.querySelectorAll('#incremental-column-section select').forEach(select => {
-                select.required = false;
-            });
+        if (incrementalSection && sourceType === 'database') {
+            if (selectedType === 'incremental') {
+                incrementalSection.classList.add('active');
+            } else {
+                incrementalSection.classList.remove('active');
+            }
+        }
+        if (sourceType === 'flat_file' && incrementalRadio) {
+            incrementalRadio.checked = false;
+            incrementalRadio.disabled = true;
+            const fullRadio = document.getElementById('sync_type_full');
+            if (fullRadio) fullRadio.checked = true;
         }
     }
     
-    // Schedule type selection
-    document.getElementById('schedule_type').addEventListener('change', function() {
-        const scheduleType = this.value;
+    function updateScheduleSectionVisibility() {
+        const scheduleType = document.getElementById('schedule_type').value;
         const cronSection = document.getElementById('cron-section');
         const startDatetimeSection = document.getElementById('start-datetime-section');
+        const hourlyIntervalSection = document.getElementById('hourly-interval-section');
         const cronExpression = document.getElementById('cron_expression');
+        const dailyHint = document.getElementById('daily-schedule-hint');
+        const genericHint = document.getElementById('generic-schedule-hint');
         
         if (scheduleType === 'custom') {
             cronSection.style.display = 'block';
             cronExpression.required = true;
             startDatetimeSection.style.display = 'none';
+            if (hourlyIntervalSection) hourlyIntervalSection.style.display = 'none';
+            if (dailyHint) dailyHint.style.display = 'none';
+            if (genericHint) genericHint.style.display = 'inline';
         } else if (scheduleType !== 'once') {
             cronSection.style.display = 'none';
             cronExpression.required = false;
             startDatetimeSection.style.display = 'block';
+            if (hourlyIntervalSection) {
+                hourlyIntervalSection.style.display = scheduleType === 'hourly' ? 'block' : 'none';
+            }
+            if (dailyHint) dailyHint.style.display = scheduleType === 'daily' ? 'inline' : 'none';
+            if (genericHint) genericHint.style.display = scheduleType === 'daily' ? 'none' : 'inline';
         } else {
             cronSection.style.display = 'none';
             cronExpression.required = false;
             startDatetimeSection.style.display = 'none';
+            if (hourlyIntervalSection) hourlyIntervalSection.style.display = 'none';
+            if (dailyHint) dailyHint.style.display = 'none';
+            if (genericHint) genericHint.style.display = 'inline';
         }
-    });
+    }
     
+    document.getElementById('schedule_type').addEventListener('change', updateScheduleSectionVisibility);
+    
+    function mergeStartDateTimeHidden() {
+        const scheduleType = document.getElementById('schedule_type').value;
+        const hidden = document.getElementById('start_datetime');
+        const sd = document.getElementById('start_date');
+        const st = document.getElementById('start_time');
+        if (!hidden || !sd || !st) return;
+        if (scheduleType === 'once' || scheduleType === 'custom') {
+            hidden.value = '';
+            return;
+        }
+        const d = (sd.value || '').trim();
+        const t = (st.value || '').trim();
+        if (!d && !t) {
+            hidden.value = '';
+            return;
+        }
+        const datePart = d || new Date().toISOString().slice(0, 10);
+
+        function normalizeTimeTo24h(value) {
+            const s = (value || '').trim();
+            if (!s) return null;
+
+            // 24-hour: HH:mm or H:mm
+            let m = s.match(/^(\d{1,2}):(\d{2})$/);
+            if (m) {
+                const hour = Number(m[1]);
+                const minute = Number(m[2]);
+                if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+                return String(hour).padStart(2, '0') + ':' + String(minute).padStart(2, '0');
+            }
+
+            // AM/PM: h:mm AM or h:mm PM
+            m = s.match(/^(\d{1,2}):(\d{2})\s*([aApP][mM])$/);
+            if (m) {
+                let hour = Number(m[1]);
+                const minute = Number(m[2]);
+                const ampm = m[3].toLowerCase();
+                if (minute < 0 || minute > 59) return null;
+
+                if (ampm === 'pm' && hour < 12) hour += 12;
+                if (ampm === 'am' && hour === 12) hour = 0;
+                if (hour < 0 || hour > 23) return null;
+
+                return String(hour).padStart(2, '0') + ':' + String(minute).padStart(2, '0');
+            }
+
+            return null;
+        }
+
+        let timePart = '00:00';
+        if (t) {
+            const normalized = normalizeTimeTo24h(t);
+            if (!normalized) {
+                // Let backend validate separately by not setting start_datetime.
+                hidden.value = '';
+                return;
+            }
+            // Keep UI consistent with what we store.
+            st.value = normalized;
+            timePart = normalized;
+        }
+        if (!timePart) {
+            // Let backend validate separately by not setting start_datetime.
+            hidden.value = '';
+            return;
+        }
+        hidden.value = datePart + 'T' + timePart;
+    }
+
     // Form validation
     document.getElementById('step3-form').addEventListener('submit', function(e) {
-        const syncType = document.querySelector('input[name="sync_type"]:checked').value;
         const scheduleType = document.getElementById('schedule_type').value;
         const cronExpression = document.getElementById('cron_expression').value;
-        
-        if (syncType === 'incremental') {
-            const missingColumns = [];
-            document.querySelectorAll('#incremental-column-section select').forEach(select => {
-                if (!select.value) {
-                    missingColumns.push(select.closest('.table-config-row').querySelector('label strong').textContent);
-                }
-            });
-            
-            if (missingColumns.length > 0) {
-                e.preventDefault();
-                alert('Please select incremental columns for all tables:\n' + missingColumns.join('\n'));
-                return false;
-            }
-        }
         
         if (scheduleType === 'custom' && !cronExpression) {
             e.preventDefault();
             alert('Please enter a cron expression for custom schedule.');
             return false;
         }
+        mergeStartDateTimeHidden();
     });
     
     // Initial UI state
     updateSyncTypeUI();
+    updateScheduleSectionVisibility();
 });
 </script>
 {% endblock %}

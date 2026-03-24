@@ -5,6 +5,7 @@ from django.test import TestCase, Client
 from django.contrib.auth.models import User
 from django.urls import reverse
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 from connections.models import DatabaseConnection, APIConnection
 from sync_jobs.models import SyncJob, SyncJobTable, APISyncState
 from accounts.models import UserProfile, Role
@@ -22,10 +23,10 @@ class APISyncJobCreationViewsTests(TestCase):
             password='testpass123'
         )
         
-        # Create user profile
-        UserProfile.objects.create(
+        # Create or update user profile (handles auto-created profiles via signals)
+        UserProfile.objects.update_or_create(
             user=self.user,
-            role=Role.ADMIN
+            defaults={'role': Role.ADMIN, 'tenant': self.user}
         )
         
         # Create database connections
@@ -66,6 +67,28 @@ class APISyncJobCreationViewsTests(TestCase):
             tenant=self.user,
             created_by=self.user
         )
+
+        # Azure DevOps API connection for Azure-specific tests
+        self.azure_conn = APIConnection.objects.create(
+            name='Azure DevOps API',
+            api_type='azure_devops',
+            organization='MyOrg',
+            azure_tenant_id='tenant-guid-123',
+            azure_client_id='client-guid-456',
+            azure_client_secret='secret-789',
+            selected_modules=['ProjA', 'ProjB'],
+            tenant=self.user,
+            created_by=self.user,
+        )
+
+        # Mark connections as tested so Step 1 validation passes
+        now = timezone.now()
+        for conn in (self.db_conn1, self.db_conn2):
+            conn.last_tested_at = now
+            conn.save(update_fields=['last_tested_at'])
+        for api_conn in (self.api_conn, self.azure_conn):
+            api_conn.last_tested_at = now
+            api_conn.save(update_fields=['last_tested_at'])
     
     def test_step1_displays_api_connections(self):
         """Test Step 1 displays API connections"""
@@ -132,6 +155,28 @@ class APISyncJobCreationViewsTests(TestCase):
         self.assertContains(response, 'Leads')
         self.assertContains(response, 'Contacts')
         self.assertContains(response, 'Accounts')
+
+    def test_step2_shows_projects_for_azure_devops_source(self):
+        """Test Step 2 shows project selection label for Azure DevOps source"""
+        self.client.login(username='testuser', password='testpass123')
+
+        # Set up session for Azure DevOps API source
+        session = self.client.session
+        session['sync_job_name'] = 'Azure DevOps Job'
+        session['sync_job_source_connection_type'] = 'api'
+        session['sync_job_source_api_connection_id'] = str(self.azure_conn.id)
+        session['sync_job_target_connection_id'] = str(self.db_conn1.id)
+        session.save()
+
+        response = self.client.get(reverse('sync_jobs:create_step2'))
+
+        self.assertEqual(response.status_code, 200)
+        # Header and helper text mention projects
+        self.assertContains(response, 'Select Projects to Sync')
+        self.assertContains(response, 'Projects Available')
+        # Projects from selected_modules are listed
+        self.assertContains(response, 'ProjA')
+        self.assertContains(response, 'ProjB')
     
     def test_step2_shows_tables_for_database_source(self):
         """Test Step 2 shows table selection for database source"""
@@ -166,8 +211,9 @@ class APISyncJobCreationViewsTests(TestCase):
             'selected_modules': ['Leads', 'Contacts']
         })
         
-        self.assertEqual(response.status_code, 302)  # Redirect to step 3
-        self.assertEqual(response.url, reverse('sync_jobs:create_step3'))
+        # For API sources we now skip mapping and go directly to Step 4 (configure)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse('sync_jobs:create_step4'))
         
         # Check session data
         session = self.client.session
@@ -193,10 +239,13 @@ class APISyncJobCreationViewsTests(TestCase):
         ]
         session.save()
         
-        response = self.client.post(reverse('sync_jobs:create_step3_submit'), {
-            'sync_type': 'full',
-            'schedule_type': 'once'
-        })
+        response = self.client.post(
+            reverse('sync_jobs:create_step4_submit'),
+            {
+                'sync_type': 'full',
+                'schedule_type': 'once',
+            },
+        )
         
         self.assertEqual(response.status_code, 302)  # Redirect to job list
         
@@ -216,6 +265,61 @@ class APISyncJobCreationViewsTests(TestCase):
         
         contacts_table = job_tables.get(table_name='Contacts')
         self.assertEqual(contacts_table.schema_name, 'api')
+
+    def test_step4_submit_saves_target_table_prefix_for_api_job(self):
+        """Step 4 stores target_table_prefix when provided."""
+        self.client.login(username='testuser', password='testpass123')
+
+        session = self.client.session
+        session['sync_job_name'] = 'Test API Prefix Job'
+        session['sync_job_source_connection_type'] = 'api'
+        session['sync_job_source_api_connection_id'] = str(self.api_conn.id)
+        session['sync_job_target_connection_id'] = str(self.db_conn1.id)
+        session['sync_job_selected_tables'] = [
+            {'schema_name': 'api', 'table_name': 'Leads'}
+        ]
+        session.save()
+
+        response = self.client.post(
+            reverse('sync_jobs:create_step4_submit'),
+            {
+                'sync_type': 'full',
+                'schedule_type': 'once',
+                'target_table_prefix': 'POST',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        job = SyncJob.objects.get(name='Test API Prefix Job')
+        self.assertEqual(job.target_table_prefix, 'POST')
+
+    def test_step4_submit_rejects_invalid_target_table_prefix(self):
+        """Step 4 rejects invalid prefix characters."""
+        self.client.login(username='testuser', password='testpass123')
+
+        session = self.client.session
+        session['sync_job_name'] = 'Test API Invalid Prefix Job'
+        session['sync_job_source_connection_type'] = 'api'
+        session['sync_job_source_api_connection_id'] = str(self.api_conn.id)
+        session['sync_job_target_connection_id'] = str(self.db_conn1.id)
+        session['sync_job_selected_tables'] = [
+            {'schema_name': 'api', 'table_name': 'Leads'}
+        ]
+        session.save()
+
+        response = self.client.post(
+            reverse('sync_jobs:create_step4_submit'),
+            {
+                'sync_type': 'full',
+                'schedule_type': 'once',
+                'target_table_prefix': 'BAD-PREFIX',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(SyncJob.objects.filter(name='Test API Invalid Prefix Job').exists())
+        self.assertContains(response, 'Target table prefix may only contain letters, numbers, and underscores.')
     
     def test_step3_creates_apisyncstate_for_incremental(self):
         """Test Step 3 creates APISyncState for incremental sync"""
@@ -232,10 +336,13 @@ class APISyncJobCreationViewsTests(TestCase):
         ]
         session.save()
         
-        response = self.client.post(reverse('sync_jobs:create_step3_submit'), {
-            'sync_type': 'incremental',
-            'schedule_type': 'once'
-        })
+        response = self.client.post(
+            reverse('sync_jobs:create_step4_submit'),
+            {
+                'sync_type': 'incremental',
+                'schedule_type': 'once',
+            },
+        )
         
         self.assertEqual(response.status_code, 302)
         

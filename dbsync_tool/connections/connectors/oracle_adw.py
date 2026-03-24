@@ -60,8 +60,12 @@ class OracleADWConnector(DBConnector):
         else:
             self._dsn = f"{self.host}:{self.port}/{service_name}"
 
-        # Conservative but reasonable defaults; can be tuned later
-        self.arraysize = 1000
+        # Fetch/insert buffer size; set ORACLE_ARRAYSIZE (e.g. 5000–10000) for faster migration
+        try:
+            self.arraysize = int(os.environ.get("ORACLE_ARRAYSIZE", "5000"))
+        except ValueError:
+            self.arraysize = 5000
+        self.arraysize = max(100, min(50000, self.arraysize))
 
     # ------------------------------------------------------------------
     # Helpers
@@ -136,6 +140,37 @@ class OracleADWConnector(DBConnector):
         # Generic fallback
         return DatabaseConnectionError(f"Connection failed: {message}")
 
+    def _is_connection_lost_error(self, error: Exception) -> bool:
+        """Return True if the error indicates the connection was closed or broken (e.g. DPY-4011, SSL)."""
+        def check(e: Optional[Exception]) -> bool:
+            if e is None:
+                return False
+            msg = (getattr(e, "message", None) or str(e)).lower()
+            return (
+                "dpy-4011" in msg
+                or "connection closed" in msg
+                or "network closed" in msg
+                or "bad_length" in msg
+                or "bad length" in msg
+            )
+        return check(error) or check(getattr(error, "__cause__", None))
+
+    def _with_connection_retry(self, fn):
+        """Run fn(). On connection-closed/SSL errors, reconnect and retry once."""
+        try:
+            return fn()
+        except Exception as e:
+            if not self._is_connection_lost_error(e):
+                raise
+            logger.warning(
+                "Oracle ADW connection lost (%s), reconnecting and retrying once.",
+                e,
+            )
+            self.close()
+            self._connection = None
+            self.connect()
+            return fn()
+
     # ------------------------------------------------------------------
     # DBConnector interface
     # ------------------------------------------------------------------
@@ -188,13 +223,16 @@ class OracleADWConnector(DBConnector):
         For Oracle, we treat schema == owner; we list owners that the current
         user can see from ALL_USERS.
         """
-        if not self._connection:
-            self.connect()
 
-        try:
+        def _do():
+            if not self._connection:
+                self.connect()
             with self._connection.cursor() as cursor:  # type: ignore[union-attr]
                 cursor.execute("SELECT username FROM all_users ORDER BY username")
                 return [row[0] for row in cursor.fetchall()]
+
+        try:
+            return self._with_connection_retry(_do)
         except Exception as e:
             raise DatabaseQueryError(f"Failed to get Oracle schemas: {e}")
 
@@ -212,11 +250,11 @@ class OracleADWConnector(DBConnector):
 
     def get_tables(self, schema: str) -> List[str]:
         """Get list of table names for a given Oracle schema/owner."""
-        if not self._connection:
-            self.connect()
-
         owner = (schema or "").upper()
-        try:
+
+        def _do():
+            if not self._connection:
+                self.connect()
             with self._connection.cursor() as cursor:  # type: ignore[union-attr]
                 cursor.execute(
                     """
@@ -228,6 +266,9 @@ class OracleADWConnector(DBConnector):
                     {"owner": owner},
                 )
                 return [row[0] for row in cursor.fetchall()]
+
+        try:
+            return self._with_connection_retry(_do)
         except Exception as e:
             raise DatabaseQueryError(f"Failed to get tables for schema {schema}: {e}")
 
@@ -239,13 +280,12 @@ class OracleADWConnector(DBConnector):
         like the type-mapping utilities can make non-lossy decisions using only
         ColumnInfo.
         """
-        if not self._connection:
-            self.connect()
-
         owner = (schema or "").upper()
         table_name = (table or "").upper()
 
-        try:
+        def _do():
+            if not self._connection:
+                self.connect()
             with self._connection.cursor() as cursor:  # type: ignore[union-attr]
                 # Verify table exists
                 cursor.execute(
@@ -309,6 +349,9 @@ class OracleADWConnector(DBConnector):
                         )
                     )
                 return columns
+
+        try:
+            return self._with_connection_retry(_do)
         except TableNotFoundError:
             raise
         except Exception as e:
@@ -318,17 +361,19 @@ class OracleADWConnector(DBConnector):
 
     def get_row_count(self, schema: str, table: str) -> int:
         """Get row count for a table."""
-        if not self._connection:
-            self.connect()
-
         owner = (schema or "").upper()
         table_name = (table or "").upper()
 
-        try:
+        def _do():
+            if not self._connection:
+                self.connect()
             with self._connection.cursor() as cursor:  # type: ignore[union-attr]
                 query = f'SELECT COUNT(*) FROM "{owner}"."{table_name}"'
                 cursor.execute(query)
                 return int(cursor.fetchone()[0])
+
+        try:
+            return self._with_connection_retry(_do)
         except Exception as e:
             raise DatabaseQueryError(
                 f"Failed to get row count for table {schema}.{table}: {e}"
@@ -344,9 +389,6 @@ class OracleADWConnector(DBConnector):
         """
         Fetch a batch of rows from a query using Oracle's OFFSET/FETCH syntax.
         """
-        if not self._connection:
-            self.connect()
-
         # Ensure deterministic ordering when possible
         query_upper = query.upper()
         if order_by and "ORDER BY" not in query_upper:
@@ -358,24 +400,32 @@ class OracleADWConnector(DBConnector):
             f"{query} OFFSET {int(offset)} ROWS FETCH NEXT {int(batch_size)} ROWS ONLY"
         )
 
-        try:
+        def _do():
+            if not self._connection:
+                self.connect()
             with self._connection.cursor() as cursor:  # type: ignore[union-attr]
                 cursor.arraysize = self.arraysize
                 cursor.execute(paginated_query)
                 return cursor.fetchall()
+
+        try:
+            return self._with_connection_retry(_do)
         except Exception as e:
             raise DatabaseQueryError(f"Failed to fetch batch from Oracle ADW: {e}")
 
     def get_query_row_count(self, query: str) -> int:
         """Get total row count for an arbitrary SELECT query."""
-        if not self._connection:
-            self.connect()
-
         count_query = f"SELECT COUNT(*) FROM ({query}) q"
-        try:
+
+        def _do():
+            if not self._connection:
+                self.connect()
             with self._connection.cursor() as cursor:  # type: ignore[union-attr]
                 cursor.execute(count_query)
                 return int(cursor.fetchone()[0])
+
+        try:
+            return self._with_connection_retry(_do)
         except Exception as e:
             raise DatabaseQueryError(
                 f"Failed to get row count for query on Oracle ADW: {e}"
@@ -385,18 +435,46 @@ class OracleADWConnector(DBConnector):
     # Target-side operations
     # ------------------------------------------------------------------
     def execute_query(self, query: str, params: Optional[Dict[str, Any]] = None):
-        if not self._connection:
-            self.connect()
-
-        try:
+        def _do():
+            if not self._connection:
+                self.connect()
             with self._connection.cursor() as cursor:  # type: ignore[union-attr]
                 if params:
                     cursor.execute(query, params)
                 else:
                     cursor.execute(query)
             self._connection.commit()
+
+        try:
+            self._with_connection_retry(_do)
         except Exception as e:
             raise DatabaseQueryError(f"Failed to execute Oracle query: {e}")
+
+    def execute_query_fetchall(
+        self,
+        query: str,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> List[Tuple]:
+        """
+        Execute a SELECT query and return all rows.
+
+        Fetching is done inside the cursor context to avoid cursor lifetime
+        issues seen in other connectors.
+        """
+        def _do():
+            if not self._connection:
+                self.connect()
+            with self._connection.cursor() as cursor:  # type: ignore[union-attr]
+                if params:
+                    cursor.execute(query, params)
+                else:
+                    cursor.execute(query)
+                return list(cursor.fetchall())
+
+        try:
+            return self._with_connection_retry(_do)
+        except Exception as e:
+            raise DatabaseQueryError(f"Failed to execute Oracle query (fetchall): {e}")
 
     def create_table(self, schema: str, table: str, columns: List[ColumnInfo]):
         """
@@ -407,9 +485,6 @@ class OracleADWConnector(DBConnector):
         produced by the type-mapping layer. We therefore avoid doing any
         additional cross-database mapping here and use the types verbatim.
         """
-        if not self._connection:
-            self.connect()
-
         owner = (schema or "").upper()
         table_name = (table or "").upper()
 
@@ -431,23 +506,27 @@ class OracleADWConnector(DBConnector):
             + ")"
         )
 
-        try:
+        def _do():
+            if not self._connection:
+                self.connect()
             with self._connection.cursor() as cursor:  # type: ignore[union-attr]
                 cursor.execute(ddl)
             self._connection.commit()
+
+        try:
+            self._with_connection_retry(_do)
         except Exception as e:
             raise DatabaseQueryError(
                 f"Failed to create Oracle table {schema}.{table}: {e}"
             )
 
     def table_exists(self, schema: str, table: str) -> bool:
-        if not self._connection:
-            self.connect()
-
         owner = (schema or "").upper()
         table_name = (table or "").upper()
 
-        try:
+        def _do():
+            if not self._connection:
+                self.connect()
             with self._connection.cursor() as cursor:  # type: ignore[union-attr]
                 cursor.execute(
                     """
@@ -458,6 +537,9 @@ class OracleADWConnector(DBConnector):
                     {"owner": owner, "table_name": table_name},
                 )
                 return cursor.fetchone()[0] > 0
+
+        try:
+            return self._with_connection_retry(_do)
         except Exception as e:
             raise DatabaseQueryError(
                 f"Failed to check if table {schema}.{table} exists in Oracle ADW: {e}"
@@ -465,17 +547,19 @@ class OracleADWConnector(DBConnector):
 
     def truncate_table(self, schema: str, table: str):
         """Truncate a table in Oracle ADW."""
-        if not self._connection:
-            self.connect()
-
         owner = (schema or "").upper()
         table_name = (table or "").upper()
-
         sql = f'TRUNCATE TABLE "{owner}"."{table_name}"'
-        try:
+
+        def _do():
+            if not self._connection:
+                self.connect()
             with self._connection.cursor() as cursor:  # type: ignore[union-attr]
                 cursor.execute(sql)
             self._connection.commit()
+
+        try:
+            self._with_connection_retry(_do)
         except Exception as e:
             raise DatabaseQueryError(
                 f"Failed to truncate Oracle table {schema}.{table}: {e}"
@@ -568,9 +652,6 @@ class OracleADWConnector(DBConnector):
         if not rows:
             return
 
-        if not self._connection:
-            self.connect()
-
         owner = (schema or "").upper()
         table_name = (table or "").upper()
 
@@ -587,11 +668,16 @@ class OracleADWConnector(DBConnector):
             self._normalize_row(r, target_column_types) for r in rows
         ]
 
-        try:
+        def _do():
+            if not self._connection:
+                self.connect()
             with self._connection.cursor() as cursor:  # type: ignore[union-attr]
                 cursor.arraysize = max(self.arraysize, len(normalized_rows))
                 cursor.executemany(insert_sql, normalized_rows)
             self._connection.commit()
+
+        try:
+            self._with_connection_retry(_do)
         except Exception as e:
             message = str(e)
             lower = message.lower()
@@ -599,6 +685,14 @@ class OracleADWConnector(DBConnector):
             if "ora-00942" in lower:
                 raise TableNotFoundError(
                     f"Target table {schema}.{table} does not exist in Oracle ADW"
+                )
+            if "ora-01536" in lower or "space quota exceeded" in lower:
+                user_hint = schema if schema else "<user>"
+                raise DatabaseQueryError(
+                    f"Failed to bulk insert into Oracle ADW table {schema}.{table}: {message}. "
+                    "ORA-01536 means the user's space quota for the DATA tablespace is exceeded. "
+                    f"Ask your Oracle ADW admin to run: ALTER USER {user_hint} QUOTA UNLIMITED ON DATA; "
+                    "Or free space by dropping/purging unused tables in that schema."
                 )
             if "dpy-4003" in lower or "cannot be represented as an oracle number" in lower:
                 raise DatabaseQueryError(
@@ -624,13 +718,12 @@ class OracleADWConnector(DBConnector):
         """
         Return primary key column names for a table, if available.
         """
-        if not self._connection:
-            self.connect()
-
         owner = (schema or "").upper()
         table_name = (table or "").upper()
 
-        try:
+        def _do():
+            if not self._connection:
+                self.connect()
             with self._connection.cursor() as cursor:  # type: ignore[union-attr]
                 cursor.execute(
                     """
@@ -647,6 +740,9 @@ class OracleADWConnector(DBConnector):
                     {"owner": owner, "table_name": table_name},
                 )
                 return [row[0] for row in cursor.fetchall()]
+
+        try:
+            return self._with_connection_retry(_do)
         except Exception as e:
             logger.warning(
                 "Failed to get primary key for Oracle table %s.%s: %s",

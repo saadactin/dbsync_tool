@@ -67,6 +67,8 @@
                                                     <td>
                                                         {% if connection.api_type == 'sap_b1' %}
                                                             <span class="text-muted small">{{ connection.sap_base_url|truncatechars:40|default:"—" }}</span>
+                                                        {% elif connection.api_type == 'azure_devops' %}
+                                                            <span class="text-muted small">{{ connection.organization|default:"—" }}</span>
                                                         {% else %}
                                                             {{ connection.api_domain }}
                                                         {% endif %}
@@ -77,6 +79,12 @@
                                                                 <span class="badge bg-info">{{ connection.sap_endpoints|length }} endpoint{{ connection.sap_endpoints|length|pluralize }}</span>
                                                             {% else %}
                                                                 <span class="text-muted">No endpoints selected</span>
+                                                            {% endif %}
+                                                        {% elif connection.api_type == 'azure_devops' %}
+                                                            {% if connection.selected_modules %}
+                                                                <span class="badge bg-info">{{ connection.selected_modules|length }} project{{ connection.selected_modules|length|pluralize }}</span>
+                                                            {% else %}
+                                                                <span class="text-muted">No projects selected</span>
                                                             {% endif %}
                                                         {% elif connection.selected_modules %}
                                                             <span class="badge bg-info">{{ connection.selected_modules|length }} module{{ connection.selected_modules|length|pluralize }}</span>
@@ -158,6 +166,7 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{% static 'js/connection_test_alert.js' %}"></script>
 <script>
 // Get CSRF token
 function getCookie(name) {
@@ -196,14 +205,31 @@ document.addEventListener('DOMContentLoaded', function() {
                     'Content-Type': 'application/json',
                 },
             })
-            .then(response => response.json())
-            .then(data => {
+            .then(response => response.text().then(text => ({ response, text })))
+            .then(({ response, text }) => {
+                const parsed = parseConnectionTestResponse(response, text);
+                if (!parsed.ok) {
+                    alert(parsed.errorMessage);
+                    button.disabled = false;
+                    button.innerHTML = originalHTML;
+                    return;
+                }
+                const data = parsed.data;
+                if (!response.ok) {
+                    alert(formatConnectionTestAlertPayload({
+                        success: false,
+                        message: (data && data.message) || response.statusText,
+                        latency_ms: data && data.latency_ms,
+                        details: data && data.details,
+                    }));
+                    button.disabled = false;
+                    button.innerHTML = originalHTML;
+                    return;
+                }
+                alert(formatConnectionTestAlertPayload(data));
                 if (data.success) {
-                    alert('Connection test successful! Found ' + data.modules.length + ' modules.');
-                    // Reload the page to show updated last_tested_at
                     window.location.reload();
                 } else {
-                    alert('Connection test failed: ' + data.message);
                     button.disabled = false;
                     button.innerHTML = originalHTML;
                 }

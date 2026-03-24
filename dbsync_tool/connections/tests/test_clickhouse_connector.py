@@ -6,6 +6,8 @@ from connections.connectors.clickhouse import ClickHouseConnector
 from connections.connectors.base import ColumnInfo
 from core.exceptions import DatabaseConnectionError, TableNotFoundError
 import os
+from unittest.mock import Mock
+import pandas as pd
 
 
 class ClickHouseConnectorTests(TestCase):
@@ -259,6 +261,41 @@ class ClickHouseConnectorTests(TestCase):
             self.connector.close()
         except DatabaseConnectionError:
             self.skipTest("ClickHouse not available for testing")
+
+    def test_upsert_dataframe_normalizes_nulls_and_calls_bulk_insert(self):
+        """
+        Ensure upsert_dataframe does not raise when DataFrame has NULLs
+        and that bulk_insert is called with normalized rows (no None values).
+        """
+        # Use a connector but mock out the actual connection + bulk_insert
+        connector = ClickHouseConnector(
+            host='localhost',
+            port=9000,
+            username='default',
+            password='',
+            database_name='default',
+        )
+        connector._connection = True  # Pretend we are connected
+        connector.execute_query = Mock()
+        connector.bulk_insert = Mock()
+
+        df = pd.DataFrame(
+            [
+                {'id': 1, 'token_expiry': None, 'name': 'Alice'},
+                {'id': 2, 'token_expiry': pd.NaT, 'name': None},
+            ]
+        )
+
+        # Should not raise and should call bulk_insert once
+        connector.upsert_dataframe('Test1', 'HR_teamsauth_teamsprofile', df, key_column='id')
+
+        connector.bulk_insert.assert_called_once()
+        args, kwargs = connector.bulk_insert.call_args
+        rows = kwargs.get('rows') or args[2]
+        # None values should have been normalized away
+        for row in rows:
+            for value in row:
+                self.assertIsNotNone(value)
     
     def test_create_table_with_nullable_types(self):
         """Test table creation with Nullable types"""

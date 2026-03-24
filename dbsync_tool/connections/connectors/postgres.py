@@ -328,6 +328,27 @@ class PostgresConnector(DBConnector):
                 cursor.execute(query)
             self._connection.commit()
             return cursor
+
+    def execute_query_fetchall(
+        self,
+        query: str,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> List[Tuple]:
+        """
+        Execute a SELECT query and return all rows.
+
+        Important: we fetch inside the cursor context so the caller doesn't
+        attempt to `fetchall()` from an already-closed cursor.
+        """
+        if not self._connection:
+            self.connect()
+
+        with self._connection.cursor() as cursor:
+            if params:
+                cursor.execute(query, params)
+            else:
+                cursor.execute(query)
+            return cursor.fetchall()
     
     def _format_default_value(self, default_value: str, data_type: str) -> str:
         """

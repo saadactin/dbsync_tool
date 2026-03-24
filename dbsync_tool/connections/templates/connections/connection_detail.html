@@ -186,6 +186,7 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{% static 'js/connection_test_alert.js' %}"></script>
 <script>
 // Get CSRF token
 function getCookie(name) {
@@ -223,13 +224,26 @@ document.addEventListener('DOMContentLoaded', function() {
                     'Content-Type': 'application/json',
                 },
             })
-            .then(response => response.json())
-            .then(data => {
+            .then(response => response.text().then(text => ({ response, text })))
+            .then(({ response, text }) => {
+                const parsed = parseConnectionTestResponse(response, text);
+                if (!parsed.ok) {
+                    alert(parsed.errorMessage);
+                    return;
+                }
+                const data = parsed.data;
+                if (!response.ok) {
+                    alert(formatConnectionTestAlertPayload({
+                        success: false,
+                        message: (data && data.message) || response.statusText,
+                        latency_ms: data && data.latency_ms,
+                        details: data && data.details,
+                    }));
+                    return;
+                }
+                alert(formatConnectionTestAlertPayload(data));
                 if (data.success) {
-                    alert('Connection test successful!');
                     window.location.reload();
-                } else {
-                    alert('Connection test failed: ' + data.message);
                 }
             })
             .catch(error => {

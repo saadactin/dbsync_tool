@@ -170,6 +170,22 @@ class DBConnector(ABC):
             Cursor or result object
         """
         pass
+
+    def execute_query_fetchall(
+        self,
+        query: str,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> List[Tuple]:
+        """
+        Execute a SELECT query and return all rows.
+
+        This exists because some connectors' `execute_query()` implementations
+        close the cursor before returning (so `cursor.fetchall()` can't be
+        called by the caller).
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__}.execute_query_fetchall is not implemented"
+        )
     
     @abstractmethod
     def create_table(self, schema: str, table: str, columns: List[ColumnInfo]):

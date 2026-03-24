@@ -83,6 +83,24 @@ function handleTestConnection() {
                 testMessage.innerHTML = '<div class="alert alert-danger">Please fill in SAP Base URL, User Name, Company DB' + (needPassword ? ', and Password' : '') + ' before testing. ' + (needPassword ? 'Check that the Base URL uses HTTPS (e.g. https://yourserver:50000/b1s/v2/).' : 'On edit, leave password blank to use the existing stored password.') + '</div>';
                 return;
             }
+        } else if (apiType === 'azure_devops') {
+            const name = document.getElementById('id_name').value;
+            const organization = (document.getElementById('id_organization') || {}).value;
+            const azureTenantId = (document.getElementById('id_azure_tenant_id') || {}).value;
+            const azureClientId = (document.getElementById('id_azure_client_id') || {}).value;
+            const azureClientSecret = (document.getElementById('id_azure_client_secret') || {}).value;
+            if (!name || !organization || !azureTenantId || !azureClientId || !azureClientSecret) {
+                testMessage.innerHTML = '<div class="alert alert-danger">Please fill in all required Azure DevOps fields (name, organization, tenant ID, client ID, client secret) before testing.</div>';
+                return;
+            }
+            formData = {
+                name: name,
+                api_type: 'azure_devops',
+                organization: organization,
+                azure_tenant_id: azureTenantId,
+                azure_client_id: azureClientId,
+                azure_client_secret: azureClientSecret,
+            };
         } else {
             formData = {
                 name: document.getElementById('id_name').value,
@@ -110,10 +128,28 @@ function handleTestConnection() {
             headers: { 'X-CSRFToken': csrftoken, 'Content-Type': 'application/json' },
             body: JSON.stringify(formData),
         })
-        .then(function(response) { return response.json(); })
-        .then(function(data) {
+        .then(function(response) { return response.text().then(function(text) { return { response: response, text: text }; }); })
+        .then(function(ref) {
+            var parsed = parseConnectionTestResponse(ref.response, ref.text);
+            if (!parsed.ok) {
+                testMessage.innerHTML = '<div class="alert alert-danger">' + parsed.errorMessage + '</div>';
+                if (moduleSection) moduleSection.style.display = 'none';
+                if (endpointSection) endpointSection.style.display = 'none';
+                testBtn.classList.remove('btn-success');
+                testBtn.classList.add('btn-info');
+                return;
+            }
+            var data = parsed.data;
+            if (!ref.response.ok) {
+                testMessage.innerHTML = '<div class="alert alert-danger">' + formatConnectionTestMessageHtml(data) + '</div>';
+                if (moduleSection) moduleSection.style.display = 'none';
+                if (endpointSection) endpointSection.style.display = 'none';
+                testBtn.classList.remove('btn-success');
+                testBtn.classList.add('btn-info');
+                return;
+            }
             if (data.success) {
-                testMessage.innerHTML = '<div class="alert alert-success"><i class="bi bi-check-circle-fill"></i> <strong>Connection Successful!</strong> ' + data.message + '</div>';
+                testMessage.innerHTML = '<div class="alert alert-success"><i class="bi bi-check-circle-fill"></i> ' + formatConnectionTestMessageHtml(data) + '</div>';
                 testBtn.classList.remove('btn-info');
                 testBtn.classList.add('btn-success');
                 testText.textContent = '✓ Connection Successful';
@@ -142,7 +178,7 @@ function handleTestConnection() {
                     if (endpointSection) endpointSection.style.display = 'none';
                 }
             } else {
-                testMessage.innerHTML = '<div class="alert alert-danger"><i class="bi bi-x-circle-fill"></i> <strong>Connection Failed:</strong> ' + data.message + '</div>';
+                testMessage.innerHTML = '<div class="alert alert-danger"><i class="bi bi-x-circle-fill"></i> ' + formatConnectionTestMessageHtml(data) + '</div>';
                 if (moduleSection) moduleSection.style.display = 'none';
                 if (endpointSection) endpointSection.style.display = 'none';
                 testBtn.classList.remove('btn-success');
@@ -189,15 +225,17 @@ function displayModuleSelection(modules, selectedModulesField) {
         }
     }
     
-    // Create checkboxes for each module
+    // Create checkboxes for each module/project
     modules.forEach(module => {
-        const isChecked = selectedModules.includes(module);
+        const value = typeof module === 'string' ? module : (module.name || module.id || '');
+        const labelText = typeof module === 'string' ? module : (module.name || module.id || '');
+        const isChecked = selectedModules.includes(value);
         const checkboxDiv = document.createElement('div');
         checkboxDiv.className = 'form-check';
         checkboxDiv.innerHTML = `
-            <input class="form-check-input" type="checkbox" value="${module}" id="module_${module}" ${isChecked ? 'checked' : ''}>
-            <label class="form-check-label" for="module_${module}">
-                ${module}
+            <input class="form-check-input module-cb" type="checkbox" value="${value}" id="module_${value}" ${isChecked ? 'checked' : ''}>
+            <label class="form-check-label" for="module_${value}">
+                ${labelText}
             </label>
         `;
         moduleCheckboxes.appendChild(checkboxDiv);
@@ -212,6 +250,18 @@ function displayModuleSelection(modules, selectedModulesField) {
     
     // Initial update
     updateSelectedModules(selectedModulesField);
+
+    // Ensure any "Select all" control works if present
+    const selectAll = document.getElementById('modules-select-all-cb');
+    if (selectAll) {
+        selectAll.onchange = function() {
+            const checked = selectAll.checked;
+            moduleCheckboxes.querySelectorAll('input.module-cb').forEach(function(cb) {
+                cb.checked = checked;
+            });
+            updateSelectedModules(selectedModulesField);
+        };
+    }
 }
 
 // Update selected modules hidden field
@@ -283,12 +333,16 @@ function setupFormValidation() {
     if (!form) return;
     form.addEventListener('submit', function(e) {
         const apiType = apiTypeSelect ? apiTypeSelect.value : 'zoho_crm';
+        console.log('[API Form] submit handler fired', {
+            apiType: apiType,
+            sapEndpointsRaw: sapEndpointsField ? sapEndpointsField.value : null
+        });
         if (apiType === 'sap_b1') {
-            var endpointsList = (typeof SAP_DOCUMENT_TYPES !== 'undefined' && Array.isArray(SAP_DOCUMENT_TYPES)) ? SAP_DOCUMENT_TYPES : [];
-            if (sapEndpointsField && endpointsList.length > 0) {
-                updateSapEndpoints(sapEndpointsField, endpointsList);
-            }
+            // Require at least one endpoint checkbox to be selected
             var checkedCbs = document.querySelectorAll('#endpoint-checkboxes input.endpoint-cb:checked');
+            console.log('[API Form] SAP submit validation', {
+                checkedCount: checkedCbs.length
+            });
             if (checkedCbs.length === 0) {
                 e.preventDefault();
                 alert('Select at least one endpoint.');
@@ -301,21 +355,13 @@ function setupFormValidation() {
                 if (endpointSection) endpointSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 return false;
             }
-            var endpoints = [];
-            try {
-                endpoints = sapEndpointsField && sapEndpointsField.value ? JSON.parse(sapEndpointsField.value) : [];
-            } catch (err) { endpoints = []; }
-            if (!Array.isArray(endpoints) || endpoints.length === 0) {
-                var list = endpointsList.length > 0 ? endpointsList : [];
-                var fallback = [];
-                checkedCbs.forEach(function(cb) {
-                    var key = cb.value;
-                    var obj = list.find(function(e) { return (e.endpoint || e) === key; });
-                    fallback.push(obj || { endpoint: key, name: key, id_field: '' });
+            // Ensure hidden sap_endpoints JSON matches the currently checked endpoints
+            var endpointsList = (typeof SAP_DOCUMENT_TYPES !== 'undefined' && Array.isArray(SAP_DOCUMENT_TYPES)) ? SAP_DOCUMENT_TYPES : [];
+            if (sapEndpointsField) {
+                updateSapEndpoints(sapEndpointsField, endpointsList);
+                console.log('[API Form] SAP endpoints updated before submit', {
+                    sapEndpointsRaw: sapEndpointsField.value
                 });
-                if (sapEndpointsField && fallback.length > 0) {
-                    sapEndpointsField.value = JSON.stringify(fallback);
-                }
             }
         } else {
             let selectedModules = [];
@@ -342,26 +388,80 @@ function toggleApiTypeSections() {
     const apiTypeSelect = document.getElementById('id_api_type');
     const zohoFields = document.getElementById('zoho-fields');
     const sapFields = document.getElementById('sap-fields');
+    const azureFields = document.getElementById('azure-devops-fields');
     const moduleSection = document.getElementById('module-selection-section');
     const endpointSection = document.getElementById('endpoint-selection-section');
     const sapEndpointsField = document.getElementById('id_sap_endpoints');
+    // Zoho-only credential inputs (must be ignored when using SAP)
+    const clientIdField = document.getElementById('id_client_id');
+    const clientSecretField = document.getElementById('id_client_secret');
+    const refreshTokenField = document.getElementById('id_refresh_token');
+    const apiDomainField = document.getElementById('id_api_domain');
+    const tokenUrlField = document.getElementById('id_token_url');
     if (!apiTypeSelect) return;
     const apiType = apiTypeSelect.value;
     if (apiType === 'sap_b1') {
         if (zohoFields) zohoFields.style.display = 'none';
         if (sapFields) sapFields.style.display = 'block';
+        if (azureFields) azureFields.style.display = 'none';
         if (moduleSection) moduleSection.style.display = 'none';
         if (endpointSection) endpointSection.style.display = 'block';
+
+        // Disable Zoho fields so HTML5 validation does not block SAP submits
+        [clientIdField, clientSecretField, refreshTokenField, apiDomainField, tokenUrlField].forEach(function (field) {
+            if (field) {
+                field.disabled = true;
+                field.removeAttribute('required');
+                field.classList.remove('is-invalid');
+            }
+        });
+
         if (typeof SAP_DOCUMENT_TYPES !== 'undefined' && Array.isArray(SAP_DOCUMENT_TYPES) && SAP_DOCUMENT_TYPES.length > 0 && sapEndpointsField) {
             let selected = [];
             try { selected = sapEndpointsField.value ? JSON.parse(sapEndpointsField.value) : []; } catch (e) { selected = []; }
             displayEndpointSelection(SAP_DOCUMENT_TYPES, sapEndpointsField, selected.length > 0 ? selected : SAP_DOCUMENT_TYPES);
         }
+    } else if (apiType === 'azure_devops') {
+        if (zohoFields) zohoFields.style.display = 'none';
+        if (sapFields) sapFields.style.display = 'none';
+        if (azureFields) azureFields.style.display = 'block';
+        if (moduleSection) moduleSection.style.display = 'block';
+        if (endpointSection) endpointSection.style.display = 'none';
+
+        // Re-enable Zoho fields as non-required and disable SAP-specific validation
+        [clientIdField, clientSecretField, refreshTokenField, apiDomainField, tokenUrlField].forEach(function (field) {
+            if (field) {
+                field.disabled = false;
+                field.removeAttribute('required');
+                field.classList.remove('is-invalid');
+            }
+        });
     } else {
         if (zohoFields) zohoFields.style.display = 'block';
         if (sapFields) sapFields.style.display = 'none';
+        if (azureFields) azureFields.style.display = 'none';
         if (moduleSection) moduleSection.style.display = 'block';
         if (endpointSection) endpointSection.style.display = 'none';
+
+        // Re-enable Zoho fields and mark required where appropriate
+        if (clientIdField) {
+            clientIdField.disabled = false;
+        }
+        if (clientSecretField) {
+            clientSecretField.disabled = false;
+            clientSecretField.setAttribute('required', 'required');
+        }
+        if (refreshTokenField) {
+            refreshTokenField.disabled = false;
+            refreshTokenField.setAttribute('required', 'required');
+        }
+        if (apiDomainField) {
+            apiDomainField.disabled = false;
+            apiDomainField.setAttribute('required', 'required');
+        }
+        if (tokenUrlField) {
+            tokenUrlField.disabled = false;
+        }
     }
 }
 
@@ -451,6 +551,17 @@ document.addEventListener('DOMContentLoaded', function() {
     if (endpointCheckboxes && sapEndpointsField && typeof SAP_DOCUMENT_TYPES !== 'undefined' && Array.isArray(SAP_DOCUMENT_TYPES)) {
         endpointCheckboxes.addEventListener('change', function() {
             updateSapEndpoints(sapEndpointsField, SAP_DOCUMENT_TYPES);
+        });
+    }
+    const submitBtn = document.getElementById('submit-btn');
+    if (submitBtn) {
+        submitBtn.addEventListener('click', function() {
+            const apiType = apiTypeSelect ? apiTypeSelect.value : null;
+            console.log('[API Form] submit button clicked', {
+                apiType: apiType,
+                sapEndpointsRaw: sapEndpointsField ? sapEndpointsField.value : null,
+                disabled: submitBtn.disabled
+            });
         });
     }
 });

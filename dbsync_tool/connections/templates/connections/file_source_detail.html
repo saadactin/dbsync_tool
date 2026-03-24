@@ -1,0 +1,93 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{{ file_source.name }} - File Source{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>{{ file_source.name }}</h1>
+        <div class="btn-group" role="group">
+            {% if not user.userprofile.is_viewer %}
+                <button type="button" class="btn btn-info test-file-source" data-source-id="{{ file_source.id }}">
+                    <span>🧪</span> Test File Source
+                </button>
+                <a href="{% url 'connections:file_source_update' file_source.id %}" class="btn btn-secondary">
+                    <span>✏️</span> Edit
+                </a>
+                <a href="{% url 'connections:file_source_delete' file_source.id %}" class="btn btn-danger">
+                    <span>🗑️</span> Delete
+                </a>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header"><h5>File Source Details</h5></div>
+        <div class="card-body">
+            <table class="table table-borderless">
+                <tr><th width="220">Name:</th><td>{{ file_source.name }}</td></tr>
+                <tr><th>Relative Path:</th><td><code>{{ file_source.relative_path }}</code></td></tr>
+                <tr><th>Delimiter:</th><td><code>{{ file_source.delimiter }}</code></td></tr>
+                <tr><th>Encoding:</th><td>{{ file_source.encoding }}</td></tr>
+                <tr><th>Has Header:</th><td>{% if file_source.has_header %}Yes{% else %}No{% endif %}</td></tr>
+                <tr><th>Status:</th><td>{% if file_source.is_active %}<span class="badge bg-success">Active</span>{% else %}<span class="badge bg-secondary">Inactive</span>{% endif %}</td></tr>
+                <tr><th>Created By:</th><td>{{ file_source.created_by.username }}</td></tr>
+                <tr><th>Created:</th><td>{{ file_source.created_at|date:"F d, Y H:i" }}</td></tr>
+                <tr><th>Last Updated:</th><td>{{ file_source.updated_at|date:"F d, Y H:i" }}</td></tr>
+            </table>
+            <a href="{% url 'connections:file_source_list' %}" class="btn btn-outline-secondary">← Back to File Sources</a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/connection_test_alert.js' %}"></script>
+<script>
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const testButton = document.querySelector('.test-file-source');
+    const csrftoken = getCookie('csrftoken');
+    if (!testButton) return;
+    testButton.addEventListener('click', function() {
+        const sourceId = this.getAttribute('data-source-id');
+        const originalHTML = this.innerHTML;
+        this.disabled = true;
+        this.innerHTML = '<span>⏳</span> Testing...';
+        fetch(`/connections/files/${sourceId}/test/`, {
+            method: 'POST',
+            headers: { 'X-CSRFToken': csrftoken, 'Content-Type': 'application/json' },
+        })
+        .then(response => response.text().then(text => ({ response, text })))
+        .then(({ response, text }) => {
+            const parsed = parseConnectionTestResponse(response, text);
+            if (!parsed.ok) {
+                alert(parsed.errorMessage);
+                return;
+            }
+            alert(formatConnectionTestAlertPayload(parsed.data));
+        })
+        .catch(error => alert('Error testing file source: ' + error.message))
+        .finally(() => {
+            this.disabled = false;
+            this.innerHTML = originalHTML;
+        });
+    });
+});
+</script>
+{% endblock %}

@@ -22,9 +22,9 @@ DEFAULT_BATCH_SIZE = 1000
 
 
 def _normalize_target_table_name(endpoint_name: str) -> str:
-    """SAP tables use sap_ prefix; endpoint name to snake_case."""
+    """SAP tables use SAP_ prefix; endpoint name to snake_case."""
     normalized = endpoint_name.lower().replace(" ", "_").replace("-", "_")
-    return f"sap_{normalized}"
+    return f"SAP_{normalized}"
 
 
 class SAPSyncExecutor:
@@ -48,14 +48,22 @@ class SAPSyncExecutor:
         self.batch_size = DEFAULT_BATCH_SIZE
 
     def execute(self):
-        """Dispatch by job.sync_type; catch, log, re-raise so main executor can mark failed."""
+        """Dispatch to optimized async executor."""
         try:
-            if self.job.sync_type == "full":
-                self.execute_full_sync()
-            elif self.job.sync_type == "incremental":
-                self.execute_incremental_sync()
-            else:
-                raise ValueError(f"Unknown sync type: {self.job.sync_type}")
+            from sync_engine.sap_optimized import OptimizedSAPSyncExecutor
+            import asyncio
+            
+            logger.info(f"Starting optimized SAP sync for job {self.job.id}")
+            optimized_executor = OptimizedSAPSyncExecutor(
+                self.job,
+                self.execution,
+                self.api_connector.api_connection,
+                self.target_connector
+            )
+            
+            # Use asyncio.run to execute the async logic from this sync method
+            asyncio.run(optimized_executor.execute())
+            
         except Exception as e:
             logger.error(
                 f"SAP sync execution failed for job {self.job.id}: {str(e)}",
@@ -121,7 +129,9 @@ class SAPSyncExecutor:
 
             df = self.transformer.prepare_for_database(df, self._get_target_db_type())
             target_schema = self.target_connector.database_name
-            target_table = _normalize_target_table_name(endpoint_name)
+            base_table = _normalize_target_table_name(endpoint_name)
+            prefix = getattr(self.job, 'target_table_prefix', None)
+            target_table = f"{prefix}_{base_table}" if prefix else base_table
             self._ensure_table_exists(df, target_schema, target_table)
             try:
                 self.target_connector.truncate_table(target_schema, target_table)
@@ -227,7 +237,9 @@ class SAPSyncExecutor:
             new_or_changed_records = [records_by_id[k] for k in new_or_changed_ids if k in records_by_id]
 
             target_schema = self.target_connector.database_name
-            target_table = _normalize_target_table_name(endpoint_name)
+            base_table = _normalize_target_table_name(endpoint_name)
+            prefix = getattr(self.job, 'target_table_prefix', None)
+            target_table = f"{prefix}_{base_table}" if prefix else base_table
 
             if deleted_ids:
                 self._delete_records_by_ids(target_schema, target_table, id_field, deleted_ids)
@@ -237,7 +249,24 @@ class SAPSyncExecutor:
                 df = self.transformer.flatten_json(new_or_changed_records)
                 if not df.empty:
                     df = self.transformer.prepare_for_database(df, self._get_target_db_type())
-                    self._ensure_table_exists(df, target_schema, target_table)
+                    if not self.target_connector.table_exists(target_schema, target_table):
+                        prefix = getattr(self.job, "target_table_prefix", None)
+                        warning_msg = (
+                            f"Skipped SAP incremental sync for endpoint {endpoint_name}: "
+                            f"target table {target_schema}.{target_table} does not exist. "
+                            f"Incremental sync does not create new tables "
+                            f"(reason=missing_target_table, prefix={prefix or 'none'}, sync_type=incremental)."
+                        )
+                        logger.warning(warning_msg)
+                        log.rows_fetched = len(records)
+                        log.rows_inserted = 0
+                        log.status = "completed"
+                        log.error_message = warning_msg
+                        log.completed_at = timezone.now()
+                        log.save()
+                        self._update_execution_progress()
+                        return
+                    self.target_connector.add_missing_columns(target_schema, target_table, df)
                     id_column_df = id_field if id_field in df.columns else next(
                         (c for c in df.columns if c.lower() == id_field.lower()),
                         id_field,

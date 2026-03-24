@@ -1,0 +1,154 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}File Sources - DB Sync Tool{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>File Sources</h1>
+        <div class="btn-group" role="group">
+            <a href="{% url 'connections:list' %}" class="btn btn-outline-primary">
+                <span>🗄️</span> Database Connections{% if db_connections_count > 0 %} ({{ db_connections_count }}){% endif %}
+            </a>
+            <a href="{% url 'connections:api_list' %}" class="btn btn-outline-success">
+                <span>🔌</span> API Connections{% if api_connections_count > 0 %} ({{ api_connections_count }}){% endif %}
+            </a>
+            {% if not user.userprofile.is_viewer %}
+                <a href="{% url 'connections:file_source_create' %}" class="btn btn-primary">
+                    <span>➕</span> Add File Source
+                </a>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-body p-0">
+            {% if file_sources %}
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Relative Path</th>
+                                <th>Delimiter</th>
+                                <th>Encoding</th>
+                                <th>Header</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for source in file_sources %}
+                            <tr>
+                                <td>
+                                    <a href="{% url 'connections:file_source_detail' source.id %}" class="text-decoration-none fw-semibold">
+                                        {{ source.name }}
+                                    </a>
+                                </td>
+                                <td><code>{{ source.relative_path }}</code></td>
+                                <td><code>{{ source.delimiter }}</code></td>
+                                <td>{{ source.encoding }}</td>
+                                <td>
+                                    {% if source.has_header %}
+                                        <span class="badge bg-info">Yes</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">No</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if source.is_active %}
+                                        <span class="badge bg-success">Active</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">Inactive</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="btn-group" role="group">
+                                        <a href="{% url 'connections:file_source_detail' source.id %}" class="btn btn-sm btn-outline-primary" title="View">
+                                            <span>👁️</span>
+                                        </a>
+                                        {% if not user.userprofile.is_viewer %}
+                                            <a href="{% url 'connections:file_source_update' source.id %}" class="btn btn-sm btn-outline-secondary" title="Edit">
+                                                <span>✏️</span>
+                                            </a>
+                                            <button type="button" class="btn btn-sm btn-outline-info test-file-source" data-source-id="{{ source.id }}" title="Test">
+                                                <span>🧪</span>
+                                            </button>
+                                            <a href="{% url 'connections:file_source_delete' source.id %}" class="btn btn-sm btn-outline-danger" title="Delete">
+                                                <span>🗑️</span>
+                                            </a>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="text-center py-5">
+                    <h5 class="text-muted">No file sources found</h5>
+                    <p class="text-muted">Add a file source to use CSV files as sync input.</p>
+                    {% if not user.userprofile.is_viewer %}
+                        <a href="{% url 'connections:file_source_create' %}" class="btn btn-primary">
+                            <span>➕</span> Add File Source
+                        </a>
+                    {% endif %}
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/connection_test_alert.js' %}"></script>
+<script>
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const csrftoken = getCookie('csrftoken');
+    document.querySelectorAll('.test-file-source').forEach(button => {
+        button.addEventListener('click', function() {
+            const sourceId = this.getAttribute('data-source-id');
+            const originalHTML = this.innerHTML;
+            this.disabled = true;
+            this.innerHTML = '<span>⏳</span>';
+            fetch(`/connections/files/${sourceId}/test/`, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrftoken, 'Content-Type': 'application/json' },
+            })
+            .then(response => response.text().then(text => ({ response, text })))
+            .then(({ response, text }) => {
+                const parsed = parseConnectionTestResponse(response, text);
+                if (!parsed.ok) {
+                    alert(parsed.errorMessage);
+                    return;
+                }
+                const data = parsed.data;
+                alert(formatConnectionTestAlertPayload(data));
+            })
+            .catch(error => alert('Error testing file source: ' + error.message))
+            .finally(() => {
+                this.disabled = false;
+                this.innerHTML = originalHTML;
+            });
+        });
+    });
+});
+</script>
+{% endblock %}

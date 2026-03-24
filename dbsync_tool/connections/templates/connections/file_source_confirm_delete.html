@@ -1,0 +1,31 @@
+{% extends 'base.html' %}
+
+{% block title %}Delete File Source - DB Sync Tool{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-6 offset-md-3">
+            <div class="card border-danger">
+                <div class="card-header bg-danger text-white">
+                    <h5 class="mb-0">Confirm Delete</h5>
+                </div>
+                <div class="card-body">
+                    <p>Are you sure you want to delete this file source?</p>
+                    <ul class="list-group mb-3">
+                        <li class="list-group-item"><strong>Name:</strong> {{ object.name }}</li>
+                        <li class="list-group-item"><strong>Relative Path:</strong> <code>{{ object.relative_path }}</code></li>
+                        <li class="list-group-item"><strong>Encoding:</strong> {{ object.encoding }}</li>
+                        <li class="list-group-item"><strong>Delimiter:</strong> <code>{{ object.delimiter }}</code></li>
+                    </ul>
+                    <form method="post">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-danger">Delete File Source</button>
+                        <a href="{% url 'connections:file_source_detail' object.id %}" class="btn btn-secondary">Cancel</a>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

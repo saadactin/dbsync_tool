@@ -1,6 +1,7 @@
 """
 Full sync implementation
 """
+import os
 from typing import List, Optional, Tuple, Dict, Any
 from django.utils import timezone
 from django.db.models import Sum
@@ -17,6 +18,15 @@ from core.type_mapping import map_source_to_oracle_type, normalize_data_type
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def get_target_table_name(job, source_table_name: str) -> str:
+    """Return target table name (with optional prefix). Source name unchanged if no prefix."""
+    prefix = getattr(job, 'target_table_prefix', None)
+    if prefix:
+        return f"{prefix}_{source_table_name}"
+    return source_table_name
+
 
 class FullSyncExecutor:
     """Executes full sync for a job"""
@@ -73,9 +83,16 @@ class FullSyncExecutor:
         target_type = self._get_db_type(self.target_connector)
         
         # Different databases have different optimal batch sizes
+        # Oracle ADW: default 100 to reduce ORA-01536 risk; set ORACLE_SYNC_BATCH_SIZE (e.g. 2000–5000) to speed up once quota is sufficient
         # PostgreSQL can handle larger batches
         # MySQL and SQL Server may need smaller batches
         # ClickHouse can handle larger batches similar to PostgreSQL
+        if target_type == 'oracle':
+            try:
+                batch = int(os.environ.get("ORACLE_SYNC_BATCH_SIZE", "100"))
+            except ValueError:
+                batch = 100
+            return max(MIN_BATCH_SIZE, min(MAX_BATCH_SIZE, batch))
         if source_type == 'postgres' and target_type == 'postgres':
             return min(MAX_BATCH_SIZE, DEFAULT_BATCH_SIZE * 2)  # 10000
         elif source_type == 'clickhouse' or target_type == 'clickhouse':
@@ -98,6 +115,8 @@ class FullSyncExecutor:
             return 'sqlserver'
         elif 'ClickHouse' in class_name:
             return 'clickhouse'
+        elif 'Oracle' in class_name:
+            return 'oracle'
         else:
             return 'unknown'
     
@@ -374,6 +393,7 @@ class FullSyncExecutor:
         """
         schema = job_table.schema_name
         table = job_table.table_name
+        target_table = get_target_table_name(self.job, table)
         
         # Determine target schema
         # For databases WITH schemas (PostgreSQL, SQL Server): always use target's default schema
@@ -421,7 +441,15 @@ class FullSyncExecutor:
             
             # Ensure target table exists (uses correct schema mapping internally)
             try:
-                self.table_handler.create_table_if_not_exists(schema, table)
+                self.table_handler.create_table_if_not_exists(
+                    schema,
+                    table,
+                    column_type_overrides=getattr(job_table, "column_type_overrides", None) or {},
+                    column_name_overrides=getattr(job_table, "column_name_overrides", None) or {},
+                    excluded_columns=getattr(job_table, "excluded_columns", None) or [],
+                    protected_columns=getattr(job_table, "protected_columns", None) or [],
+                    target_table=target_table,
+                )
             except Exception as e:
                 error_msg = f"Failed to create/verify target table: {str(e)}"
                 logger.error(f"Table creation error for {schema}.{table}: {error_msg}", exc_info=True)
@@ -435,22 +463,22 @@ class FullSyncExecutor:
                     target_db_type = self.table_handler.target_db_type
                     # Oracle and SQL Server return uppercase/case-insensitive names; match case-insensitively.
                     if target_db_type in ('sqlserver', 'oracle'):
-                        table_exists = any(t.upper() == table.upper() for t in target_tables)
+                        table_exists = any(t.upper() == target_table.upper() for t in target_tables)
                     else:
-                        table_exists = table in target_tables
+                        table_exists = target_table in target_tables
                     if table_exists:
-                        self.target_connector.truncate_table(target_schema, table)
-                        logger.debug(f"Truncated {target_schema}.{table} for full sync replace")
+                        self.target_connector.truncate_table(target_schema, target_table)
+                        logger.debug(f"Truncated {target_schema}.{target_table} for full sync replace")
                     else:
-                        logger.info(f"Target table {target_schema}.{table} does not exist yet, skipping truncate")
+                        logger.info(f"Target table {target_schema}.{target_table} does not exist yet, skipping truncate")
                 except Exception as check_error:
                     logger.debug(f"Could not check table existence: {check_error}, trying truncate anyway")
-                    self.target_connector.truncate_table(target_schema, table)
+                    self.target_connector.truncate_table(target_schema, target_table)
             except Exception as e:
                 # If truncate fails, log warning but continue (table might not exist yet or be empty)
                 error_str = str(e)
                 if 'does not exist' in error_str or 'Cannot find the object' in error_str:
-                    logger.warning(f"Target table {target_schema}.{table} may not exist yet, skipping truncate: {error_str}")
+                    logger.warning(f"Target table {target_schema}.{target_table} may not exist yet, skipping truncate: {error_str}")
                 else:
                     error_msg = f"Failed to truncate target table: {error_str}"
                     logger.error(f"Table truncate error for {schema}.{table}: {error_msg}", exc_info=True)
@@ -459,6 +487,8 @@ class FullSyncExecutor:
             # Get primary key for ordering
             try:
                 pk_columns = self.source_connector.get_primary_key(schema, table)
+                if not isinstance(pk_columns, (list, tuple)):
+                    pk_columns = []
                 if pk_columns:
                     order_by = ', '.join(pk_columns)
                 else:
@@ -472,12 +502,49 @@ class FullSyncExecutor:
                 logger.warning(f"Could not determine primary key for {schema}.{table}: {str(e)}")
                 order_by = None
             
-            # Get column names
+            # Get column names and apply any column type overrides from the job
             try:
                 columns = self.source_connector.get_columns(schema, table)
                 if not columns:
                     raise TableSyncError(f"No columns found for source table {schema}.{table}")
+                # Apply column_type_overrides, if any, to ColumnInfo.data_type before target table creation
+                overrides = getattr(job_table, "column_type_overrides", None) or {}
+                if overrides:
+                    for col in columns:
+                        override_type = overrides.get(col.name.lower())
+                        if override_type:
+                            col.data_type = override_type
+                raw_protected = getattr(job_table, "protected_columns", None)
+                if not isinstance(raw_protected, (list, tuple, set)):
+                    raw_protected = []
+                raw_excluded = getattr(job_table, "excluded_columns", None)
+                if not isinstance(raw_excluded, (list, tuple, set)):
+                    raw_excluded = []
+                protected_cols = {
+                    (c or "").strip().lower()
+                    for c in raw_protected
+                    if c
+                }
+                excluded_cols = {
+                    (c or "").strip().lower()
+                    for c in raw_excluded
+                    if c
+                }
+                effective_excluded = excluded_cols - protected_cols
+                if effective_excluded:
+                    columns = [col for col in columns if col.name.lower() not in effective_excluded]
+                    if not columns:
+                        raise TableSyncError(
+                            f"No migratable columns remain after exclusion rules for {schema}.{table}"
+                        )
+                # SOURCE column names: used for SELECT/keyset pagination and row transformations.
                 column_names = [col.name for col in columns]
+                # TARGET column names: used for INSERT/verification queries on the renamed target table.
+                rename_overrides = getattr(job_table, "column_name_overrides", None) or {}
+                target_column_names = [
+                    rename_overrides.get(col.name.lower(), col.name)
+                    for col in columns
+                ]
             except Exception as e:
                 error_msg = f"Failed to get columns from source table {schema}.{table}: {str(e)}"
                 logger.error(error_msg, exc_info=True)
@@ -528,21 +595,43 @@ class FullSyncExecutor:
             
             # Use transformed_query instead of base_query for fetching
             query = transformed_query
+            column_transformations = job_table.column_transformations
+            if not isinstance(column_transformations, dict):
+                column_transformations = {}
             
             # Fetch and insert in batches
-            offset = 0
             batch_number = 0
             total_rows_fetched = 0
             total_rows_inserted = 0
+            last_pk_values = None
+            
+            # Use Keyset Pagination if we have PKs and no complex transformation that prevents it
+            use_keyset = bool(pk_columns)
             
             while True:
-                # Fetch batch
-                batch = self.source_connector.fetch_batch(
-                    query=query,
-                    batch_size=self.batch_size,
-                    offset=offset,
-                    order_by=order_by
-                )
+                if use_keyset:
+                    # Fetch batch using keyset pagination
+                    current_query = self.query_builder.build_keyset_select_query(
+                        connector=self.source_connector,
+                        schema=schema,
+                        table=table,
+                        pk_columns=pk_columns,
+                        last_pk_values=last_pk_values,
+                        columns=column_names,
+                        where_clause=job_table.transformation_query,
+                        limit=self.batch_size,
+                        column_transformations=column_transformations
+                    )
+                    # For keyset, we don't use offset
+                    batch = self.source_connector.execute_query_fetchall(current_query)
+                else:
+                    # Fallback to OFFSET/FETCH
+                    batch = self.source_connector.fetch_batch(
+                        query=query,
+                        batch_size=self.batch_size,
+                        offset=total_rows_fetched,
+                        order_by=order_by
+                    )
                 
                 if not batch:
                     break  # No more rows
@@ -550,12 +639,29 @@ class FullSyncExecutor:
                 batch_number += 1
                 total_rows_fetched += len(batch)
                 
-                # Validate batch
+                # Update last_pk_values for next iteration
+                if use_keyset:
+                    last_row = batch[-1]
+                    # Map PK column names to indices in the results
+                    # Since we requested specific columns, we need to find their positions
+                    pk_indices = []
+                    for pk_col in pk_columns:
+                        try:
+                            pk_indices.append(column_names.index(pk_col))
+                        except ValueError:
+                            # If PK not in column_names (unlikely for SELECT *), fallback to OFFSET
+                            logger.warning(f"PK column {pk_col} not in fetched columns. Falling back to OFFSET.")
+                            use_keyset = False
+                            break
+                    
+                    if use_keyset:
+                        last_pk_values = [last_row[idx] for idx in pk_indices]
+                
+                # Validate batch (rest of the logic remains same)
                 self.validator.validate_batch_not_empty(batch, f"{schema}.{table}")
                 
                 # Apply row transformations if column transformations were applied
                 # (This is a fallback for transformations that couldn't be applied in SQL)
-                column_transformations = job_table.column_transformations or {}
                 if column_transformations:
                     batch = self.transformation_engine.apply_row_transformations(
                         batch=batch,
@@ -567,26 +673,31 @@ class FullSyncExecutor:
                 try:
                     bulk_kwargs = {
                         "schema": target_schema,
-                        "table": table,
-                        "columns": column_names,
+                        "table": target_table,
+                        "columns": target_column_names,
                         "rows": batch,
                     }
                     # Oracle: pass target column types for BLOB/CLOB value normalization
                     if self.table_handler.target_db_type == "oracle":
                         target_types = []
+                        overrides = getattr(job_table, "column_type_overrides", None) or {}
                         for col in columns:
-                            _, max_len, prec, scale = normalize_data_type(
-                                col.data_type, self.table_handler.source_db_type
-                            )
-                            target_types.append(
-                                map_source_to_oracle_type(
-                                    col.data_type,
-                                    self.table_handler.source_db_type,
-                                    max_length=col.max_length or max_len,
-                                    precision=prec,
-                                    scale=scale,
+                            override_type = overrides.get(col.name.lower())
+                            if override_type:
+                                target_types.append(override_type)
+                            else:
+                                _, max_len, prec, scale = normalize_data_type(
+                                    col.data_type, self.table_handler.source_db_type
                                 )
-                            )
+                                target_types.append(
+                                    map_source_to_oracle_type(
+                                        col.data_type,
+                                        self.table_handler.source_db_type,
+                                        max_length=col.max_length or max_len,
+                                        precision=prec,
+                                        scale=scale,
+                                    )
+                                )
                         bulk_kwargs["target_column_types"] = target_types
                     self.target_connector.bulk_insert(**bulk_kwargs)
                     total_rows_inserted += len(batch)
@@ -611,8 +722,6 @@ class FullSyncExecutor:
                 ).aggregate(total=Sum('rows_inserted'))['total'] or 0
                 self.execution.save()
                 
-                offset += self.batch_size
-                
                 # Check if we got fewer rows than batch size (last batch)
                 if len(batch) < self.batch_size:
                     break
@@ -632,8 +741,10 @@ class FullSyncExecutor:
                             job_table=job_table,
                             source_schema=schema,
                             target_schema=target_schema,
+                            target_table=target_table,
                             expected_row_count=expected_row_count,
                             column_names=column_names,
+                            target_column_names=target_column_names,
                             pre_migration_query_results=pre_migration_query_results  # NEW
                         )
                         
@@ -716,8 +827,10 @@ class FullSyncExecutor:
         job_table: SyncJobTable,
         source_schema: str,
         target_schema: str,
+        target_table: str,
         expected_row_count: int,
         column_names: List[str],
+        target_column_names: Optional[List[str]] = None,
         pre_migration_query_results: Optional[List[Tuple]] = None
     ) -> Tuple[bool, Optional[str], Dict[str, Any]]:
         """
@@ -729,6 +842,7 @@ class FullSyncExecutor:
             job_table: SyncJobTable instance with transformation fields
             source_schema: Source schema name
             target_schema: Target schema name
+            target_table: Target table name (may include prefix)
             expected_row_count: Expected row count (from pre-migration validation)
             column_names: List of column names
             pre_migration_query_results: Query results from pre-migration validation (NEW)
@@ -746,10 +860,18 @@ class FullSyncExecutor:
                 'mismatched_rows': [],
                 'mismatched_columns': []
             }
+
+            rename_by_lower = {}
+            if target_column_names and len(target_column_names) == len(column_names):
+                rename_by_lower = {
+                    src.lower(): tgt
+                    for src, tgt in zip(column_names, target_column_names)
+                    if src
+                }
             
             # Step 1: Verify row count
             try:
-                actual_count = self.target_connector.get_row_count(target_schema, job_table.table_name)
+                actual_count = self.target_connector.get_row_count(target_schema, target_table)
                 accuracy_report['actual_row_count'] = actual_count
                 accuracy_report['row_count_match'] = (actual_count == expected_row_count)
                 
@@ -758,7 +880,7 @@ class FullSyncExecutor:
                     target_db = QueryBuilder.get_db_type(self.target_connector)
                     db_context = ""
                     if source_db == 'oracle' or target_db == 'oracle':
-                        db_context = " (Oracle ADW involved; schema=%s, table=%s)" % (target_schema, job_table.table_name)
+                        db_context = " (Oracle ADW involved; schema=%s, table=%s)" % (target_schema, target_table)
                     error_msg = (
                         f"Row count mismatch: expected {expected_row_count}, got {actual_count}{db_context}"
                     )
@@ -775,21 +897,20 @@ class FullSyncExecutor:
                 from sync_engine.query_result_verifier import QueryResultVerifier
                 query_verifier = QueryResultVerifier(self.source_connector)
                 
-                # Fetch target data
-                table = job_table.table_name
+                # Fetch target data (use target_table for target DB)
                 try:
                     # Get order by column for consistent ordering
                     # CRITICAL: Use the SAME order_by that was used during pre-migration validation
                     # to ensure rows are in the same order
                     try:
-                        pk_columns = self.source_connector.get_primary_key(source_schema, table)
+                        pk_columns = self.source_connector.get_primary_key(source_schema, job_table.table_name)
                         if pk_columns:
                             order_by = ', '.join(pk_columns)
                         else:
                             # Fallback to first column
-                            order_by = column_names[0] if column_names else None
+                            order_by = (target_column_names or column_names)[0] if column_names else None
                     except:
-                        order_by = column_names[0] if column_names else None
+                        order_by = (target_column_names or column_names)[0] if column_names else None
                     
                     # Ensure order_by matches what was used in transformed_query
                     # Extract order_by from transformed_query if available
@@ -816,7 +937,7 @@ class FullSyncExecutor:
                             else:
                                 cols = [col.strip() for col in order_by_part.split(',')]
                             # Use the extracted order_by to ensure consistency
-                            order_by = ', '.join(cols)
+                            order_by = ', '.join([rename_by_lower.get(c.lower(), c) for c in cols])
                     
                     logger.debug(
                         f"Using ORDER BY for target query: {order_by} "
@@ -833,8 +954,8 @@ class FullSyncExecutor:
                             query=self.query_builder.build_select_query(
                                 connector=self.target_connector,
                                 schema=target_schema,
-                                table=table,
-                                columns=column_names,
+                                table=target_table,
+                                columns=(target_column_names or column_names),
                                 order_by=order_by
                             ),
                             batch_size=batch_size,
@@ -921,8 +1042,10 @@ class FullSyncExecutor:
                 job_table=job_table,
                 source_schema=source_schema,
                 target_schema=target_schema,
+                target_table=target_table,
                 expected_row_count=expected_row_count,
-                column_names=column_names
+                column_names=column_names,
+                target_column_names=target_column_names
             )
             
             # Merge accuracy reports

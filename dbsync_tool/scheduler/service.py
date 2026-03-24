@@ -1,6 +1,12 @@
 """
 Scheduler service using APScheduler
 Manages scheduled sync jobs without Celery/Redis
+
+Hourly schedules with ``interval_hours == 1`` use a cron trigger at the minute from
+``next_run_at``. For ``interval_hours > 1``, an ``IntervalTrigger`` is used. Daily
+uses hour/minute from ``next_run_at`` (Django default timezone). The periodic
+``trigger_due_jobs`` task only starts runs; ``next_run_at`` is advanced when the sync
+finishes (see ``schedule_job_execution`` from ``SyncExecutor``).
 """
 from typing import Optional
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -134,19 +140,44 @@ def add_job_schedule(job: SyncJob):
                 return
         
         elif schedule.schedule_type == 'hourly':
-            # Every hour at minute 0
+            # Every hour at :minute (N=1) or IntervalTrigger every N hours from anchor (N>1)
             tz = pytz.timezone(settings.TIME_ZONE)
-            trigger = CronTrigger(minute=0, timezone=tz)
-        
+            if not schedule.next_run_at:
+                logger.warning(f"Job {job.id} hourly schedule has no next_run_at; cannot build trigger")
+                return
+            local = timezone.localtime(schedule.next_run_at)
+            interval_h = getattr(schedule, "interval_hours", None) or 1
+            interval_h = max(1, min(24, int(interval_h)))
+            if interval_h == 1:
+                trigger = CronTrigger(minute=local.minute, timezone=tz)
+            else:
+                trigger = IntervalTrigger(
+                    hours=interval_h,
+                    start_date=schedule.next_run_at,
+                    timezone=tz,
+                )
+
         elif schedule.schedule_type == 'daily':
-            # Daily at midnight
+            # Same local time each day (hour/minute from next_run_at)
             tz = pytz.timezone(settings.TIME_ZONE)
-            trigger = CronTrigger(hour=0, minute=0, timezone=tz)
-        
+            if not schedule.next_run_at:
+                logger.warning(f"Job {job.id} daily schedule has no next_run_at; cannot build trigger")
+                return
+            local = timezone.localtime(schedule.next_run_at)
+            trigger = CronTrigger(hour=local.hour, minute=local.minute, timezone=tz)
+
         elif schedule.schedule_type == 'weekly':
-            # Weekly on Monday
             tz = pytz.timezone(settings.TIME_ZONE)
-            trigger = CronTrigger(day_of_week='mon', hour=0, minute=0, timezone=tz)
+            if schedule.next_run_at:
+                local = timezone.localtime(schedule.next_run_at)
+                trigger = CronTrigger(
+                    day_of_week="mon",
+                    hour=local.hour,
+                    minute=local.minute,
+                    timezone=tz,
+                )
+            else:
+                trigger = CronTrigger(day_of_week="mon", hour=0, minute=0, timezone=tz)
         
         elif schedule.schedule_type == 'custom':
             if schedule.cron_expression:
@@ -267,14 +298,11 @@ def trigger_due_jobs():
                 if job.status == 'running':
                     continue
                 
-                # Trigger execution
-                from scheduler.utils import execute_sync_job_direct, schedule_job_execution
+                # Trigger execution (next_run_at is advanced when the run finishes in SyncExecutor)
+                from scheduler.utils import execute_sync_job_direct
                 execute_sync_job_direct(str(job.id))
                 triggered_count += 1
-                
-                # Update next run time
-                schedule_job_execution(job)
-                
+
                 logger.info(f"Triggered due job {job.id}")
                 
             except Exception as e:

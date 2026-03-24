@@ -16,7 +16,7 @@ class SyncJobTableAdmin(admin.ModelAdmin):
 
 @admin.register(SyncSchedule)
 class SyncScheduleAdmin(admin.ModelAdmin):
-    list_display = ['job', 'schedule_type', 'is_enabled', 'next_run_at']
+    list_display = ['job', 'schedule_type', 'interval_hours', 'is_enabled', 'next_run_at']
     list_filter = ['schedule_type', 'is_enabled']
 
 @admin.register(SyncCheckpoint)

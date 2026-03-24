@@ -7,6 +7,7 @@ from django.urls import reverse
 from django.utils import timezone
 from connections.models import DatabaseConnection
 from sync_jobs.models import SyncJob, SyncJobTable, SyncSchedule, SyncExecution
+from accounts.models import UserProfile, Role
 
 
 class SyncJobWorkflowTestCase(TestCase):
@@ -19,6 +20,9 @@ class SyncJobWorkflowTestCase(TestCase):
             email='test@example.com',
             password='testpass123'
         )
+        UserProfile.objects.update_or_create(
+            user=self.user, defaults={'role': Role.ADMIN, 'tenant': self.user}
+        )
         
         # Create test connections
         self.source_conn = DatabaseConnection.objects.create(
@@ -29,8 +33,11 @@ class SyncJobWorkflowTestCase(TestCase):
             username='test',
             password='test',
             database_name='test_db',
-            created_by=self.user
+            created_by=self.user,
+            tenant=self.user
         )
+        self.source_conn.last_tested_at = timezone.now()
+        self.source_conn.save(update_fields=['last_tested_at'])
         
         self.target_conn = DatabaseConnection.objects.create(
             name='Target DB',
@@ -40,8 +47,11 @@ class SyncJobWorkflowTestCase(TestCase):
             username='test',
             password='test',
             database_name='test_db',
-            created_by=self.user
+            created_by=self.user,
+            tenant=self.user
         )
+        self.target_conn.last_tested_at = timezone.now()
+        self.target_conn.save(update_fields=['last_tested_at'])
     
     def test_complete_job_creation_workflow(self):
         """Test complete job creation workflow: Step 1 → Step 2 → Step 3 → Job List"""
@@ -50,6 +60,7 @@ class SyncJobWorkflowTestCase(TestCase):
         # Step 1: Create job with connections
         response = self.client.post(reverse('sync_jobs:create_step1'), {
             'job_name': 'Integration Test Job',
+            'source_connection_type': 'database',
             'source_connection': str(self.source_conn.id),
             'target_connection': str(self.target_conn.id),
         }, follow=True)
@@ -73,16 +84,21 @@ class SyncJobWorkflowTestCase(TestCase):
             ]
         }, follow=True)
         self.assertRedirects(response, reverse('sync_jobs:create_step3'))
-        
-        # Step 3: Configure and create job
-        response = self.client.post(reverse('sync_jobs:create_step3_submit'), {
+
+        # Step 3: Mapping preview, then go to Step 4
+        response = self.client.post(reverse('sync_jobs:create_step3_submit'), follow=True)
+        self.assertRedirects(response, reverse('sync_jobs:create_step4'))
+
+        # Step 4: Configure and create job
+        response = self.client.post(reverse('sync_jobs:create_step4_submit'), {
             'sync_type': 'full',
             'schedule_type': 'daily',
         }, follow=True)
-        self.assertRedirects(response, reverse('sync_jobs:list'))
+        created_job = SyncJob.objects.get(name='Integration Test Job')
+        self.assertRedirects(response, reverse('sync_jobs:job_detail', args=[created_job.id]))
         
         # Verify job was created
-        job = SyncJob.objects.get(name='Integration Test Job')
+        job = created_job
         self.assertEqual(job.source_connection, self.source_conn)
         self.assertEqual(job.target_connection, self.target_conn)
         self.assertEqual(job.tables.count(), 2)
@@ -99,7 +115,8 @@ class SyncJobWorkflowTestCase(TestCase):
             target_connection=self.target_conn,
             sync_type='full',
             status='pending',
-            created_by=self.user
+            created_by=self.user,
+            tenant=self.user
         )
         SyncSchedule.objects.create(job=job, schedule_type='once', is_enabled=True)
         
@@ -145,7 +162,8 @@ class SyncJobWorkflowTestCase(TestCase):
             target_connection=self.target_conn,
             sync_type='full',
             status='pending',
-            created_by=self.user
+            created_by=self.user,
+            tenant=self.user
         )
         
         job2 = SyncJob.objects.create(
@@ -154,7 +172,8 @@ class SyncJobWorkflowTestCase(TestCase):
             target_connection=self.target_conn,
             sync_type='incremental',
             status='running',
-            created_by=self.user
+            created_by=self.user,
+            tenant=self.user
         )
         
         job3 = SyncJob.objects.create(
@@ -163,7 +182,8 @@ class SyncJobWorkflowTestCase(TestCase):
             target_connection=self.target_conn,
             sync_type='full',
             status='failed',
-            created_by=self.user
+            created_by=self.user,
+            tenant=self.user
         )
         
         # Test status filter
@@ -202,7 +222,8 @@ class SyncJobWorkflowTestCase(TestCase):
             target_connection=self.target_conn,
             sync_type='full',
             status='running',
-            created_by=self.user
+            created_by=self.user,
+            tenant=self.user
         )
         
         # Try to pause running job

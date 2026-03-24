@@ -68,7 +68,9 @@ class DataIntegrityVerifier:
         source_schema: str,
         target_schema: str,
         expected_row_count: int,
-        column_names: List[str]
+        column_names: List[str],
+        target_column_names: Optional[List[str]] = None,
+        target_table: Optional[str] = None,
     ) -> Tuple[bool, Optional[str], Dict[str, Any]]:
         """
         Comprehensive post-migration data accuracy verification
@@ -79,12 +81,15 @@ class DataIntegrityVerifier:
             target_schema: Target schema name
             expected_row_count: Expected row count (from pre-migration validation)
             column_names: List of column names
+            target_table: Target table name (e.g. with prefix). If None, use job_table.table_name.
             
         Returns:
             Tuple of (is_accurate, error_message, accuracy_report)
             - accuracy_report contains: row_count_match, column_count_match, etc.
         """
         table = job_table.table_name
+        if target_table is None:
+            target_table = table
         where_clause = job_table.transformation_query
         column_transformations = job_table.column_transformations or {}
         
@@ -102,7 +107,7 @@ class DataIntegrityVerifier:
             # Step 1: Compare row counts
             row_count_match, row_count_error, actual_count = self._compare_row_counts(
                 target_schema=target_schema,
-                table=table,
+                table=target_table,
                 expected_count=expected_row_count
             )
             
@@ -129,7 +134,9 @@ class DataIntegrityVerifier:
                     source_schema=source_schema,
                     target_schema=target_schema,
                     table=table,
-                    column_names=column_names
+                    column_names=column_names,
+                    target_column_names=target_column_names,
+                    target_table=target_table,
                 )
                 
                 accuracy_report['all_rows_match'] = rows_match
@@ -195,7 +202,9 @@ class DataIntegrityVerifier:
         source_schema: str,
         target_schema: str,
         table: str,
-        column_names: List[str]
+        column_names: List[str],
+        target_column_names: Optional[List[str]] = None,
+        target_table: Optional[str] = None,
     ) -> Tuple[bool, Optional[str], Dict[str, Any]]:
         """
         Perform row-by-row comparison
@@ -204,12 +213,15 @@ class DataIntegrityVerifier:
             job_table: SyncJobTable instance
             source_schema: Source schema name
             target_schema: Target schema name
-            table: Table name
+            table: Source table name
             column_names: List of column names
+            target_table: Target table name (e.g. with prefix). If None, use table.
             
         Returns:
             Tuple of (matches, error_message, comparison_report)
         """
+        if target_table is None:
+            target_table = table
         where_clause = job_table.transformation_query
         column_transformations = job_table.column_transformations or {}
         
@@ -226,13 +238,19 @@ class DataIntegrityVerifier:
             # Get primary key for ordering
             try:
                 pk_columns = self.source_connector.get_primary_key(source_schema, table)
-                if pk_columns:
-                    order_by = ', '.join(pk_columns)
-                else:
-                    # Fallback to first column
-                    order_by = column_names[0] if column_names else None
             except:
-                order_by = column_names[0] if column_names else None
+                pk_columns = []
+
+            if pk_columns:
+                order_by_source = ', '.join(pk_columns)
+                # PK columns are protected by the rename feature, so target order-by should match.
+                order_by_target = order_by_source
+            else:
+                order_by_source = column_names[0] if column_names else None
+                order_by_target = (
+                    (target_column_names or column_names)[0]
+                    if column_names else None
+                )
             
             # Build source query with transformations
             source_query = self.query_builder.build_select_query(
@@ -240,7 +258,7 @@ class DataIntegrityVerifier:
                 schema=source_schema,
                 table=table,
                 columns=column_names,
-                order_by=order_by,
+                order_by=order_by_source,
                 where_clause=where_clause,
                 column_transformations=column_transformations
             )
@@ -249,9 +267,9 @@ class DataIntegrityVerifier:
             target_query = self.query_builder.build_select_query(
                 connector=self.target_connector,
                 schema=target_schema,
-                table=table,
-                columns=column_names,
-                order_by=order_by
+                table=target_table,
+                columns=(target_column_names or column_names),
+                order_by=order_by_target
             )
             
             # Fetch all rows from both sources
@@ -265,7 +283,7 @@ class DataIntegrityVerifier:
                     query=source_query,
                     batch_size=1000,
                     offset=source_offset,
-                    order_by=order_by
+                    order_by=order_by_source
                 )
                 if not batch:
                     break
@@ -279,7 +297,7 @@ class DataIntegrityVerifier:
                     query=target_query,
                     batch_size=1000,
                     offset=target_offset,
-                    order_by=order_by
+                    order_by=order_by_target
                 )
                 if not batch:
                     break

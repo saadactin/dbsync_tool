@@ -112,15 +112,22 @@ class TableHandler:
         self,
         schema: str,
         table: str,
-        source_schema: Optional[str] = None
+        source_schema: Optional[str] = None,
+        column_type_overrides: Optional[dict] = None,
+        column_name_overrides: Optional[dict] = None,
+        excluded_columns: Optional[list] = None,
+        protected_columns: Optional[list] = None,
+        incremental_column: Optional[str] = None,
+        target_table: Optional[str] = None,
     ) -> bool:
         """
         Create target table if it doesn't exist
         
         Args:
             schema: Target schema name
-            table: Target table name
+            table: Source table name (used for get_columns); also target name if target_table is None
             source_schema: Source schema name (if different from target)
+            target_table: Optional target table name (e.g. with prefix). If None, use table.
             
         Returns:
             bool: True if table was created, False if it already existed
@@ -130,6 +137,8 @@ class TableHandler:
         """
         if source_schema is None:
             source_schema = schema
+        if target_table is None:
+            target_table = table
 
         # Schema mapping for different database combinations
         # For databases WITH schemas (PostgreSQL, SQL Server): always use target's default schema
@@ -171,20 +180,11 @@ class TableHandler:
                 source_schema=source_schema,
                 target_schema=target_schema,
                 table=table,
+                column_type_overrides=column_type_overrides,
+                column_name_overrides=column_name_overrides,
+                target_table=target_table,
             )
 
-        # Check if table exists (with error handling for transaction issues)
-        try:
-            if self.target_connector.table_exists(target_schema, table):
-                logger.info(f"Table {target_schema}.{table} already exists in target")
-                return False
-        except Exception as e:
-            # If table_exists fails, log warning but continue (might be transaction error)
-            logger.warning(f"Error checking if table exists {target_schema}.{table}: {str(e)}. Will attempt to create.")
-        
-        # Ensure schema exists
-        self.ensure_schema_exists(target_schema)
-        
         # Get source table columns (with transaction error handling)
         try:
             source_columns = self.source_connector.get_columns(source_schema, table)
@@ -197,8 +197,19 @@ class TableHandler:
             raise TableCreationError(
                 f"No columns found for source table {source_schema}.{table}"
             )
+        # Apply Step 3 exclusion/protection to target DDL contract.
+        excluded = {(c or "").strip().lower() for c in (excluded_columns or []) if c}
+        protected = {(c or "").strip().lower() for c in (protected_columns or []) if c}
+        effective_excluded = excluded - protected
+        if effective_excluded:
+            source_columns = [c for c in source_columns if c.name.lower() not in effective_excluded]
+            if not source_columns:
+                raise TableCreationError(
+                    f"No migratable columns remain for source table {source_schema}.{table}"
+                )
         
         # Map columns to target database types
+        rename_map = { (k or "").lower(): v for k, v in (column_name_overrides or {}).items() }
         target_columns = []
         for col in source_columns:
             # Extract precision and scale for numeric types
@@ -239,7 +250,9 @@ class TableHandler:
                 logger.debug(f"Clearing default value for IDENTITY column {col.name} (mapped type: {mapped_type})")
             
             target_col = ColumnInfo(
-                name=col.name,
+                # Apply Step 3 target-side rename (only when user provided an override).
+                # Keys are stored as lowercased source column names.
+                name=rename_map.get(col.name.lower(), col.name),
                 data_type=mapped_type,
                 is_nullable=col.is_nullable,
                 is_primary_key=col.is_primary_key,
@@ -247,21 +260,90 @@ class TableHandler:
                 default_value=default_value
             )
             target_columns.append(target_col)
+
+        # Fail fast on rename collisions (case-insensitive).
+        target_names_lower = [c.name.lower() for c in target_columns if c.name]
+        if len(set(target_names_lower)) != len(target_names_lower):
+            seen = set()
+            dups = set()
+            for nm in target_names_lower:
+                if nm in seen:
+                    dups.add(nm)
+                seen.add(nm)
+            raise TableCreationError(
+                f"Target column rename collision while creating {target_schema}.{target_table}. "
+                f"Conflicting target names: {', '.join(sorted(dups))}"
+            )
         
+        # Check if table exists and whether schema matches expected target columns.
+        table_exists = False
+        try:
+            table_exists = self.target_connector.table_exists(target_schema, target_table)
+        except Exception as e:
+            logger.warning(
+                f"Error checking if table exists {target_schema}.{target_table}: {str(e)}. Will attempt to create."
+            )
+        if table_exists:
+            try:
+                existing_cols = self.target_connector.get_columns(target_schema, target_table)
+                existing_set = {c.name.lower() for c in existing_cols if c.name}
+                expected_set = {c.name.lower() for c in target_columns if c.name}
+                if existing_set == expected_set:
+                    logger.info(f"Table {target_schema}.{target_table} already exists in target")
+                    return False
+                logger.info(
+                    "Recreating table %s.%s due schema mismatch (expected=%s, existing=%s)",
+                    target_schema,
+                    target_table,
+                    sorted(expected_set),
+                    sorted(existing_set),
+                )
+                self._drop_target_table(target_schema, target_table)
+            except Exception as e:
+                raise TableCreationError(
+                    f"Failed to align existing target table {target_schema}.{target_table}: {str(e)}"
+                )
+
+        # Ensure schema exists before create.
+        self.ensure_schema_exists(target_schema)
+
         # Create table
         try:
             # Use target_schema (which is already set above for MySQL/ClickHouse targets)
-            # For ClickHouse, pass the source_db_type so connector can handle ENGINE/ORDER BY
+            # For ClickHouse, pass the source_db_type and incremental_column so connector can handle ENGINE/ORDER BY
             if self.target_db_type == 'clickhouse':
-                self.target_connector.create_table(target_schema, table, target_columns, target_db_type=self.source_db_type)
+                # Pass incremental_column as version to ReplacingMergeTree if provided
+                self.target_connector.create_table(
+                    target_schema,
+                    target_table,
+                    target_columns,
+                    target_db_type=self.source_db_type,
+                    incremental_column=incremental_column
+                )
             else:
-                self.target_connector.create_table(target_schema, table, target_columns)
-            logger.info(f"Created table {target_schema}.{table} in target database")
+                self.target_connector.create_table(target_schema, target_table, target_columns)
+            logger.info(f"Created table {target_schema}.{target_table} in target database")
             return True
         except Exception as e:
             raise TableCreationError(
-                f"Failed to create table {target_schema}.{table}: {str(e)}"
+                f"Failed to create table {target_schema}.{target_table}: {str(e)}"
             )
+
+    def _drop_target_table(self, schema: str, table: str):
+        """Drop target table using connector-specific SQL."""
+        if self.target_db_type == "postgres":
+            query = f'DROP TABLE IF EXISTS "{schema}"."{table}" CASCADE'
+        elif self.target_db_type == "mysql":
+            query = f"DROP TABLE IF EXISTS `{schema}`.`{table}`"
+        elif self.target_db_type == "sqlserver":
+            query = f"DROP TABLE [{schema}].[{table}]"
+        elif self.target_db_type == "clickhouse":
+            query = f"DROP TABLE IF EXISTS `{schema}`.`{table}`"
+        elif self.target_db_type == "oracle":
+            query = f'DROP TABLE "{schema}"."{table}"'
+        else:
+            raise TableCreationError(f"Unsupported target DB type for table drop: {self.target_db_type}")
+        self.target_connector.execute_query(query)
     
     def get_table_columns(self, schema: str, table: str) -> List[ColumnInfo]:
         """
@@ -281,6 +363,9 @@ class TableHandler:
         source_schema: str,
         target_schema: str,
         table: str,
+        column_type_overrides: Optional[dict] = None,
+        column_name_overrides: Optional[dict] = None,
+        target_table: Optional[str] = None,
     ) -> bool:
         """
         Oracle-aware table creation logic.
@@ -310,25 +395,38 @@ class TableHandler:
                 f"No columns found for source table {source_schema}.{table}"
             )
 
+        if target_table is None:
+            target_table = table
+
         # Build target column specs using Oracle-aware type mapping helpers.
         target_columns: List[ColumnInfo] = []
+        overrides = { (k or "").lower(): v for k, v in (column_type_overrides or {}).items() }
+        rename_map = { (k or "").lower(): v for k, v in (column_name_overrides or {}).items() }
 
         if target_is_oracle and not source_is_oracle:
             # Postgres/MySQL/ClickHouse -> Oracle
             for col in source_columns:
-                base_type, max_len, prec, scale = normalize_data_type(
-                    col.data_type, self.source_db_type
-                )
-                oracle_type = map_source_to_oracle_type(
-                    source_type=col.data_type,
-                    source_db=self.source_db_type,
-                    max_length=col.max_length or max_len,
-                    precision=prec,
-                    scale=scale,
-                )
+                override_type = overrides.get(col.name.lower())
+                if override_type:
+                    # Use user-selected Oracle type directly
+                    oracle_type = override_type
+                    base_type, max_len, prec, scale = normalize_data_type(
+                        oracle_type, "oracle"
+                    )
+                else:
+                    base_type, max_len, prec, scale = normalize_data_type(
+                        col.data_type, self.source_db_type
+                    )
+                    oracle_type = map_source_to_oracle_type(
+                        source_type=col.data_type,
+                        source_db=self.source_db_type,
+                        max_length=col.max_length or max_len,
+                        precision=prec,
+                        scale=scale,
+                    )
                 target_columns.append(
                     ColumnInfo(
-                        name=col.name,
+                        name=rename_map.get(col.name.lower(), col.name),
                         data_type=oracle_type,
                         is_nullable=col.is_nullable,
                         is_primary_key=col.is_primary_key,
@@ -351,7 +449,7 @@ class TableHandler:
                 )
                 target_columns.append(
                     ColumnInfo(
-                        name=col.name,
+                        name=rename_map.get(col.name.lower(), col.name),
                         data_type=target_type,
                         is_nullable=col.is_nullable,
                         is_primary_key=col.is_primary_key,
@@ -361,17 +459,41 @@ class TableHandler:
                 )
         else:
             # Oracle -> Oracle (rare; mostly for copy-within-Oracle). In this case
-            # we preserve the original column definitions.
-            target_columns = source_columns
+            # we preserve the original column definitions, but still apply Step 3 renames.
+            target_columns = [
+                ColumnInfo(
+                    name=rename_map.get(c.name.lower(), c.name),
+                    data_type=c.data_type,
+                    is_nullable=c.is_nullable,
+                    is_primary_key=c.is_primary_key,
+                    max_length=c.max_length,
+                    default_value=c.default_value,
+                )
+                for c in source_columns
+            ]
+
+        # Fail fast on rename collisions (case-insensitive).
+        target_names_lower = [c.name.lower() for c in target_columns if c.name]
+        if len(set(target_names_lower)) != len(target_names_lower):
+            seen = set()
+            dups = set()
+            for nm in target_names_lower:
+                if nm in seen:
+                    dups.add(nm)
+                seen.add(nm)
+            raise TableCreationError(
+                f"Target column rename collision while creating {target_schema}.{target_table}. "
+                f"Conflicting target names: {', '.join(sorted(dups))}"
+            )
 
         # Check if target table already exists.
         try:
-            exists = self.target_connector.table_exists(target_schema, table)
+            exists = self.target_connector.table_exists(target_schema, target_table)
         except Exception as e:
             logger.warning(
                 "Oracle-based sync: error checking if table %s.%s exists: %s",
                 target_schema,
-                table,
+                target_table,
                 str(e),
             )
             exists = False
@@ -381,11 +503,11 @@ class TableHandler:
             # destructive or lossy changes.
             try:
                 existing_columns = self.target_connector.get_columns(
-                    target_schema, table
+                    target_schema, target_table
                 )
             except Exception as e:
                 raise TableCreationError(
-                    f"Failed to inspect existing target table {target_schema}.{table}: {str(e)}"
+                    f"Failed to inspect existing target table {target_schema}.{target_table}: {str(e)}"
                 )
 
             existing_by_name = {
@@ -403,7 +525,7 @@ class TableHandler:
             for name, expected_col in expected_by_name.items():
                 if name not in existing_by_name:
                     raise TableCreationError(
-                        f"Existing Oracle-based target table {target_schema}.{table} "
+                        f"Existing Oracle-based target table {target_schema}.{target_table} "
                         f"is missing column {expected_col.name}. Schema must be aligned manually."
                     )
 
@@ -430,7 +552,7 @@ class TableHandler:
                 if any(t in exp_base for t in ("CHAR", "VARCHAR")):
                     if exp_len is not None and act_len is not None and act_len < exp_len:
                         raise TableCreationError(
-                            f"Column {expected_col.name} in target table {target_schema}.{table} "
+                            f"Column {expected_col.name} in target table {target_schema}.{target_table} "
                             f"has length {act_len}, which is smaller than required {exp_len}. "
                             f"Increase the column length in Oracle to avoid truncation."
                         )
@@ -443,7 +565,7 @@ class TableHandler:
                         and act_prec < exp_prec
                     ):
                         raise TableCreationError(
-                            f"Column {expected_col.name} in target table {target_schema}.{table} "
+                            f"Column {expected_col.name} in target table {target_schema}.{target_table} "
                             f"has precision {act_prec}, which is smaller than required {exp_prec}. "
                             f"Increase the precision to avoid overflow or rounding."
                         )
@@ -453,7 +575,7 @@ class TableHandler:
                         and act_scale < exp_scale
                     ):
                         raise TableCreationError(
-                            f"Column {expected_col.name} in target table {target_schema}.{table} "
+                            f"Column {expected_col.name} in target table {target_schema}.{target_table} "
                             f"has scale {act_scale}, which is smaller than required {exp_scale}. "
                             f"Increase the scale to avoid rounding."
                         )
@@ -466,7 +588,7 @@ class TableHandler:
                     self.source_db_type,
                     self.target_db_type,
                     target_schema,
-                    table,
+                    target_table,
                 )
                 return False
 
@@ -476,19 +598,19 @@ class TableHandler:
                     "Dropping table and recreating with correct schema.",
                     mismatch_col_name,
                     target_schema,
-                    table,
+                    target_table,
                     mismatch_exp_base,
                     mismatch_act_base,
                 )
                 try:
                     owner = (target_schema or "").upper()
-                    tbl = (table or "").upper()
+                    tbl = (target_table or "").upper()
                     self.target_connector.execute_query(
                         f'DROP TABLE "{owner}"."{tbl}"'
                     )
                 except Exception as e:
                     raise TableCreationError(
-                        f"Failed to drop table {target_schema}.{table} for schema mismatch: {str(e)}"
+                        f"Failed to drop table {target_schema}.{target_table} for schema mismatch: {str(e)}"
                     )
                 # Fall through to create block below
 
@@ -508,14 +630,14 @@ class TableHandler:
             # the ColumnInfo list verbatim.
             if self.target_db_type == "clickhouse":
                 self.target_connector.create_table(
-                    target_schema, table, target_columns, target_db_type=self.source_db_type
+                    target_schema, target_table, target_columns, target_db_type=self.source_db_type
                 )
             else:
-                self.target_connector.create_table(target_schema, table, target_columns)
+                self.target_connector.create_table(target_schema, target_table, target_columns)
             logger.info(
                 "Created target table %s.%s for Oracle-based sync (source_db_type=%s, target_db_type=%s)",
                 target_schema,
-                table,
+                target_table,
                 self.source_db_type,
                 self.target_db_type,
             )

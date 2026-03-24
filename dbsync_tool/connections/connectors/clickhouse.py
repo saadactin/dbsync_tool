@@ -7,7 +7,7 @@ from .base import DBConnector, ColumnInfo
 from core.exceptions import DatabaseConnectionError, TableNotFoundError, DatabaseTimeoutError, DatabaseException, DatabaseQueryError
 from core.type_mapping import map_data_type
 from decimal import Decimal
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 import pandas as pd
 import logging
 
@@ -273,8 +273,25 @@ class ClickHouseConnector(DBConnector):
                 raise DatabaseTimeoutError(f"Query timeout: {str(e)}")
             else:
                 raise DatabaseQueryError(f"Query execution failed: {str(e)}")
+
+    def execute_query_fetchall(
+        self,
+        query: str,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> List[Tuple]:
+        """
+        Execute a SELECT query and return all rows.
+
+        For ClickHouse we use `client.query()` which returns `result_rows`.
+        """
+        if params:
+            raise NotImplementedError("ClickHouseConnector.execute_query_fetchall does not support params")
+        if not self._connection:
+            self.connect()
+        result = self._connection.query(query)
+        return result.result_rows
     
-    def create_table(self, schema: str, table: str, columns: List[ColumnInfo], target_db_type: str = 'clickhouse'):
+    def create_table(self, schema: str, table: str, columns: List[ColumnInfo], target_db_type: str = 'clickhouse', incremental_column: Optional[str] = None):
         """
         Create a table in ClickHouse
         
@@ -283,6 +300,7 @@ class ClickHouseConnector(DBConnector):
             table: Table name
             columns: List of ColumnInfo objects
             target_db_type: Target database type (for type mapping) - defaults to 'clickhouse'
+            incremental_column: Optional column name to use as version for ReplacingMergeTree
         """
         if not self._connection:
             self.connect()
@@ -353,24 +371,44 @@ class ClickHouseConnector(DBConnector):
             order_by_cols = []
             for col in columns:
                 if col.is_primary_key:
-                    order_by_cols.append(f"`{col.name}`")
+                    if col.is_nullable:
+                        # Some ClickHouse configs reject NULL keys in ORDER BY.
+                        # `allow_nullable_key` relaxes this, but `assumeNotNull`
+                        # keeps the ORDER BY expression stable.
+                        order_by_cols.append(f"assumeNotNull(`{col.name}`)")
+                    else:
+                        order_by_cols.append(f"`{col.name}`")
             
             if not order_by_cols:
                 # Use first column as fallback
                 if columns:
-                    order_by_cols.append(f"`{columns[0].name}`")
+                    first_col = columns[0]
+                    if first_col.is_nullable:
+                        order_by_cols.append(f"assumeNotNull(`{first_col.name}`)")
+                    else:
+                        order_by_cols.append(f"`{first_col.name}`")
                 else:
                     # If no columns, we can't create table, but this shouldn't happen
                     raise DatabaseConnectionError("Cannot create table without columns")
             
             order_by_clause = ', '.join(order_by_cols)
             
-            # Create table with MergeTree engine
+            # Create table with MergeTree or ReplacingMergeTree engine
+            # ReplacingMergeTree allows for upserts/deduplication based on the version
+            if incremental_column:
+                # Use incremental_column as version to ensure correct overwriting
+                engine = f"ReplacingMergeTree(`{incremental_column}`)"
+                logger.info(f"Using ReplacingMergeTree with version column: {incremental_column}")
+            else:
+                engine = "ReplacingMergeTree()"
+                logger.info("Using ReplacingMergeTree without specific version column (will use latest insertion)")
+
             create_query = f"""
                 CREATE TABLE IF NOT EXISTS `{schema}`.`{table}` (
                     {', '.join(column_defs)}
-                ) ENGINE = MergeTree()
+                ) ENGINE = {engine}
                 ORDER BY ({order_by_clause})
+                SETTINGS allow_nullable_key = 1
             """
             
             self._connection.command(create_query)
@@ -392,6 +430,42 @@ class ClickHouseConnector(DBConnector):
             return ''
         
         default_value = default_value.strip()
+
+        import re
+
+        def _strip_wrapping_parentheses(s: str) -> str:
+            """
+            Strip redundant outer parentheses like `((getdate()))` -> `getdate()`.
+            """
+            s = s.strip()
+            while s.startswith("(") and s.endswith(")"):
+                depth = 0
+                wraps_whole = True
+                for i, ch in enumerate(s):
+                    if ch == "(":
+                        depth += 1
+                    elif ch == ")":
+                        depth -= 1
+                        # If we hit depth 0 before the last char, the outermost
+                        # parentheses don't wrap the whole expression.
+                        if depth == 0 and i != len(s) - 1:
+                            wraps_whole = False
+                            break
+                if not wraps_whole:
+                    break
+                s = s[1:-1].strip()
+            return s
+
+        default_value = _strip_wrapping_parentheses(default_value)
+
+        # Normalize common SQL Server defaults into ClickHouse equivalents.
+        # Do this early so we never pass unknown expressions through to ClickHouse.
+        lower = default_value.lower()
+        if re.fullmatch(r'getdate\s*(\(\s*\))?', lower) or re.fullmatch(r'getutcdate\s*(\(\s*\))?', lower) or re.fullmatch(r'sysdatetime\s*(\(\s*\))?', lower) or re.fullmatch(r'current_timestamp\s*(\(\s*\))?', lower):
+            return 'now()'
+
+        if re.fullmatch(r'newid\s*(\(\s*\))?', lower) or re.fullmatch(r'newsequentialid\s*(\(\s*\))?', lower):
+            return 'generateUUIDv4()'
         
         # Skip PostgreSQL sequence defaults (nextval(...) syntax)
         if 'nextval' in default_value.lower():
@@ -761,6 +835,11 @@ class ClickHouseConnector(DBConnector):
             for row in coerced_rows:
                 normalized = []
                 for idx, value in enumerate(row):
+                    # Normalize any timezone-aware datetimes to naive UTC up-front so that
+                    # clickhouse-connect never sees a mix of offset-aware and offset-naive values.
+                    if isinstance(value, datetime) and getattr(value, "tzinfo", None) is not None:
+                        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+                    
                     if value is None:
                         normalized.append(None)
                     elif idx in column_types:
@@ -793,17 +872,37 @@ class ClickHouseConnector(DBConnector):
                             else:
                                 normalized.append(value)
                         elif 'datetime' in col_type or 'timestamp' in col_type:
-                            # DateTime/Timestamp column - needs datetime object
+                            # DateTime/Timestamp column - needs timezone-naive UTC datetime object
                             if isinstance(value, datetime):
+                                # Normalize any timezone-aware datetime to naive UTC to avoid
+                                # mixing offset-aware and offset-naive datetimes inside
+                                # clickhouse-connect temporal encoders
+                                if value.tzinfo is not None:
+                                    value = value.astimezone(timezone.utc).replace(tzinfo=None)
                                 normalized.append(value)
                             elif isinstance(value, date):
-                                # Convert date to datetime (midnight)
-                                normalized.append(datetime.combine(value, datetime.min.time()))
+                                # Convert date to datetime (midnight UTC, naive)
+                                dt_value = datetime.combine(value, datetime.min.time())
+                                normalized.append(dt_value)
                             elif isinstance(value, str):
                                 # Try to parse string to datetime
                                 try:
                                     parsed_dt = None
-                                    for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d', '%Y/%m/%d', '%d/%m/%Y']:
+                                    # Expanded list of date formats for better compatibility
+                                    date_formats = [
+                                        '%Y-%m-%d %H:%M:%S',
+                                        '%Y-%m-%dT%H:%M:%S',
+                                        '%Y-%m-%dT%H:%M:%SZ',
+                                        '%Y-%m-%d %H:%M:%S.%f',
+                                        '%Y-%m-%dT%H:%M:%S.%f',
+                                        '%Y-%m-%d',
+                                        '%Y/%m/%d',
+                                        '%d/%m/%Y',
+                                        '%m/%d/%Y',
+                                        '%d-%m-%Y',
+                                        '%Y%m%d'
+                                    ]
+                                    for fmt in date_formats:
                                         try:
                                             parsed_dt = datetime.strptime(value, fmt)
                                             break
@@ -813,9 +912,13 @@ class ClickHouseConnector(DBConnector):
                                     if parsed_dt:
                                         normalized.append(parsed_dt)
                                     else:
-                                        normalized.append(value)
-                                except Exception:
-                                    normalized.append(value)
+                                        # CRITICAL: If we can't parse a date, don't pass a string to a DateTime column
+                                        # This prevents the 'str' object has no attribute 'timestamp' error
+                                        logger.error(f"Failed to parse datetime value '{value}' for column at index {idx}. Using None.")
+                                        normalized.append(None)
+                                except Exception as e:
+                                    logger.error(f"Unexpected error parsing datetime '{value}': {str(e)}")
+                                    normalized.append(None)
                             else:
                                 normalized.append(value)
                         else:
@@ -1012,34 +1115,58 @@ class ClickHouseConnector(DBConnector):
             return
         
         try:
-            # ClickHouse doesn't have native UPSERT, so we use ReplacingMergeTree or manual approach
-            # For simplicity, we'll delete existing rows and insert new ones
-            # This is not ideal but works for most use cases
-            
-            # Get key values from DataFrame
+            # ClickHouse deterministic upsert:
+            # 1) delete existing rows for incoming keys
+            # 2) insert incoming rows
+            # This avoids duplicate-visible rows on normal SELECT queries.
+
             if key_column not in df.columns:
                 raise DatabaseConnectionError(f"Key column {key_column} not found in DataFrame")
-            
-            key_values = df[key_column].dropna().unique().tolist()
-            
-            # Delete existing rows with matching keys
-            if key_values:
-                # Build DELETE query
-                # ClickHouse DELETE requires WHERE clause with key values
-                # For simplicity, delete all matching keys
-                placeholders = ', '.join([f"'{v}'" if isinstance(v, str) else str(v) for v in key_values])
-                delete_query = f"ALTER TABLE `{schema}`.`{table}` DELETE WHERE `{key_column}` IN ({placeholders})"
-                try:
-                    self._connection.command(delete_query)
-                except Exception as e:
-                    # If DELETE fails (e.g., table doesn't support mutations), just log and continue
-                    logger.warning(f"Could not delete existing rows: {str(e)}. Proceeding with insert.")
-            
-            # Insert new rows
-            columns = list(df.columns)
-            rows = [tuple(row) for row in df.values]
+
+            # Normalize None/NaN values to avoid Python array creation errors for non-Nullable columns.
+            safe_df = df.copy()
+            for col in safe_df.columns:
+                series = safe_df[col]
+                if series.isna().any():
+                    if pd.api.types.is_integer_dtype(series.dtype) or pd.api.types.is_float_dtype(series.dtype):
+                        safe_df[col] = series.fillna(0)
+                    elif pd.api.types.is_datetime64_any_dtype(series.dtype):
+                        safe_df[col] = series.fillna(pd.Timestamp('1970-01-01'))
+                    else:
+                        # Treat as string-like / generic
+                        safe_df[col] = series.fillna('')
+
+            columns = list(safe_df.columns)
+            # De-duplicate incoming batch by key and keep latest row.
+            safe_df = safe_df.drop_duplicates(subset=[key_column], keep='last')
+
+            def _format_key_value(v):
+                if pd.isna(v):
+                    return "NULL"
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    return str(v)
+                if isinstance(v, pd.Timestamp):
+                    return f"'{v.isoformat(sep=' ')}'"
+                s = str(v).replace("'", "''")
+                return f"'{s}'"
+
+            # Delete existing rows for incoming key set in chunks.
+            key_values = [_format_key_value(v) for v in safe_df[key_column].tolist()]
+            chunk_size = 1000
+            for i in range(0, len(key_values), chunk_size):
+                chunk = key_values[i:i + chunk_size]
+                if not chunk:
+                    continue
+                delete_query = (
+                    f"ALTER TABLE `{schema}`.`{table}` "
+                    f"DELETE WHERE `{key_column}` IN ({', '.join(chunk)}) "
+                    f"SETTINGS mutations_sync = 1"
+                )
+                self.execute_query(delete_query)
+
+            rows = [tuple(row) for row in safe_df.values]
             self.bulk_insert(schema, table, columns, rows)
-            
+
         except Exception as e:
             raise DatabaseConnectionError(f"Failed to upsert DataFrame: {str(e)}")
     

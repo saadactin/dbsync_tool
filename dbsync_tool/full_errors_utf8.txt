@@ -1,0 +1,105 @@
+﻿WARNING: Using development encryption key. Set ENCRYPTION_KEY environment variable for production!
+Latest Execution: 57a7088d-26dd-458f-93d1-3506c2bbe236
+Status: failed
+
+--- Detailed error for public.auth_permission ---
+Failed to insert batch 1 for public.auth_permission: Failed to bulk insert into ClickHouse: :HTTPDriver for http://20.204.31.93:8123 returned response code 404)
+ Code: 81. DB::Exception: Database public does not exist. (UNKNOWN_DATABASE) (version 25.9.4.58 (official build))
+ [Source: postgres, Target: clickhouse]
+---------------------------------------------------
+
+--- Detailed error for public.auth_user ---
+Failed to insert batch 1 for public.auth_user: Failed to bulk insert into ClickHouse: :HTTPDriver for http://20.204.31.93:8123 returned response code 404)
+ Code: 81. DB::Exception: Database public does not exist. (UNKNOWN_DATABASE) (version 25.9.4.58 (official build))
+ [Source: postgres, Target: clickhouse]
+---------------------------------------------------
+
+--- Detailed error for public.django_content_type ---
+Failed to insert batch 1 for public.django_content_type: Failed to bulk insert into ClickHouse: :HTTPDriver for http://20.204.31.93:8123 returned response code 404)
+ Code: 81. DB::Exception: Database public does not exist. (UNKNOWN_DATABASE) (version 25.9.4.58 (official build))
+ [Source: postgres, Target: clickhouse]
+---------------------------------------------------
+
+--- Detailed error for public.django_migrations ---
+Failed to insert batch 1 for public.django_migrations: Failed to bulk insert into ClickHouse: :HTTPDriver for http://20.204.31.93:8123 returned response code 404)
+ Code: 81. DB::Exception: Database public does not exist. (UNKNOWN_DATABASE) (version 25.9.4.58 (official build))
+ [Source: postgres, Target: clickhouse]
+---------------------------------------------------
+
+--- Detailed error for public.okrapi_businessunit ---
+Failed to insert batch 1 for public.okrapi_businessunit: Failed to bulk insert into ClickHouse: :HTTPDriver for http://20.204.31.93:8123 returned response code 404)
+ Code: 81. DB::Exception: Database public does not exist. (UNKNOWN_DATABASE) (version 25.9.4.58 (official build))
+ [Source: postgres, Target: clickhouse]
+---------------------------------------------------
+
+--- Detailed error for public.okrapi_businessunitokrmapping ---
+Failed to insert batch 1 for public.okrapi_businessunitokrmapping: Failed to bulk insert into ClickHouse: :HTTPDriver for http://20.204.31.93:8123 returned response code 404)
+ Code: 81. DB::Exception: Database public does not exist. (UNKNOWN_DATABASE) (version 25.9.4.58 (official build))
+ [Source: postgres, Target: clickhouse]
+---------------------------------------------------
+
+--- Detailed error for public.okrapi_department ---
+Failed to insert batch 1 for public.okrapi_department: Failed to bulk insert into ClickHouse: :HTTPDriver for http://20.204.31.93:8123 returned response code 404)
+ Code: 81. DB::Exception: Database public does not exist. (UNKNOWN_DATABASE) (version 25.9.4.58 (official build))
+ [Source: postgres, Target: clickhouse]
+---------------------------------------------------
+
+--- Detailed error for public.okrapi_formdata ---
+Failed to insert batch 1 for public.okrapi_formdata: Failed to bulk insert into ClickHouse: :HTTPDriver for http://20.204.31.93:8123 returned response code 404)
+ Code: 81. DB::Exception: Database public does not exist. (UNKNOWN_DATABASE) (version 25.9.4.58 (official build))
+ [Source: postgres, Target: clickhouse]
+---------------------------------------------------
+
+--- Detailed error for public.okrapi_manageranswerdata ---
+Failed to insert batch 1 for public.okrapi_manageranswerdata: Failed to bulk insert into ClickHouse: :HTTPDriver for http://20.204.31.93:8123 returned response code 404)
+ Code: 81. DB::Exception: Database public does not exist. (UNKNOWN_DATABASE) (version 25.9.4.58 (official build))
+ [Source: postgres, Target: clickhouse]
+---------------------------------------------------
+
+--- Detailed error for public.okrapi_managerreview ---
+Failed to insert batch 1 for public.okrapi_managerreview: Failed to bulk insert into ClickHouse: :HTTPDriver for http://20.204.31.93:8123 returned response code 404)
+ Code: 81. DB::Exception: Database public does not exist. (UNKNOWN_DATABASE) (version 25.9.4.58 (official build))
+ [Source: postgres, Target: clickhouse]
+---------------------------------------------------
+
+--- Detailed error for public.okrapi_okr ---
+Failed to insert batch 1 for public.okrapi_okr: Failed to bulk insert into ClickHouse: :HTTPDriver for http://20.204.31.93:8123 returned response code 404)
+ Code: 81. DB::Exception: Database public does not exist. (UNKNOWN_DATABASE) (version 25.9.4.58 (official build))
+ [Source: postgres, Target: clickhouse]
+---------------------------------------------------
+
+--- Detailed error for public.okrapi_okrusermapping ---
+Failed to insert batch 1 for public.okrapi_okrusermapping: Failed to bulk insert into ClickHouse: :HTTPDriver for http://20.204.31.93:8123 returned response code 404)
+ Code: 81. DB::Exception: Database public does not exist. (UNKNOWN_DATABASE) (version 25.9.4.58 (official build))
+ [Source: postgres, Target: clickhouse]
+---------------------------------------------------
+
+--- Detailed error for public.okrapi_optionmapper ---
+Failed to insert batch 1 for public.okrapi_optionmapper: Failed to bulk insert into ClickHouse: :HTTPDriver for http://20.204.31.93:8123 returned response code 404)
+ Code: 81. DB::Exception: Database public does not exist. (UNKNOWN_DATABASE) (version 25.9.4.58 (official build))
+ [Source: postgres, Target: clickhouse]
+---------------------------------------------------
+
+--- Detailed error for public.okrapi_questionmaster ---
+Failed to insert batch 1 for public.okrapi_questionmaster: Failed to bulk insert into ClickHouse: :HTTPDriver for http://20.204.31.93:8123 returned response code 404)
+ Code: 81. DB::Exception: Database public does not exist. (UNKNOWN_DATABASE) (version 25.9.4.58 (official build))
+ [Source: postgres, Target: clickhouse]
+---------------------------------------------------
+
+--- Detailed error for public.okrapi_useranswerdata ---
+Failed to insert batch 1 for public.okrapi_useranswerdata: Failed to bulk insert into ClickHouse: :HTTPDriver for http://20.204.31.93:8123 returned response code 404)
+ Code: 81. DB::Exception: Database public does not exist. (UNKNOWN_DATABASE) (version 25.9.4.58 (official build))
+ [Source: postgres, Target: clickhouse]
+---------------------------------------------------
+
+--- Detailed error for public.teamsauth_teamsprofile ---
+Failed to insert batch 1 for public.teamsauth_teamsprofile: Failed to bulk insert into ClickHouse: :HTTPDriver for http://20.204.31.93:8123 returned response code 404)
+ Code: 81. DB::Exception: Database public does not exist. (UNKNOWN_DATABASE) (version 25.9.4.58 (official build))
+ [Source: postgres, Target: clickhouse]
+---------------------------------------------------
+
+--- Detailed error for public.teamsauth_useraccessmapping ---
+Failed to insert batch 1 for public.teamsauth_useraccessmapping: Failed to bulk insert into ClickHouse: :HTTPDriver for http://20.204.31.93:8123 returned response code 404)
+ Code: 81. DB::Exception: Database public does not exist. (UNKNOWN_DATABASE) (version 25.9.4.58 (official build))
+ [Source: postgres, Target: clickhouse]
+---------------------------------------------------

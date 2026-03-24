@@ -252,6 +252,53 @@ class SAPSyncExecutorTests(TestCase):
         api_connector.fetch_records.assert_called()
         mock_sap_state.get_hashes.assert_called()
 
+    @patch('sync_engine.sap_sync.sap_sync_state')
+    @patch('sync_engine.sap_sync.DataTransformer')
+    def test_sync_endpoint_incremental_missing_target_table_skips(self, mock_transformer_class, mock_sap_state):
+        """Incremental SAP sync should skip endpoint when target table is missing."""
+        mock_sap_state.get_hashes.return_value = {"1": "oldhash"}
+        state_obj = APISyncState.objects.create(
+            job=self.job,
+            module_name='JournalEntries',
+            last_sync_time=timezone.now(),
+        )
+        mock_sap_state.get_or_create_state.return_value = state_obj
+        mock_sap_state.save_hashes = Mock()
+
+        api_connector = Mock()
+        api_connector.fetch_incremental_records.return_value = [{'JdtNum': 1, 'RefDate': '2024-01-03'}]
+
+        target_connector = Mock()
+        target_connector.database_name = 'test_db'
+        target_connector.table_exists.return_value = False
+        target_connector.add_missing_columns = Mock()
+        target_connector.upsert_dataframe = Mock()
+        target_connector.__class__.__name__ = 'PostgresConnector'
+
+        mock_transformer = Mock()
+        mock_transformer_class.return_value = mock_transformer
+        df = pd.DataFrame([{'JdtNum': 1, 'RefDate': '2024-01-03'}])
+        mock_transformer.flatten_json.return_value = df
+        mock_transformer.prepare_for_database.return_value = df
+
+        self.job.sync_type = 'incremental'
+        self.job.save()
+
+        executor = SAPSyncExecutor(
+            job=self.job,
+            execution=self.execution,
+            api_connector=api_connector,
+            target_connector=target_connector
+        )
+        executor.transformer = mock_transformer
+        executor._sync_endpoint_incremental('JournalEntries')
+
+        target_connector.add_missing_columns.assert_not_called()
+        target_connector.upsert_dataframe.assert_not_called()
+        log = SyncExecutionLog.objects.filter(execution=self.execution, table_name='JournalEntries').latest('id')
+        self.assertEqual(log.status, 'completed')
+        self.assertIn('does not exist', (log.error_message or '').lower())
+
     def test_create_error_log(self):
         """_create_error_log creates SyncExecutionLog with status failed."""
         api_connector = Mock()

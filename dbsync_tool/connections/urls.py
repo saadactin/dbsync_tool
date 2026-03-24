@@ -4,6 +4,14 @@ from . import views
 app_name = 'connections'
 
 urlpatterns = [
+    # File source connection URLs
+    path('files/', views.FileSourceListView.as_view(), name='file_source_list'),
+    path('files/create/', views.FileSourceCreateView.as_view(), name='file_source_create'),
+    path('files/<uuid:pk>/', views.FileSourceDetailView.as_view(), name='file_source_detail'),
+    path('files/<uuid:pk>/edit/', views.FileSourceUpdateView.as_view(), name='file_source_update'),
+    path('files/<uuid:pk>/delete/', views.FileSourceDeleteView.as_view(), name='file_source_delete'),
+    path('files/<uuid:pk>/test/', views.FileSourceTestView.as_view(), name='file_source_test'),
+
     # Database connection URLs
     path('', views.ConnectionListView.as_view(), name='list'),
     path('create/', views.ConnectionCreateView.as_view(), name='create'),

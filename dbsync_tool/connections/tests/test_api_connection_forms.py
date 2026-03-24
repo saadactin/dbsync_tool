@@ -192,3 +192,100 @@ class APIConnectionFormTests(TestCase):
         domain_values = [choice[0] for choice in choices if choice[0]]
         for domain in ZOHO_API_DOMAINS.values():
             self.assertIn(domain, domain_values)
+
+    # --- Azure DevOps form tests ---
+
+    def _azure_form_data(self, **overrides):
+        data = {
+            'name': 'Azure DevOps Conn',
+            'api_type': 'azure_devops',
+            'organization': 'MyOrg',
+            'azure_tenant_id': 'tenant-guid-123',
+            'azure_client_id': 'client-guid-456',
+            'azure_client_secret': 'secret-789',
+            'selected_modules': ['ProjA', 'ProjB'],
+            'is_active': True,
+        }
+        data.update(overrides)
+        return data
+
+    def test_azure_devops_form_valid_data(self):
+        """Azure DevOps form with valid data should be valid."""
+        form = APIConnectionForm(data=self._azure_form_data())
+        self.assertTrue(form.is_valid(), f"Azure form errors: {form.errors}")
+
+    def test_azure_devops_form_requires_organization(self):
+        data = self._azure_form_data(organization='')
+        form = APIConnectionForm(data=data)
+        self.assertFalse(form.is_valid())
+        self.assertIn('organization', form.errors)
+
+    def test_azure_devops_form_requires_azure_tenant_id(self):
+        data = self._azure_form_data(azure_tenant_id='')
+        form = APIConnectionForm(data=data)
+        self.assertFalse(form.is_valid())
+        self.assertIn('azure_tenant_id', form.errors)
+
+    def test_azure_devops_form_requires_azure_client_id(self):
+        data = self._azure_form_data(azure_client_id='')
+        form = APIConnectionForm(data=data)
+        self.assertFalse(form.is_valid())
+        self.assertIn('azure_client_id', form.errors)
+
+    def test_azure_devops_form_requires_azure_client_secret_on_create(self):
+        data = self._azure_form_data(azure_client_secret='')
+        form = APIConnectionForm(data=data)
+        self.assertFalse(form.is_valid())
+        self.assertIn('azure_client_secret', form.errors)
+
+    def test_azure_devops_form_requires_at_least_one_project(self):
+        data = self._azure_form_data(selected_modules=[])
+        form = APIConnectionForm(data=data)
+        self.assertFalse(form.is_valid())
+        self.assertIn('selected_modules', form.errors)
+
+    def test_azure_devops_form_save_sets_azure_fields(self):
+        """Saving Azure DevOps form maps fields and encrypts secret."""
+        form = APIConnectionForm(data=self._azure_form_data())
+        self.assertTrue(form.is_valid(), f"Azure form errors: {form.errors}")
+        instance = form.save(commit=False)
+        instance.tenant = self.tenant
+        instance.created_by = self.creator
+        instance.save()
+        instance.refresh_from_db()
+        self.assertEqual(instance.organization, 'MyOrg')
+        self.assertEqual(instance.azure_tenant_id, 'tenant-guid-123')
+        self.assertEqual(instance.azure_client_id, 'client-guid-456')
+        self.assertEqual(instance.selected_modules, ['ProjA', 'ProjB'])
+        self.assertTrue(instance.azure_client_secret.startswith('gAAAAAB'))
+
+    def test_azure_devops_form_edit_keeps_secret_when_blank(self):
+        """On edit, leaving azure_client_secret blank should keep existing secret."""
+        # create existing Azure connection through model
+        conn = APIConnection.objects.create(
+            name='Existing Azure',
+            api_type='azure_devops',
+            organization='MyOrg',
+            azure_tenant_id='tenant-guid-123',
+            azure_client_id='client-guid-456',
+            azure_client_secret='secret-789',
+            selected_modules=['ProjA'],
+            tenant=self.tenant,
+            created_by=self.creator,
+        )
+        original_secret = conn.azure_client_secret
+        data = {
+            'name': 'Existing Azure',
+            'api_type': 'azure_devops',
+            'organization': 'MyOrg',
+            'azure_tenant_id': 'tenant-guid-123',
+            'azure_client_id': 'client-guid-456',
+            'azure_client_secret': '',
+            'selected_modules': ['ProjA'],
+            'is_active': True,
+        }
+        form = APIConnectionForm(data=data, instance=conn)
+        self.assertTrue(form.is_valid(), f"Azure edit form errors: {form.errors}")
+        saved = form.save()
+        saved.refresh_from_db()
+        self.assertEqual(saved.azure_client_secret, original_secret)

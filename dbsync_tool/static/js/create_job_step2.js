@@ -49,6 +49,108 @@ window.addEventListener('error', function(event) {
 
 document.addEventListener('DOMContentLoaded', function() {
     try {
+    function getDisplayErrorText(error, fallback = 'Unknown error occurred. Please check the browser console for details.') {
+        if (error === null || error === undefined) return fallback;
+        if (typeof error === 'string') return error;
+        if (error instanceof Error && typeof error.message === 'string') {
+            return error.message;
+        }
+        if (typeof error === 'object') {
+            if (typeof error.message === 'string') return error.message;
+            if (typeof error.error === 'string') return error.error;
+            if (typeof error.detail === 'string') return error.detail;
+            try {
+                return JSON.stringify(error);
+            } catch (e) {
+                return fallback;
+            }
+        }
+        return String(error);
+    }
+
+    // Flat-file Step 2 mode (preview + target table persistence)
+    const flatFileLoading = document.getElementById('flat-file-loading');
+    if (flatFileLoading) {
+        const flatFileError = document.getElementById('flat-file-error');
+        const flatFileArea = document.getElementById('flat-file-preview-area');
+        const statsEl = document.getElementById('flat-file-stats');
+        const headEl = document.getElementById('flat-file-preview-head');
+        const bodyEl = document.getElementById('flat-file-preview-body');
+        const tableNameInput = document.getElementById('target_table_name');
+        const hiddenTableName = document.getElementById('flat_file_target_table_name_hidden');
+        const submitForm = document.getElementById('flat-file-submit-form');
+
+        function sanitizeTableName(value) {
+            let sanitized = String(value || '').replace(/[^0-9a-zA-Z_]/g, '_').replace(/^_+|_+$/g, '').toLowerCase();
+            if (!sanitized) sanitized = 'flat_file_source';
+            return sanitized.slice(0, 63);
+        }
+
+        fetch('/sync-jobs/create/step2/flat-file-preview/')
+            .then(function(response) { return response.json(); })
+            .then(function(data) {
+                flatFileLoading.style.display = 'none';
+                if (!data.success) {
+                    flatFileError.textContent = data.message || 'Unable to load file preview.';
+                    flatFileError.style.display = 'block';
+                    return;
+                }
+
+                const columns = Array.isArray(data.columns) ? data.columns : [];
+                const rows = Array.isArray(data.rows) ? data.rows : [];
+                const stats = data.file_stats || {};
+                const defaultTable = sanitizeTableName(data.default_table_name || '');
+                tableNameInput.value = defaultTable;
+                hiddenTableName.value = defaultTable;
+
+                statsEl.textContent = 'Rows sampled: ' + (stats.sample_rows || 0)
+                    + ' | Size: ' + (stats.size_bytes || 0) + ' bytes'
+                    + ' | Encoding: ' + (stats.encoding || '')
+                    + ' | Delimiter: ' + (stats.delimiter || ',');
+
+                const headTr = document.createElement('tr');
+                columns.forEach(function(col) {
+                    const th = document.createElement('th');
+                    th.textContent = String(col);
+                    headTr.appendChild(th);
+                });
+                headEl.innerHTML = '';
+                headEl.appendChild(headTr);
+
+                bodyEl.innerHTML = '';
+                rows.forEach(function(row) {
+                    const tr = document.createElement('tr');
+                    columns.forEach(function(_, idx) {
+                        const td = document.createElement('td');
+                        td.textContent = row[idx] !== undefined ? String(row[idx]) : '';
+                        tr.appendChild(td);
+                    });
+                    bodyEl.appendChild(tr);
+                });
+                flatFileArea.style.display = 'block';
+            })
+            .catch(function(err) {
+                flatFileLoading.style.display = 'none';
+                flatFileError.textContent = 'Preview request failed: ' + getDisplayErrorText(err);
+                flatFileError.style.display = 'block';
+            });
+
+        if (tableNameInput) {
+            tableNameInput.addEventListener('input', function() {
+                const sanitized = sanitizeTableName(tableNameInput.value);
+                hiddenTableName.value = sanitized;
+            });
+        }
+        if (submitForm) {
+            submitForm.addEventListener('submit', function(e) {
+                if (!hiddenTableName.value) {
+                    e.preventDefault();
+                    hiddenTableName.value = 'flat_file_source';
+                }
+            });
+        }
+        return;
+    }
     // Get connection ID from global variable set in template
     const connectionId = typeof SOURCE_CONNECTION_ID !== 'undefined' ? SOURCE_CONNECTION_ID : null;
     
@@ -272,7 +374,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             console.error('Error loading schemas:', error);
             
-            let errorText = error.message || 'Unknown error occurred. Please check the browser console for details.';
+            let errorText = getDisplayErrorText(error);
             
             if (errorText.toLowerCase().includes('password') && 
                 (errorText.toLowerCase().includes('decrypt') || 
@@ -582,7 +684,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 
                 console.error(`Error loading tables for schema ${schemaName}:`, error);
-                const errorText = error.message || 'Unknown error';
+                const errorText = getDisplayErrorText(error, 'Unknown error');
                 
                 // Try to display error in schema-specific error element first
                 let errorDisplayed = false;

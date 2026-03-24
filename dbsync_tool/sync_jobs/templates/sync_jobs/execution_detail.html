@@ -74,7 +74,12 @@
                         <strong>Completed:</strong> {{ execution.completed_at|date:"Y-m-d H:i:s" }}<br>
                     {% endif %}
                     {% if duration %}
-                        <strong>Duration:</strong> {{ duration|format_duration }}
+                        <strong>Duration:</strong> {{ duration|format_duration }}<br>
+                    {% endif %}
+                    {% if job.source_connection_type == 'api' and job.source_api_connection and job.source_api_connection.api_type == 'azure_devops' %}
+                        <strong>Azure DevOps:</strong>
+                        {{ job.source_api_connection.organization }}
+                        → ClickHouse {{ job.target_connection.database_name }}
                     {% endif %}
                 </p>
             </div>
@@ -193,6 +198,8 @@
                                     {% with duration=log.completed_at|timeuntil:log.started_at %}
                                         {{ duration|slice:":-4" }}
                                     {% endwith %}
+                                {% elif log.verification_summary|slice:":9" == "Duration:" %}
+                                    {{ log.verification_summary }}
                                 {% else %}
                                     -
                                 {% endif %}

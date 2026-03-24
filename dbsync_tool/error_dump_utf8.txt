@@ -1,0 +1,39 @@
+﻿WARNING: Using development encryption key. Set ENCRYPTION_KEY environment variable for production!
+Job: post_increment (ID: eeedbbf0-eabe-4d77-b632-05d36516dbe1)
+Status: failed
+
+Latest Execution: 57a7088d-26dd-458f-93d1-3506c2bbe236
+Started: 2026-03-16 14:00:02.414300+00:00
+Status: failed
+Summary Error: 17 of 26 table(s) failed to sync
+Tables: 0/26
+
+Table Sync Logs:
+Table                                    | Status     | Rows       | Error
+----------------------------------------------------------------------------------------------------
+public.auth_group                        | completed  | 0          | 
+public.auth_group_permissions            | completed  | 0          | 
+public.auth_user_groups                  | completed  | 0          | 
+public.auth_user_user_permissions        | completed  | 0          | 
+public.django_admin_log                  | completed  | 0          | 
+public.django_session                    | completed  | 0          | 
+public.okrapi_log                        | completed  | 0          | 
+public.okrapi_task                       | completed  | 0          | 
+public.okrapi_taskchallenges             | completed  | 0          | 
+public.auth_permission                   | failed     | 0          | Failed to insert batch 1 for public.auth_permissio
+public.auth_user                         | failed     | 0          | Failed to insert batch 1 for public.auth_user: Fai
+public.django_content_type               | failed     | 0          | Failed to insert batch 1 for public.django_content
+public.django_migrations                 | failed     | 0          | Failed to insert batch 1 for public.django_migrati
+public.okrapi_businessunit               | failed     | 0          | Failed to insert batch 1 for public.okrapi_busines
+public.okrapi_businessunitokrmapping     | failed     | 0          | Failed to insert batch 1 for public.okrapi_busines
+public.okrapi_department                 | failed     | 0          | Failed to insert batch 1 for public.okrapi_departm
+public.okrapi_formdata                   | failed     | 0          | Failed to insert batch 1 for public.okrapi_formdat
+public.okrapi_manageranswerdata          | failed     | 0          | Failed to insert batch 1 for public.okrapi_manager
+public.okrapi_managerreview              | failed     | 0          | Failed to insert batch 1 for public.okrapi_manager
+public.okrapi_okr                        | failed     | 0          | Failed to insert batch 1 for public.okrapi_okr: Fa
+public.okrapi_okrusermapping             | failed     | 0          | Failed to insert batch 1 for public.okrapi_okruser
+public.okrapi_optionmapper               | failed     | 0          | Failed to insert batch 1 for public.okrapi_optionm
+public.okrapi_questionmaster             | failed     | 0          | Failed to insert batch 1 for public.okrapi_questio
+public.okrapi_useranswerdata             | failed     | 0          | Failed to insert batch 1 for public.okrapi_userans
+public.teamsauth_teamsprofile            | failed     | 0          | Failed to insert batch 1 for public.teamsauth_team
+public.teamsauth_useraccessmapping       | failed     | 0          | Failed to insert batch 1 for public.teamsauth_user

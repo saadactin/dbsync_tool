@@ -1,5 +1,6 @@
 import uuid
 import logging
+from pathlib import PurePath
 from django.db import models
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
@@ -191,6 +192,98 @@ class DatabaseConnection(models.Model):
                 connector.close()
 
 
+class FileSourceConnection(models.Model):
+    """
+    Model to store flat-file source connection information.
+    The path is stored as a relative path under FILE_SYNC_ROOT.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255, help_text="Friendly name for this file source")
+    relative_path = models.CharField(
+        max_length=1024,
+        help_text="Path relative to FILE_SYNC_ROOT on the application server"
+    )
+    delimiter = models.CharField(
+        max_length=1,
+        default=',',
+        help_text="CSV delimiter character (single character only)"
+    )
+    encoding = models.CharField(
+        max_length=64,
+        default='utf-8',
+        help_text="File encoding (e.g., utf-8, utf-16, latin-1)"
+    )
+    has_header = models.BooleanField(
+        default=True,
+        help_text="Whether the first row contains column headers"
+    )
+    tenant = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='file_source_connections',
+        db_index=True,
+        help_text='Tenant (Admin user) who owns this file source connection'
+    )
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='created_file_source_connections',
+        help_text='User who created this file source connection'
+    )
+    is_active = models.BooleanField(default=True, help_text="Whether this file source is active")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'file_source_connections'
+        ordering = ['-created_at']
+        verbose_name = 'File Source Connection'
+        verbose_name_plural = 'File Source Connections'
+        indexes = [
+            models.Index(fields=['tenant', 'is_active']),
+            models.Index(fields=['created_by', 'is_active']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'name'],
+                name='unique_file_source_connection_name_per_tenant'
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.name} (File Source)"
+
+    def clean(self):
+        super().clean()
+
+        path_value = (self.relative_path or '').strip()
+        if not path_value:
+            raise ValidationError({'relative_path': 'Relative path is required.'})
+        if '\x00' in path_value:
+            raise ValidationError({'relative_path': 'Relative path contains invalid characters.'})
+
+        candidate = PurePath(path_value)
+        if candidate.is_absolute():
+            raise ValidationError(
+                {'relative_path': 'Path must be relative to FILE_SYNC_ROOT, not absolute.'}
+            )
+        if path_value.startswith('\\\\') or path_value.startswith('//'):
+            raise ValidationError(
+                {'relative_path': 'UNC paths are not allowed. Use a relative path under FILE_SYNC_ROOT.'}
+            )
+        if any(part == '..' for part in candidate.parts):
+            raise ValidationError(
+                {'relative_path': 'Relative path cannot contain parent-directory traversal (..).'}
+            )
+
+        delim = self.delimiter if self.delimiter is not None else ''
+        if len(delim) != 1:
+            raise ValidationError({'delimiter': 'Delimiter must be exactly one character.'})
+
+        if not (self.encoding or '').strip():
+            raise ValidationError({'encoding': 'Encoding is required.'})
+
+
 class ConnectionTestLog(models.Model):
     """
     Model to log connection test results
@@ -281,6 +374,31 @@ class APIConnection(models.Model):
         help_text="Selected SAP document types/endpoints for sync"
     )
     
+    # Azure DevOps-specific fields
+    azure_tenant_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Azure AD Tenant ID (GUID)"
+    )
+    azure_client_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Azure DevOps Service Principal Application (client) ID"
+    )
+    azure_client_secret = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Azure DevOps Client Secret (encrypted at rest)"
+    )
+    organization = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Azure DevOps organization name"
+    )
+    
     # Standard fields
     tenant = models.ForeignKey(
         User,
@@ -356,20 +474,36 @@ class APIConnection(models.Model):
             # SAP: require SAP-specific fields
             if not self.sap_base_url:
                 raise ValidationError({'sap_base_url': 'SAP base URL is required for SAP B1 connections.'})
-            if not self.sap_username:
-                raise ValidationError({'sap_username': 'SAP UserName and CompanyDB are required for SAP B1 connections.'})
-            if not isinstance(self.sap_username, dict):
-                raise ValidationError({'sap_username': 'SAP username must be a JSON object with UserName and CompanyDB.'})
-            if 'UserName' not in self.sap_username or 'CompanyDB' not in self.sap_username:
-                raise ValidationError({'sap_username': 'SAP username must contain UserName and CompanyDB keys.'})
             if not self.sap_password or self.sap_password == 'RESET_REQUIRED':
                 raise ValidationError({'sap_password': 'SAP password is required for SAP B1 connections.'})
             if self.sap_base_url:
                 parsed = urlparse(self.sap_base_url)
                 if not parsed.scheme or not parsed.netloc:
                     raise ValidationError({'sap_base_url': 'SAP base URL must be a valid URL.'})
+            # If sap_username is already populated (e.g. when creating programmatically),
+            # ensure it has the expected structure. The form-level validation for
+            # sap_user_name and sap_company_db handles the required checks.
+            if self.sap_username:
+                if not isinstance(self.sap_username, dict) or \
+                   'UserName' not in self.sap_username or \
+                   'CompanyDB' not in self.sap_username:
+                    raise ValidationError(
+                        'SAP username payload must be a JSON object with '
+                        'UserName and CompanyDB keys.'
+                    )
             if self.sap_endpoints is not None and not isinstance(self.sap_endpoints, list):
                 raise ValidationError({'sap_endpoints': 'SAP endpoints must be a list.'})
+        
+        elif self.api_type == 'azure_devops':
+            # Azure DevOps: require Azure-specific fields
+            if not (self.organization or '').strip():
+                raise ValidationError({'organization': 'Organization is required for Azure DevOps connections.'})
+            if not (self.azure_tenant_id or '').strip():
+                raise ValidationError({'azure_tenant_id': 'Azure Tenant ID is required for Azure DevOps connections.'})
+            if not (self.azure_client_id or '').strip():
+                raise ValidationError({'azure_client_id': 'Azure Client ID is required for Azure DevOps connections.'})
+            if not self.azure_client_secret or self.azure_client_secret == 'RESET_REQUIRED':
+                raise ValidationError({'azure_client_secret': 'Azure Client Secret is required for Azure DevOps connections.'})
         
         # Validate selected_modules is a list (if provided)
         if self.selected_modules is not None and not isinstance(self.selected_modules, list):
@@ -421,6 +555,14 @@ class APIConnection(models.Model):
                     self.sap_password = encrypt_password(self.sap_password)
                 except Exception as e:
                     raise EncryptionError(f"Failed to encrypt SAP password: {str(e)}")
+        
+        # Encrypt azure_client_secret before saving (only if it's not already encrypted and not empty)
+        if self.azure_client_secret and self.azure_client_secret != 'RESET_REQUIRED':
+            if not self.azure_client_secret.startswith('gAAAAAB'):
+                try:
+                    self.azure_client_secret = encrypt_password(self.azure_client_secret)
+                except Exception as e:
+                    raise EncryptionError(f"Failed to encrypt Azure client secret: {str(e)}")
         
         super().save(*args, **kwargs)
     
@@ -515,6 +657,35 @@ class APIConnection(models.Model):
         except Exception as e:
             raise EncryptionError(f"Failed to decrypt SAP password: {str(e)}")
     
+    def get_decrypted_azure_client_secret(self):
+        """
+        Get decrypted Azure client secret for connection.
+
+        Returns:
+            str: Decrypted Azure client secret.
+
+        Raises:
+            EncryptionError: If decryption fails or secret is not set.
+        """
+        if not self.azure_client_secret or self.azure_client_secret == 'RESET_REQUIRED':
+            raise EncryptionError(
+                f"Azure client secret is not set for connection '{self.name}'. "
+                f"Please update the client secret in the Connections page (Edit connection)."
+            )
+        try:
+            return decrypt_password(self.azure_client_secret)
+        except ValueError as e:
+            error_msg = str(e)
+            if "Decryption failed" in error_msg or "Invalid token" in error_msg or "InvalidSignature" in str(type(e).__name__):
+                raise EncryptionError(
+                    f"Failed to decrypt Azure client secret for connection '{self.name}'. "
+                    f"The encryption key may have changed. "
+                    f"Please update the client secret by editing this connection in the Connections page."
+                )
+            raise EncryptionError(f"Failed to decrypt Azure client secret: {error_msg}")
+        except Exception as e:
+            raise EncryptionError(f"Failed to decrypt Azure client secret: {str(e)}")
+    
     def get_sap_connection_params(self):
         """
         Get SAP connection parameters as dictionary (for use by SAP connector).
@@ -533,10 +704,17 @@ class APIConnection(models.Model):
         Get connection parameters as dictionary (type-specific).
 
         Returns:
-            dict: Connection parameters with decrypted credentials (Zoho or SAP).
+            dict: Connection parameters with decrypted credentials (Zoho, SAP, or Azure DevOps).
         """
         if self.api_type == 'sap_b1':
             return self.get_sap_connection_params()
+        if self.api_type == 'azure_devops':
+            return {
+                'tenant_id': self.azure_tenant_id,
+                'client_id': self.azure_client_id,
+                'client_secret': self.get_decrypted_azure_client_secret(),
+                'organization': self.organization,
+            }
         return {
             'client_id': self.client_id,
             'client_secret': self.get_decrypted_client_secret(),
@@ -569,6 +747,19 @@ class APIConnection(models.Model):
                 except Exception as e:
                     logger.error("SAP get_available_modules failed: %s", e)
                     return (False, f"Connection successful, but failed to fetch endpoints: {str(e)}", [])
+            if self.api_type == 'azure_devops':
+                from connections.connectors.azure_devops import AzureDevOpsConnector
+                connector = AzureDevOpsConnector(self)
+                if not connector.authenticate():
+                    return (False, "Authentication failed. Please check your Azure credentials.", [])
+                try:
+                    projects = connector.get_available_modules()
+                    if not projects:
+                        return (True, "Connection successful, but no projects found.", [])
+                    return (True, f"Connection successful. Found {len(projects)} project(s).", projects)
+                except Exception as e:
+                    logger.error("Azure DevOps get_available_modules failed: %s", e)
+                    return (False, f"Connection successful, but failed to fetch projects: {str(e)}", [])
             from connections.connectors.zoho import ZohoConnector
             if self.api_type != 'zoho_crm':
                 return (False, f"Unsupported API type: {self.api_type}", [])

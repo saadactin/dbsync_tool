@@ -194,15 +194,10 @@ class SAPConnector(APIConnector):
     def get_available_endpoints(self) -> List[Dict[str, str]]:
         """
         Return list of endpoint dicts (name, endpoint, id_field) for the UI.
-        Fetches available entity sets from $metadata and returns only curated endpoints
-        that exist on this server; if $metadata fails, returns full SAP_DOCUMENT_TYPES.
+        We return the full SAP_DOCUMENT_TYPES list now to allow all requested tables
+        to be visible, as some SAP servers have unreliable $metadata or custom names.
+        Sync-time retry/skip logic handles any missing endpoints.
         """
-        server_entity_sets = self._fetch_entity_sets_from_metadata()
-        if server_entity_sets is not None:
-            server_set = set(server_entity_sets)
-            filtered = [e for e in SAP_DOCUMENT_TYPES if e["endpoint"] in server_set]
-            if filtered:
-                return filtered
         return list(SAP_DOCUMENT_TYPES)
 
     def get_available_modules(self) -> List[str]:
@@ -290,3 +285,157 @@ class SAPConnector(APIConnector):
         finally:
             self.session.close()
             self._authenticated = False
+
+
+import asyncio
+import aiohttp
+
+class AsyncSAPConnector:
+    """
+    High-performance asynchronous SAP B1 Service Layer connector.
+    Supports parallel page fetching using aiohttp and semaphores.
+    """
+    def __init__(self, api_connection: APIConnection):
+        self.api_connection = api_connection
+        self.session = None
+        self.connector = None
+        self._semaphore = None
+        self._base_url = None
+        self._authenticated = False
+        self._filter_unsupported_endpoints = set()
+
+    def _get_base_url(self) -> str:
+        if self._base_url is not None:
+            return self._base_url
+        url = (self.api_connection.sap_base_url or "").strip().rstrip("/")
+        if not url:
+            raise ValueError("SAP base URL is not set")
+        self._base_url = url
+        return self._base_url
+
+    async def login(self) -> bool:
+        """Async login to SAP B1."""
+        try:
+            from asgiref.sync import sync_to_async
+            params = await sync_to_async(self.api_connection.get_sap_connection_params)()
+            username = params.get("username") or {}
+            password = params.get("password") or ""
+            
+            # Connection settings from user template
+            connection_limit = 30
+            max_concurrent = 25
+            
+            self.connector = aiohttp.TCPConnector(limit=connection_limit, ssl=False)
+            self.session = aiohttp.ClientSession(
+                connector=self.connector, 
+                timeout=aiohttp.ClientTimeout(total=300)
+            )
+            self._semaphore = asyncio.Semaphore(max_concurrent)
+            
+            login_url = f"{self._get_base_url()}/Login"
+            payload = {**username, "Password": password}
+            
+            async with self.session.post(login_url, json=payload, ssl=False) as resp:
+                if resp.status == 200:
+                    self._authenticated = True
+                    logger.info("Async SAP login successful")
+                    return True
+                else:
+                    logger.error(f"Async SAP login failed: {resp.status}")
+                    return False
+        except Exception as e:
+            logger.error(f"Async SAP login exception: {e}")
+            return False
+
+    async def logout(self):
+        try:
+            if self.session and self._authenticated:
+                await self.session.post(f"{self._get_base_url()}/Logout", ssl=False)
+        except: pass
+        if self.session: await self.session.close()
+        if self.connector: await self.connector.close()
+        self._authenticated = False
+
+    async def fetch_page(self, endpoint: str, skip: int, page_size: int = 500, filter_query: str = None) -> List[Dict]:
+        """Fetch a single page of records."""
+        async with self._semaphore:
+            try:
+                params = {"$top": page_size, "$skip": skip}
+                if filter_query: 
+                    params["$filter"] = filter_query
+                
+                headers = {"Prefer": f"odata.maxpagesize={page_size}"}
+                url = f"{self._get_base_url()}/{endpoint}"
+                
+                async with self.session.get(url, params=params, headers=headers, ssl=False) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data.get("value", [])
+                    elif response.status == 400 and filter_query:
+                        # Log once per endpoint; caller will transparently
+                        # fallback to unfiltered reads.
+                        if endpoint not in self._filter_unsupported_endpoints:
+                            logger.warning(
+                                "Filter failed for %s (HTTP 400). Falling back to unfiltered fetch.",
+                                endpoint,
+                            )
+                            self._filter_unsupported_endpoints.add(endpoint)
+                        return None
+                    return []
+            except Exception as e:
+                logger.error(f"Async Fetch error at skip={skip}: {e}")
+                return []
+
+    async def fetch_pages_parallel(self, endpoint: str, start_skip: int, num_pages: int, page_size: int = 500, filter_query: str = None) -> List[Dict]:
+        """Fetch multiple pages in parallel."""
+        tasks = [
+            self.fetch_page(endpoint, start_skip + (i * page_size), page_size, filter_query) 
+            for i in range(num_pages)
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=False)
+        all_records = []
+        for result in results:
+            if result is None: return None
+            if isinstance(result, list): 
+                all_records.extend(result)
+        return all_records
+
+    async def stream_all_records(self, endpoint: str, page_size: int = 500, parallel_workers: int = 10, batch_size: int = 5000, filter_query: str = None):
+        """Generator that yields batches of records fetched in parallel."""
+        skip, total_fetched, buffer, empty_batches = 0, 0, [], 0
+        prefetched_records = None
+
+        # Probe filtered mode once to avoid repeated HTTP 400 spam from
+        # parallel page workers for endpoints that don't support $filter.
+        if filter_query:
+            prefetched_records = await self.fetch_page(endpoint, 0, page_size, filter_query)
+            if prefetched_records is None:
+                filter_query = None
+
+        while empty_batches < 3:
+            if prefetched_records is not None:
+                records = prefetched_records
+                prefetched_records = None
+            else:
+                records = await self.fetch_pages_parallel(
+                    endpoint, skip, parallel_workers, page_size, filter_query
+                )
+            if records is None: break
+            if not records:
+                empty_batches += 1
+                skip += parallel_workers * page_size
+                continue
+            empty_batches = 0
+            total_fetched += len(records)
+            buffer.extend(records)
+            
+            if len(buffer) >= batch_size:
+                yield buffer[:batch_size]
+                buffer = buffer[batch_size:]
+            
+            skip += len(records)
+            await asyncio.sleep(0.1)
+        
+        if buffer: 
+            yield buffer
+        logger.info(f"Async stream complete for {endpoint}. Total: {total_fetched}")

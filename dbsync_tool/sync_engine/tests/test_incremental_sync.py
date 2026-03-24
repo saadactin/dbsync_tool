@@ -10,6 +10,7 @@ from connections.connectors.base import ColumnInfo
 from sync_engine.incremental_sync import IncrementalSyncExecutor
 from sync_engine.exceptions import TableSyncError
 import pytz
+import pandas as pd
 
 
 class TestIncrementalSyncExecutor(unittest.TestCase):
@@ -201,6 +202,83 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
         # Verify checkpoint was created
         self.executor.checkpoint_manager.create_or_update_checkpoint.assert_called_once()
         self.assertEqual(mock_log.status, 'completed')
+
+    @patch('sync_engine.incremental_sync.SyncExecutionLog')
+    def test_sync_table_skips_when_target_table_missing(self, mock_log_class):
+        """Incremental sync should skip table when target table is missing."""
+        job_table = Mock(spec=SyncJobTable)
+        job_table.schema_name = 'public'
+        job_table.table_name = 'users'
+        job_table.incremental_column = 'updated_at'
+        job_table.transformation_query = None
+        job_table.column_transformations = None
+
+        mock_log = Mock(spec=SyncExecutionLog)
+        mock_log.status = 'pending'
+        mock_log_class.objects.create = Mock(return_value=mock_log)
+
+        self.executor.table_handler.target_db_type = 'postgres'
+        self.target_connector.table_exists = Mock(return_value=False)
+        self.source_connector.get_columns = Mock(return_value=[
+            ColumnInfo('id', 'int', False, True),
+            ColumnInfo('updated_at', 'timestamp', True, False)
+        ])
+
+        self.executor.sync_table(job_table)
+
+        self.target_connector.table_exists.assert_called_once()
+        self.assertEqual(mock_log.status, 'completed')
+        self.assertIn('does not exist', (mock_log.error_message or '').lower())
+
+    def test_upsert_batch_with_retry_uses_upsert_dataframe(self):
+        """Batch writes should use connector upsert_dataframe."""
+        self.target_connector.upsert_dataframe = Mock()
+        rows = [(1, "Alice"), (2, "Bob")]
+        columns = ["id", "name"]
+
+        self.executor._upsert_batch_with_retry(
+            schema="public",
+            table="users",
+            columns=columns,
+            rows=rows,
+            key_columns=["id"],
+        )
+
+        self.target_connector.upsert_dataframe.assert_called_once()
+        call_kwargs = self.target_connector.upsert_dataframe.call_args.kwargs
+        self.assertEqual(call_kwargs["schema"], "public")
+        self.assertEqual(call_kwargs["table"], "users")
+        self.assertEqual(call_kwargs["key_column"], "id")
+        self.assertIsInstance(call_kwargs["df"], pd.DataFrame)
+
+    def test_upsert_batch_with_retry_unwraps_nested_rows(self):
+        self.target_connector.upsert_dataframe = Mock()
+        rows = [((1, "Alice"),), ((2, "Bob"),)]
+        columns = ["id", "name"]
+        self.executor._upsert_batch_with_retry(
+            schema="public",
+            table="users",
+            columns=columns,
+            rows=rows,
+            key_columns=["id"],
+        )
+        call_kwargs = self.target_connector.upsert_dataframe.call_args.kwargs
+        self.assertEqual(list(call_kwargs["df"].columns), columns)
+        self.assertEqual(len(call_kwargs["df"]), 2)
+
+    def test_resolve_incremental_column_auto_falls_back_to_numeric_column(self):
+        columns = [
+            ColumnInfo("any_future_name", "int", False, False),
+            ColumnInfo("name", "varchar", True, False),
+        ]
+        col, inspected, reason = self.executor._resolve_incremental_column_auto(
+            schema="public",
+            table="users",
+            columns=columns,
+            pk_columns=[],
+        )
+        self.assertEqual(col, "any_future_name")
+        self.assertEqual(reason, "auto_numeric_column_fallback_non_nullable")
     
     @patch('sync_engine.incremental_sync.SyncExecutionLog')
     def test_sync_table_with_checkpoint(self, mock_log_class):
@@ -273,15 +351,89 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
         self.executor.checkpoint_manager.create_or_update_checkpoint.assert_called_once()
         self.assertEqual(mock_log.status, 'completed')
     
+    @patch('sync_engine.incremental_sync.SyncExecutionLog')
+    def test_sync_table_no_new_rows_does_not_upsert(self, mock_log_class):
+        """First incremental run with no new rows should not call upsert and should leave checkpoint unchanged."""
+        job_table = Mock(spec=SyncJobTable)
+        job_table.schema_name = 'public'
+        job_table.table_name = 'users'
+        job_table.incremental_column = 'updated_at'
+        job_table.transformation_query = None
+        job_table.column_transformations = None
+
+        mock_log = Mock(spec=SyncExecutionLog)
+        mock_log.status = 'pending'
+        mock_log_class.objects.create = Mock(return_value=mock_log)
+
+        # No existing checkpoint
+        self.executor.checkpoint_manager.get_checkpoint_value = Mock(return_value=None)
+
+        # Target exists
+        self.executor.table_handler.target_db_type = 'postgres'
+        self.target_connector.table_exists = Mock(return_value=True)
+
+        # Columns and PK
+        self.source_connector.get_columns = Mock(return_value=[
+            ColumnInfo('id', 'int', False, True),
+            ColumnInfo('updated_at', 'timestamp', True, False),
+        ])
+        self.source_connector.get_primary_key = Mock(return_value=['id'])
+
+        # Incremental query returns no rows
+        self.executor.query_builder.build_incremental_query = Mock(return_value='SELECT ...')
+        self.source_connector.execute_query_fetchall = Mock(return_value=[])
+
+        # Spy on upsert
+        self.target_connector.upsert_dataframe = Mock()
+        self.executor.checkpoint_manager.create_or_update_checkpoint = Mock()
+
+        self.executor.sync_table(job_table)
+
+        # No upsert when there are no rows
+        self.target_connector.upsert_dataframe.assert_not_called()
+        # No checkpoint update when nothing changed
+        self.executor.checkpoint_manager.create_or_update_checkpoint.assert_not_called()
+        self.assertEqual(mock_log.status, 'completed')
+
     def test_sync_table_no_incremental_column(self):
-        """Test sync_table with no incremental column"""
+        """Test sync_table with no configured incremental column (auto mode)."""
         job_table = Mock(spec=SyncJobTable)
         job_table.schema_name = 'public'
         job_table.table_name = 'users'
         job_table.incremental_column = None
-        
-        with self.assertRaises(TableSyncError):
+        job_table.transformation_query = None
+        job_table.column_transformations = None
+
+        with patch('sync_engine.incremental_sync.SyncExecutionLog') as mock_log_class:
+            mock_log = Mock(spec=SyncExecutionLog)
+            mock_log.status = 'pending'
+            mock_log_class.objects.create = Mock(return_value=mock_log)
+            self.executor.table_handler.target_db_type = 'postgres'
+            self.target_connector.table_exists = Mock(return_value=False)
+            self.source_connector.get_columns = Mock(return_value=[
+                ColumnInfo('id', 'int', False, True),
+                ColumnInfo('updated_at', 'timestamp', True, False),
+            ])
+            self.source_connector.get_primary_key = Mock(return_value=['id'])
             self.executor.sync_table(job_table)
+
+        self.assertEqual(mock_log.status, 'completed')
+
+    def test_resolve_incremental_column_auto_prefers_datetime_name(self):
+        columns = [
+            ColumnInfo('id', 'int', False, True),
+            ColumnInfo('updated_at', 'timestamp', True, False),
+            ColumnInfo('created_at', 'timestamp', True, False),
+        ]
+        col, inspected, reason = self.executor._resolve_incremental_column_auto(
+            schema='public',
+            table='users',
+            columns=columns,
+            pk_columns=['id'],
+        )
+        self.assertEqual(col, 'updated_at')
+        self.assertIn('updated_at', inspected)
+        self.assertEqual(reason, 'auto_datetime_priority')
     
     def test_handle_failed_sync(self):
         """Test handling failed sync"""

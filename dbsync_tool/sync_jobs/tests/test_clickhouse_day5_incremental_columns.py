@@ -108,7 +108,7 @@ class ClickHouseIncrementalColumnDetectionTestCase(TestCase):
         mock_load_table_columns = MagicMock(return_value=mock_columns)
         
         with patch('sync_jobs.views.load_table_columns', mock_load_table_columns):
-            # Access Step 3 view
+            # Access Step 3 view (now data type mapping preview)
             response = self.client.get(reverse('sync_jobs:create_step3'))
             
             # If redirect, the session might not be persisting - check redirect location
@@ -122,25 +122,17 @@ class ClickHouseIncrementalColumnDetectionTestCase(TestCase):
                 else:
                     self.fail(f"Unexpected redirect to {redirect_url}")
             
-            self.assertEqual(response.status_code, 200, 
-                           f"Expected 200, got {response.status_code}")
-            
+            self.assertEqual(response.status_code, 200,
+                             f"Expected 200, got {response.status_code}")
+
             # Verify the mock was called (only if we got 200)
             self.assertTrue(mock_load_table_columns.called, "load_table_columns should have been called")
-            
-            # Check that DateTime64 column is in incremental candidates
-            table_columns = response.context.get('table_columns', {})
+
+            # Mapping view should expose table_mappings in context
+            table_mappings = response.context.get('table_mappings', {})
             table_key = 'test_db.test_table'
-            self.assertIn(table_key, table_columns, 
-                         f"Table key {table_key} not found in {list(table_columns.keys())}")
-            
-            incremental_candidates = table_columns[table_key]['incremental_candidates']
-            candidate_names = [col['name'] for col in incremental_candidates]
-            
-            # DateTime64 should be detected
-            self.assertIn('created_at', candidate_names)
-            # Int64 should also be detected (covered by 'int' check)
-            self.assertIn('id', candidate_names)
+            self.assertIn(table_key, table_mappings,
+                          f"Table key {table_key} not found in {list(table_mappings.keys())}")
             # String should not be detected
             self.assertNotIn('name', candidate_names)
     

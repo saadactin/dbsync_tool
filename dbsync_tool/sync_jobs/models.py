@@ -5,7 +5,8 @@ import uuid
 from django.db import models
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
-from connections.models import DatabaseConnection, APIConnection
+from django.core.validators import MinValueValidator, MaxValueValidator
+from connections.models import DatabaseConnection, APIConnection, FileSourceConnection
 from core.constants import SCHEDULE_TYPE_CHOICES
 
 
@@ -30,12 +31,19 @@ class SyncJob(models.Model):
         null=True,  # Nullable for database sources
         blank=True
     )
+    source_file_connection = models.ForeignKey(
+        FileSourceConnection,
+        on_delete=models.CASCADE,
+        related_name='file_source_jobs',
+        null=True,  # Nullable for database/api sources
+        blank=True
+    )
     source_connection_type = models.CharField(
         max_length=20,
-        choices=[('database', 'Database'), ('api', 'API')],
+        choices=[('database', 'Database'), ('api', 'API'), ('flat_file', 'Flat file')],
         null=True,  # Nullable for backward compatibility
         blank=True,
-        help_text="Type of source connection (database or API)"
+        help_text="Type of source connection (database, API, or flat file)"
     )
     target_connection = models.ForeignKey(
         DatabaseConnection,
@@ -72,6 +80,12 @@ class SyncJob(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     last_run_at = models.DateTimeField(null=True, blank=True)
     next_run_at = models.DateTimeField(null=True, blank=True)
+    target_table_prefix = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        help_text="Optional prefix for target table names (e.g. POST → POST_tablename)"
+    )
     
     class Meta:
         db_table = 'sync_jobs'
@@ -88,10 +102,12 @@ class SyncJob(models.Model):
         Get source connection (database or API)
         
         Returns:
-            DatabaseConnection or APIConnection instance
+            DatabaseConnection, APIConnection, or FileSourceConnection instance
         """
         if self.source_connection_type == 'api':
             return self.source_api_connection
+        if self.source_connection_type == 'flat_file':
+            return self.source_file_connection
         return self.source_connection
     
     def is_api_source(self):
@@ -102,6 +118,15 @@ class SyncJob(models.Model):
             bool: True if source is API connection, False otherwise
         """
         return self.source_connection_type == 'api'
+
+    def is_flat_file_source(self):
+        """
+        Check if source is flat-file connection.
+
+        Returns:
+            bool: True if source is flat-file connection, False otherwise
+        """
+        return self.source_connection_type == 'flat_file'
     
     def clean(self):
         """Validate model data"""
@@ -113,17 +138,33 @@ class SyncJob(models.Model):
                 raise ValidationError("source_api_connection is required when source_connection_type is 'api'")
             if self.source_connection:
                 raise ValidationError("source_connection must be null when source_connection_type is 'api'")
+            if self.source_file_connection:
+                raise ValidationError("source_file_connection must be null when source_connection_type is 'api'")
         elif self.source_connection_type == 'database':
             if not self.source_connection:
                 raise ValidationError("source_connection is required when source_connection_type is 'database'")
             if self.source_api_connection:
                 raise ValidationError("source_api_connection must be null when source_connection_type is 'database'")
+            if self.source_file_connection:
+                raise ValidationError("source_file_connection must be null when source_connection_type is 'database'")
+        elif self.source_connection_type == 'flat_file':
+            if not self.source_file_connection:
+                raise ValidationError("source_file_connection is required when source_connection_type is 'flat_file'")
+            if self.source_connection:
+                raise ValidationError("source_connection must be null when source_connection_type is 'flat_file'")
+            if self.source_api_connection:
+                raise ValidationError("source_api_connection must be null when source_connection_type is 'flat_file'")
         else:
             # Backward compatibility: if type is not set, assume database
-            if not self.source_connection and not self.source_api_connection:
-                raise ValidationError("Either source_connection or source_api_connection must be set")
-            if self.source_connection and self.source_api_connection:
-                raise ValidationError("Only one of source_connection or source_api_connection can be set")
+            source_count = sum([
+                bool(self.source_connection),
+                bool(self.source_api_connection),
+                bool(self.source_file_connection),
+            ])
+            if source_count == 0:
+                raise ValidationError("One source connection must be set.")
+            if source_count > 1:
+                raise ValidationError("Only one of source_connection, source_api_connection, or source_file_connection can be set")
     
     def __str__(self):
         return f"{self.name} ({self.get_sync_type_display()})"
@@ -153,6 +194,33 @@ class SyncJobTable(models.Model):
         null=True,
         blank=True,
         help_text="Column-level transformations (e.g., {\"name\": \"TRIM\", \"email\": \"UPPER\"})"
+    )
+    column_type_overrides = models.JSONField(
+        default=dict,
+        null=True,
+        blank=True,
+        help_text="Per-column target data type overrides (e.g., {\"id\": \"NUMBER(10)\", \"name\": \"VARCHAR2(100)\"})"
+    )
+
+    # Step 3: Persist target-side column renames (only for non-PK / non-protected columns).
+    # Shape: { "<src_col_lower>": "<target_col_name>" }
+    column_name_overrides = models.JSONField(
+        default=dict,
+        null=True,
+        blank=True,
+        help_text="Per-column target column name overrides (e.g., {\"id\": \"customer_id\"})"
+    )
+    excluded_columns = models.JSONField(
+        default=list,
+        null=True,
+        blank=True,
+        help_text="List of source column names excluded from migration (lowercased).",
+    )
+    protected_columns = models.JSONField(
+        default=list,
+        null=True,
+        blank=True,
+        help_text="Resolved protected source columns always included in migration (lowercased).",
     )
     
     class Meta:
@@ -185,6 +253,11 @@ class SyncSchedule(models.Model):
         null=True,
         blank=True,
         help_text="Cron expression for custom schedules (e.g., '0 0 * * *' for daily at midnight)"
+    )
+    interval_hours = models.PositiveSmallIntegerField(
+        default=1,
+        validators=[MinValueValidator(1), MaxValueValidator(24)],
+        help_text="For hourly schedules: run every N hours on the first-run anchor grid (1-24).",
     )
     tenant = models.ForeignKey(
         User,

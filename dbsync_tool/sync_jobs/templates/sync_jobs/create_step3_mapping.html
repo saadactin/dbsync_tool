@@ -1,0 +1,191 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load sync_jobs_tags %}
+
+{% block title %}Review Data Type Mapping - Step 3 - DB Sync Tool{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/sync_jobs.css' %}">
+<style>
+    .mapping-table thead th {
+        position: sticky;
+        top: 0;
+        background-color: #f8f9fa;
+        z-index: 1;
+    }
+    .mapping-badge-changed {
+        font-size: 0.75rem;
+    }
+
+    tr.primary-key-col {
+        background: rgba(255, 193, 7, 0.18);
+    }
+
+    tr.protected-col {
+        background: rgba(13, 110, 253, 0.10);
+    }
+
+    .mapping-protected-badge {
+        font-size: 0.7rem;
+        padding: 0.15rem 0.4rem;
+        margin-left: 0.5rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <h1 class="mb-4">Create Sync Job - Step 3: Review Data Type Mapping</h1>
+
+            <!-- Progress indicator -->
+            <div class="progress mb-4" style="height: 30px;">
+                <div class="progress-bar" role="progressbar" style="width: 75%;" aria-valuenow="75" aria-valuemin="0" aria-valuemax="100">
+                    Step 3 of 4
+                </div>
+            </div>
+
+            <!-- Job Summary -->
+            <div class="card mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Job Summary</h5>
+                    <p><strong>Job Name:</strong> {{ job_name }}</p>
+                    <p><strong>Source:</strong>
+                        {% if source_connection_type == 'flat_file' %}
+                            {{ source_file_connection.name }} (Flat file)
+                        {% else %}
+                            {{ source_connection.name }} ({{ source_connection.get_db_type_display }})
+                        {% endif %}
+                    </p>
+                    <p><strong>Target:</strong> {{ target_connection.name }} ({{ target_connection.get_db_type_display }})</p>
+                    <p><strong>Tables Selected:</strong> {{ selected_tables|length }} table(s)</p>
+                    <p class="text-muted mb-0">
+                        {% if source_connection_type == 'flat_file' %}
+                            This step configures source CSV column names and target column names for the logical file table.
+                        {% else %}
+                            This step shows how each source column data type will be mapped to the target database.
+                            It is a read-only preview; the actual sync will use the same mapping logic.
+                        {% endif %}
+                    </p>
+                </div>
+            </div>
+
+            <form method="post" action="{% url 'sync_jobs:create_step3_submit' %}">
+                {% csrf_token %}
+
+                <!-- Table mappings -->
+                {% for table_info in selected_tables %}
+                    {% with table_key=table_info.schema_name|add:"."|add:table_info.table_name %}
+                        <div class="card mb-3">
+                            <div class="card-header">
+                                <h5 class="mb-0">{{ table_key }}</h5>
+                            </div>
+                            <div class="card-body p-0">
+                                {% with mapping=table_mappings|get_item:table_key %}
+                                    {% if mapping and mapping.columns %}
+                                        <div class="table-responsive">
+                                            <table class="table table-sm table-striped mb-0 mapping-table">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Migrate</th>
+                                                        <th>Column</th>
+                                                        <th>Source Type</th>
+                                                        <th>Target Type</th>
+                                                        <th>Target Column Name</th>
+                                                        <th>Protected</th>
+                                                        <th>Nullable</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {% for col in mapping.columns %}
+                                                        <tr class="{% if col.is_primary_key %}primary-key-col{% elif col.is_protected %}protected-col{% endif %}">
+                                                            <td class="align-middle">
+                                                                <input type="hidden" name="migrate_present_{{ table_key }}.{{ col.name }}" value="1">
+                                                                {% if col.is_protected %}
+                                                                    <input type="hidden" name="migrate_col_{{ table_key }}.{{ col.name }}" value="1">
+                                                                {% endif %}
+                                                                <input
+                                                                    type="checkbox"
+                                                                    name="migrate_col_{{ table_key }}.{{ col.name }}"
+                                                                    value="1"
+                                                                    {% if not col.is_excluded %}checked{% endif %}
+                                                                    {% if col.is_protected %}disabled{% endif %}
+                                                                >
+                                                            </td>
+                                                            <td>{{ col.name }}</td>
+                                                            <td>{{ col.source_type }}</td>
+                                                            <td>
+                                                                <select
+                                                                    name="override_type_{{ table_key }}.{{ col.name }}"
+                                                                    class="form-select form-select-sm d-inline w-auto"
+                                                                >
+                                                                    {% for opt in col.allowed_target_types %}
+                                                                        <option value="{{ opt }}" {% if opt == col.target_type %}selected{% endif %}>
+                                                                            {{ opt }}
+                                                                        </option>
+                                                                    {% endfor %}
+                                                                </select>
+                                                                {% if col.source_type != col.target_type %}
+                                                                    <span class="badge bg-info text-dark mapping-badge-changed">mapped</span>
+                                                                {% endif %}
+                                                            </td>
+                                                            <td class="align-middle">
+                                                                <input
+                                                                    type="text"
+                                                                    name="override_colname_{{ table_key }}.{{ col.name }}"
+                                                                    class="form-control form-control-sm"
+                                                                    value="{{ col.target_column_name }}"
+                                                                    {% if col.is_protected %}disabled{% endif %}
+                                                                >
+                                                                {% if col.is_primary_key %}
+                                                                    <span class="badge bg-warning text-dark mapping-protected-badge">PK</span>
+                                                                {% elif col.is_incremental_column %}
+                                                                    <span class="badge bg-primary mapping-protected-badge">Protected</span>
+                                                                {% endif %}
+                                                            </td>
+                                                            <td class="align-middle">
+                                                                {% if col.is_protected %}
+                                                                    <input type="hidden" name="protect_col_{{ table_key }}.{{ col.name }}" value="1">
+                                                                {% endif %}
+                                                                <input
+                                                                    type="checkbox"
+                                                                    name="protect_col_{{ table_key }}.{{ col.name }}"
+                                                                    value="1"
+                                                                    {% if col.is_protected %}checked{% endif %}
+                                                                    {% if col.is_primary_key or col.is_incremental_column %}disabled{% endif %}
+                                                                >
+                                                            </td>
+                                                            <td>
+                                                                {% if col.nullable %}
+                                                                    Yes
+                                                                {% else %}
+                                                                    No
+                                                                {% endif %}
+                                                            </td>
+                                                        </tr>
+                                                    {% endfor %}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    {% else %}
+                                        <div class="p-3">
+                                            <div class="alert alert-warning mb-0">
+                                                Could not load column information for this table.
+                                            </div>
+                                        </div>
+                                    {% endif %}
+                                {% endwith %}
+                            </div>
+                        </div>
+                    {% endwith %}
+                {% endfor %}
+
+                <a class="btn btn-secondary" href="{% url 'sync_jobs:create_step2' %}" role="button">Back</a>
+                <button type="submit" class="btn btn-primary">Next</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

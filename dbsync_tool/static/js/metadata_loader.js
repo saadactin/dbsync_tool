@@ -8,6 +8,45 @@ class MetadataLoader {
         this.csrfToken = csrfToken;
         this.metadata = null;
     }
+
+    /**
+     * Normalize API/frontend errors to a readable string.
+     */
+    _extractErrorMessage(value, fallback = 'Unknown error') {
+        if (value === null || value === undefined) {
+            return fallback;
+        }
+        if (typeof value === 'string') {
+            return value;
+        }
+        if (value instanceof Error && typeof value.message === 'string') {
+            return value.message;
+        }
+        if (typeof value === 'object') {
+            // Common DRF/JSON API shapes
+            if (typeof value.error === 'string') return value.error;
+            if (typeof value.detail === 'string') return value.detail;
+            if (typeof value.message === 'string') return value.message;
+
+            // Nested object forms
+            if (value.error && typeof value.error === 'object') {
+                return this._extractErrorMessage(value.error, fallback);
+            }
+            if (value.detail && typeof value.detail === 'object') {
+                return this._extractErrorMessage(value.detail, fallback);
+            }
+            if (value.message && typeof value.message === 'object') {
+                return this._extractErrorMessage(value.message, fallback);
+            }
+
+            try {
+                return JSON.stringify(value);
+            } catch (e) {
+                return fallback;
+            }
+        }
+        return String(value);
+    }
     
     /**
      * Load all metadata for the connection
@@ -31,11 +70,7 @@ class MetadataLoader {
                 let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
                 try {
                     const errorData = await response.json();
-                    if (errorData.error) {
-                        errorMessage = errorData.error;
-                    } else if (errorData.detail) {
-                        errorMessage = errorData.detail;
-                    }
+                    errorMessage = this._extractErrorMessage(errorData, errorMessage);
                 } catch (e) {
                     // If response is not JSON, use status text
                     if (response.status === 401 || response.status === 403) {
@@ -55,7 +90,7 @@ class MetadataLoader {
                 this.metadata = data.data;
                 return this.metadata;
             } else {
-                throw new Error(data.error || 'Failed to load metadata');
+                throw new Error(this._extractErrorMessage(data, 'Failed to load metadata'));
             }
         } catch (error) {
             console.error('Error loading metadata:', error);
@@ -104,13 +139,7 @@ class MetadataLoader {
                 try {
                     const errorData = await response.json();
                     console.error('MetadataLoader: Error response data:', errorData);
-                    if (errorData.error) {
-                        errorMessage = errorData.error;
-                    } else if (errorData.detail) {
-                        errorMessage = errorData.detail;
-                    } else if (errorData.message) {
-                        errorMessage = errorData.message;
-                    }
+                    errorMessage = this._extractErrorMessage(errorData, errorMessage);
                 } catch (e) {
                     console.error('MetadataLoader: Failed to parse error response as JSON:', e);
                     // Try to get text response
@@ -135,7 +164,7 @@ class MetadataLoader {
                 console.log(`MetadataLoader: Successfully loaded ${data.data?.length || 0} schemas`);
                 return data.data;
             } else {
-                const errorMsg = data.error || data.message || 'Failed to load schemas';
+                const errorMsg = this._extractErrorMessage(data, 'Failed to load schemas');
                 console.error('MetadataLoader: API returned success=false:', errorMsg);
                 throw new Error(errorMsg);
             }
@@ -186,11 +215,7 @@ class MetadataLoader {
                 let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
                 try {
                     const errorData = await response.json();
-                    if (errorData.error) {
-                        errorMessage = errorData.error;
-                    } else if (errorData.detail) {
-                        errorMessage = errorData.detail;
-                    }
+                    errorMessage = this._extractErrorMessage(errorData, errorMessage);
                 } catch (e) {
                     // If response is not JSON, use status text
                 }
@@ -202,7 +227,7 @@ class MetadataLoader {
             if (data.success) {
                 return data.data;
             } else {
-                throw new Error(data.error || 'Failed to load tables');
+                throw new Error(this._extractErrorMessage(data, 'Failed to load tables'));
             }
         } catch (error) {
             if (error.name === 'AbortError') {
@@ -241,9 +266,7 @@ class MetadataLoader {
                 let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
                 try {
                     const errorData = await response.json();
-                    if (errorData.error) {
-                        errorMessage = errorData.error;
-                    }
+                    errorMessage = this._extractErrorMessage(errorData, errorMessage);
                 } catch (e) {
                     // If response is not JSON, use status text
                 }
@@ -255,7 +278,7 @@ class MetadataLoader {
             if (data.success) {
                 return data.data;
             } else {
-                throw new Error(data.error || 'Failed to load columns');
+                throw new Error(this._extractErrorMessage(data, 'Failed to load columns'));
             }
         } catch (error) {
             if (error.name === 'AbortError') {

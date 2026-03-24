@@ -9,10 +9,15 @@ urlpatterns = [
     path('create/step1/', views.create_job_step1_view, name='create_step1'),
     path('create/step2/', views.create_job_step2_view, name='create_step2'),
     path('create/step2/load-metadata/', views.create_job_step2_load_metadata, name='create_step2_load_metadata'),
+    path('create/step2/flat-file-preview/', views.create_job_step2_flat_file_preview, name='create_step2_flat_file_preview'),
     path('create/step2/submit/', views.create_job_step2_submit, name='create_step2_submit'),
     path('api/validate-transformation-query/', views.validate_transformation_query, name='validate_transformation_query'),
-    path('create/step3/', views.create_job_step3_view, name='create_step3'),
-    path('create/step3/submit/', views.create_job_step3_submit, name='create_step3_submit'),
+    # Step 3: data type mapping preview for database sources
+    path('create/step3/', views.create_job_step3_mapping_view, name='create_step3'),
+    path('create/step3/submit/', views.create_job_step3_mapping_submit, name='create_step3_submit'),
+    # Step 4: sync configuration (was previously step 3)
+    path('create/step4/', views.create_job_step4_view, name='create_step4'),
+    path('create/step4/submit/', views.create_job_step4_submit, name='create_step4_submit'),
     path('api/table-columns/', views.get_table_columns_api, name='get_table_columns_api'),
     path('<uuid:job_id>/', views.job_detail, name='job_detail'),
     path('<uuid:job_id>/edit/', views.job_edit, name='job_edit'),

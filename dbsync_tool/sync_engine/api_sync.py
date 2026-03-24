@@ -175,8 +175,11 @@ class APISyncExecutor:
             df = self.transformer.prepare_for_database(df, target_db_type)
             
             # 4. Create/update table in target DB
+            # Use ZOHO_ prefix so tables are clearly namespaced (e.g. ZOHO_leads)
+            base_table = f"ZOHO_{module_name.lower().replace(' ', '_').replace('-', '_')}"
+            prefix = getattr(self.job, 'target_table_prefix', None)
+            target_table = f"{prefix}_{base_table}" if prefix else base_table
             target_schema = self.target_connector.database_name
-            target_table = module_name.lower().replace(' ', '_').replace('-', '_')
             
             logger.info(f"Creating/updating table {target_schema}.{target_table}")
             self._ensure_table_exists(df, target_schema, target_table)
@@ -316,11 +319,32 @@ class APISyncExecutor:
             df = self.transformer.prepare_for_database(df, target_db_type)
             
             # 5. Ensure table exists
+            # Use ZOHO_ prefix so tables are clearly namespaced (e.g. ZOHO_leads)
+            base_table = f"ZOHO_{module_name.lower().replace(' ', '_').replace('-', '_')}"
+            prefix = getattr(self.job, 'target_table_prefix', None)
+            target_table = f"{prefix}_{base_table}" if prefix else base_table
             target_schema = self.target_connector.database_name
-            target_table = module_name.lower().replace(' ', '_').replace('-', '_')
             
-            logger.info(f"Ensuring table {target_schema}.{target_table} exists")
-            self._ensure_table_exists(df, target_schema, target_table)
+            if not self.target_connector.table_exists(target_schema, target_table):
+                prefix = getattr(self.job, "target_table_prefix", None)
+                warning_msg = (
+                    f"Skipped incremental sync for module {module_name}: "
+                    f"target table {target_schema}.{target_table} does not exist. "
+                    f"Incremental sync does not create new tables "
+                    f"(reason=missing_target_table, prefix={prefix or 'none'}, sync_type=incremental)."
+                )
+                logger.warning(warning_msg)
+                log.status = "completed"
+                log.rows_fetched = len(records)
+                log.rows_inserted = 0
+                log.error_message = warning_msg
+                log.completed_at = timezone.now()
+                log.save()
+                self._update_execution_progress()
+                return
+
+            logger.info(f"Using existing table {target_schema}.{target_table} for incremental sync")
+            self.target_connector.add_missing_columns(target_schema, target_table, df)
             
             # 6. Upsert data (for incremental sync, we need to handle updates)
             # For simplicity, we'll do insert with ON DUPLICATE KEY UPDATE or similar

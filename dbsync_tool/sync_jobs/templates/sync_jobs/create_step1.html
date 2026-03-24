@@ -81,8 +81,8 @@
             
             <!-- Progress indicator -->
             <div class="progress mb-4" style="height: 30px;">
-                <div class="progress-bar" role="progressbar" style="width: 33%;" aria-valuenow="33" aria-valuemin="0" aria-valuemax="100">
-                    Step 1 of 3
+                <div class="progress-bar" role="progressbar" style="width: 25%;" aria-valuenow="25" aria-valuemin="0" aria-valuemax="100">
+                    Step 1 of 4
                 </div>
             </div>
             
@@ -113,7 +113,7 @@
                 <div class="card mb-4">
                     <div class="card-body">
                         <h5 class="card-title mb-3">Source Connection *</h5>
-                        <p class="text-muted mb-3">Select the connection where data will be read from (Database or API).</p>
+                        <p class="text-muted mb-3">Select the connection where data will be read from (Database, API, or Flat file).</p>
                         
                         <!-- Source Type Selection -->
                         <div class="mb-3">
@@ -122,8 +122,9 @@
                                 <option value="">-- Select Source Type --</option>
                                 <option value="database" {% if selected_source_type == 'database' %}selected{% endif %}>Database Connection</option>
                                 <option value="api" {% if selected_source_type == 'api' %}selected{% endif %}>API Connection</option>
+                                <option value="flat_file" {% if selected_source_type == 'flat_file' %}selected{% endif %}>Flat File Source</option>
                             </select>
-                            <input type="hidden" name="source_connection_type" id="source_connection_type" value="{{ selected_source_type|default:'' }}">
+                            <input type="hidden" id="source_connection_type" value="{{ selected_source_type|default:'' }}">
                         </div>
                         
                         <!-- Oracle as source hint (shown when Oracle ADW is selected as source) -->
@@ -165,8 +166,21 @@
                                 {% endfor %}
                             </select>
                         </div>
+
+                        <div class="mb-3" id="source-file-connections-container" style="display: {% if selected_source_type == 'flat_file' %}block{% else %}none{% endif %};">
+                            <label for="source_file_connection" class="form-label"><strong>File Source *</strong></label>
+                            <select class="form-select" id="source_file_connection" name="source_file_connection" {% if selected_source_type != 'flat_file' %}disabled{% endif %}>
+                                <option value="">-- Select File Source --</option>
+                                {% for source in file_sources %}
+                                    <option value="{{ source.id }}" {% if selected_source_type == 'flat_file' and selected_source_id == source.id|stringformat:"s" %}selected{% endif %}>
+                                        {{ source.name }} - {{ source.relative_path }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                            <small class="form-text text-muted">Path is server-side and resolved under FILE_SYNC_ROOT.</small>
+                        </div>
                         
-                        {% if not db_connections and not api_connections %}
+                        {% if not db_connections and not api_connections and not file_sources %}
                             <div class="alert alert-warning">
                                 <p>No active connections found. <a href="{% url 'connections:create' %}">Create a connection</a> first.</p>
                             </div>
@@ -230,8 +244,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const sourceTypeSelect = document.getElementById('source_connection_type_select');
     const sourceDbContainer = document.getElementById('source-db-connections-container');
     const sourceApiContainer = document.getElementById('source-api-connections-container');
+    const sourceFileContainer = document.getElementById('source-file-connections-container');
     const sourceDbSelect = document.getElementById('source_db_connection');
     const sourceApiSelect = document.getElementById('source_api_connection');
+    const sourceFileSelect = document.getElementById('source_file_connection');
     const sourceConnectionTypeHidden = document.getElementById('source_connection_type');
     const targetConnectionSelect = document.getElementById('target_connection');
     const nextBtn = document.getElementById('next-btn');
@@ -248,22 +264,40 @@ document.addEventListener('DOMContentLoaded', function() {
             if (selectedType === 'database') {
                 sourceDbContainer.style.display = 'block';
                 sourceApiContainer.style.display = 'none';
+                sourceFileContainer.style.display = 'none';
                 sourceDbSelect.disabled = false;
                 sourceApiSelect.disabled = true;
+                sourceFileSelect.disabled = true;
                 sourceApiSelect.value = ''; // Clear API selection
+                sourceFileSelect.value = ''; // Clear file selection
             } else if (selectedType === 'api') {
                 sourceDbContainer.style.display = 'none';
                 sourceApiContainer.style.display = 'block';
+                sourceFileContainer.style.display = 'none';
                 sourceDbSelect.disabled = true;
                 sourceApiSelect.disabled = false;
+                sourceFileSelect.disabled = true;
                 sourceDbSelect.value = ''; // Clear DB selection
+                sourceFileSelect.value = '';
+            } else if (selectedType === 'flat_file') {
+                sourceDbContainer.style.display = 'none';
+                sourceApiContainer.style.display = 'none';
+                sourceFileContainer.style.display = 'block';
+                sourceDbSelect.disabled = true;
+                sourceApiSelect.disabled = true;
+                sourceFileSelect.disabled = false;
+                sourceDbSelect.value = '';
+                sourceApiSelect.value = '';
             } else {
                 sourceDbContainer.style.display = 'none';
                 sourceApiContainer.style.display = 'none';
+                sourceFileContainer.style.display = 'none';
                 sourceDbSelect.disabled = true;
                 sourceApiSelect.disabled = true;
+                sourceFileSelect.disabled = true;
                 sourceDbSelect.value = '';
                 sourceApiSelect.value = '';
+                sourceFileSelect.value = '';
             }
             
             // Update disabled states
@@ -358,6 +392,9 @@ document.addEventListener('DOMContentLoaded', function() {
             sourceConnectionHidden.value = sourceDbSelect.value;
         } else if (sourceType === 'api' && sourceApiSelect) {
             sourceConnectionHidden.value = sourceApiSelect.value;
+        } else if (sourceType === 'flat_file' && sourceFileSelect) {
+            // Flat-file source must submit only source_file_connection.
+            sourceConnectionHidden.value = '';
         } else {
             sourceConnectionHidden.value = '';
         }
@@ -383,6 +420,12 @@ document.addEventListener('DOMContentLoaded', function() {
     if (targetConnectionSelect) {
         targetConnectionSelect.addEventListener('change', function() {
             updateDisabledConnections();
+            validateForm();
+        });
+    }
+    if (sourceFileSelect) {
+        sourceFileSelect.addEventListener('change', function() {
+            updateSourceConnectionHidden();
             validateForm();
         });
     }
@@ -426,9 +469,11 @@ document.addEventListener('DOMContentLoaded', function() {
     function validateForm() {
         const jobName = document.getElementById('job_name').value.trim();
         const sourceType = sourceConnectionTypeHidden.value;
-        const sourceConnection = sourceType === 'database' ? 
-            (sourceDbSelect ? sourceDbSelect.value : '') : 
-            (sourceApiSelect ? sourceApiSelect.value : '');
+        const sourceConnection = sourceType === 'database'
+            ? (sourceDbSelect ? sourceDbSelect.value : '')
+            : (sourceType === 'api'
+                ? (sourceApiSelect ? sourceApiSelect.value : '')
+                : (sourceFileSelect ? sourceFileSelect.value : ''));
         const targetConnection = targetConnectionSelect ? targetConnectionSelect.value : '';
         
         // Remove any existing error messages
@@ -487,9 +532,11 @@ document.addEventListener('DOMContentLoaded', function() {
         step1Form.addEventListener('submit', function(e) {
             const jobName = jobNameInput ? jobNameInput.value.trim() : '';
             const sourceType = sourceConnectionTypeHidden.value;
-            const sourceConnection = sourceType === 'database' ? 
-                (sourceDbSelect ? sourceDbSelect.value : '') : 
-                (sourceApiSelect ? sourceApiSelect.value : '');
+            const sourceConnection = sourceType === 'database'
+                ? (sourceDbSelect ? sourceDbSelect.value : '')
+                : (sourceType === 'api'
+                    ? (sourceApiSelect ? sourceApiSelect.value : '')
+                    : (sourceFileSelect ? sourceFileSelect.value : ''));
             const targetConnection = targetConnectionSelect ? targetConnectionSelect.value : '';
             
             if (!jobName || !sourceType || !sourceConnection || !targetConnection) {

@@ -79,6 +79,27 @@
                     </div>
                 </div>
                 
+                <!-- Target table prefix (optional) -->
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Target table prefix <span class="text-muted">(optional)</span></h5>
+                        <div class="form-group">
+                            <input
+                                type="text"
+                                name="target_table_prefix"
+                                id="target_table_prefix"
+                                class="form-control"
+                                placeholder="e.g. POST"
+                                maxlength="64"
+                                value="{{ job.target_table_prefix|default:'' }}"
+                            >
+                            <small class="form-text text-muted">
+                                If set, target tables will be named PREFIX_tablename (e.g. POST_auth_user). Leave empty to keep original table names.
+                            </small>
+                        </div>
+                    </div>
+                </div>
+                
                 <!-- Sync Type Selection -->
                 <div class="card mb-4">
                     <div class="card-body">
@@ -115,49 +136,24 @@
                                 >
                                 <label class="form-check-label" for="sync_type_incremental">
                                     <strong>Incremental Sync</strong>
-                                    <p class="text-muted mb-0">Sync only new or updated records based on a timestamp or ID column. Existing data is preserved.</p>
+                                    {% if is_sap %}
+                                        <p class="text-muted mb-0">For SAP Business One, incremental logic is handled automatically using pre-defined fields (UpdateDate, TaxDate, etc.). No manual configuration is required.</p>
+                                    {% else %}
+                                        <p class="text-muted mb-0">Sync only new or updated records based on a timestamp or ID column. Existing data is preserved.</p>
+                                    {% endif %}
                                 </label>
                             </div>
                         </div>
                         
-                        <!-- Incremental Column Configuration -->
+                        {% if not is_sap %}
                         <div id="incremental-column-section" class="incremental-column-section {% if job.sync_type == 'incremental' %}active{% endif %}">
-                            <h6 class="mt-4 mb-3">Configure Incremental Columns</h6>
-                            <p class="text-muted">Select the column to use for tracking incremental changes for each table.</p>
-                            
-                            {% for table in job.tables.all %}
-                                {% with table_key=table.schema_name|add:"."|add:table.table_name %}
-                                    <div class="table-config-row">
-                                        <label><strong>{{ table_key }}</strong></label>
-                                        <select 
-                                            class="form-select mt-2" 
-                                            name="incremental_column_{{ table_key }}" 
-                                            id="inc_col_{{ table_key|slugify }}"
-                                            {% if job.sync_type == 'incremental' %}required{% endif %}
-                                        >
-                                            <option value="">-- Select Column --</option>
-                                            {% with table_data=table_columns|get_item:table_key %}
-                                                {% if table_data and table_data.incremental_candidates %}
-                                                    {% for col in table_data.incremental_candidates %}
-                                                        <option value="{{ col.name }}" {% if table.incremental_column == col.name %}selected{% endif %}>
-                                                            {{ col.name }} ({{ col.data_type }})
-                                                            {% if 'time' in col.data_type|lower or 'date' in col.data_type|lower %}
-                                                                - Recommended
-                                                            {% endif %}
-                                                        </option>
-                                                    {% endfor %}
-                                                {% endif %}
-                                            {% endwith %}
-                                        </select>
-                                        {% with table_data=table_columns|get_item:table_key %}
-                                            {% if not table_data or not table_data.incremental_candidates %}
-                                                <small class="text-warning">No suitable incremental columns found. Please use Full Sync for this table.</small>
-                                            {% endif %}
-                                        {% endwith %}
-                                    </div>
-                                {% endwith %}
-                            {% endfor %}
+                            <h6 class="mt-4 mb-3">Incremental Strategy</h6>
+                            <p class="text-muted mb-0">
+                                Incremental columns are selected automatically per table using the best available strategy for your source database.
+                                Tables without a safe incremental column are skipped with detailed warnings.
+                            </p>
                         </div>
+                        {% endif %}
                     </div>
                 </div>
                 
@@ -170,11 +166,32 @@
                             <label for="schedule_type"><strong>Schedule Type</strong></label>
                             <select class="form-select" id="schedule_type" name="schedule_type" required>
                                 <option value="once" {% if job.schedule and job.schedule.schedule_type == 'once' %}selected{% endif %}>Run Once (Manual)</option>
-                                <option value="hourly" {% if job.schedule and job.schedule.schedule_type == 'hourly' %}selected{% endif %}>Hourly</option>
-                                <option value="daily" {% if job.schedule and job.schedule.schedule_type == 'daily' %}selected{% endif %}>Daily</option>
+                                <option value="hourly" {% if job.schedule and job.schedule.schedule_type == 'hourly' %}selected{% endif %}>Hourly (every N hours)</option>
+                                <option value="daily" {% if job.schedule and job.schedule.schedule_type == 'daily' %}selected{% endif %}>Daily (fixed time each day)</option>
                                 <option value="weekly" {% if job.schedule and job.schedule.schedule_type == 'weekly' %}selected{% endif %}>Weekly</option>
                                 <option value="custom" {% if job.schedule and job.schedule.schedule_type == 'custom' %}selected{% endif %}>Custom Cron Expression</option>
                             </select>
+                        </div>
+                        
+                        <div id="hourly-interval-section" class="form-group mb-3" style="display: {% if job.schedule and job.schedule.schedule_type == 'hourly' %}block{% else %}none{% endif %};">
+                            <label for="interval_hours" class="form-label"><strong>Every</strong></label>
+                            <div class="input-group" style="max-width: 220px;">
+                                <input
+                                    type="number"
+                                    class="form-control"
+                                    id="interval_hours"
+                                    name="interval_hours"
+                                    min="1"
+                                    max="24"
+                                    step="1"
+                                    value="{% if job.schedule %}{{ job.schedule.interval_hours|default:1 }}{% else %}1{% endif %}"
+                                    autocomplete="off"
+                                >
+                                <span class="input-group-text">hour(s)</span>
+                            </div>
+                            <small class="form-text text-muted d-block mt-1">
+                                Runs every N hours from your first-run time below (same minute on the anchor grid).
+                            </small>
                         </div>
                         
                         <!-- Custom Cron Expression -->
@@ -195,17 +212,44 @@
                             </small>
                         </div>
                         
-                        <!-- Start Date/Time -->
+                        <!-- First run: date + time (24h); merged into start_datetime hidden -->
                         <div id="start-datetime-section" class="form-group mb-3" style="display: {% if job.schedule and job.schedule.schedule_type != 'once' and job.schedule.schedule_type != 'custom' %}block{% else %}none{% endif %};">
-                            <label for="start_datetime"><strong>Start Date/Time</strong></label>
-                            <input 
-                                type="datetime-local" 
-                                class="form-control" 
-                                id="start_datetime" 
-                                name="start_datetime"
-                                value="{% if job.schedule and job.schedule.next_run_at %}{{ job.schedule.next_run_at|date:'Y-m-d\TH:i' }}{% endif %}"
-                            >
-                            <small class="form-text text-muted">When should the scheduled sync start? (Leave empty to start now)</small>
+                            <label class="form-label"><strong>First run schedule</strong></label>
+                            <div class="row g-2">
+                                <div class="col-md-6">
+                                    <label for="start_date" class="form-label small text-muted">First run date (optional)</label>
+                                    <input
+                                        type="date"
+                                        class="form-control"
+                                        id="start_date"
+                                        name="start_date"
+                                        autocomplete="off"
+                                        value="{% if job.schedule and job.schedule.next_run_at %}{{ job.schedule.next_run_at|date:'Y-m-d' }}{% endif %}"
+                                    >
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="start_time" class="form-label small text-muted">Run at (24-hour)</label>
+                                    <input
+                                        type="text"
+                                        class="form-control"
+                                        id="start_time"
+                                        name="start_time"
+                                        placeholder="HH:mm (e.g. 14:40) or h:mm AM/PM"
+                                        autocomplete="off"
+                                        value="{% if job.schedule and job.schedule.next_run_at %}{{ job.schedule.next_run_at|date:'H:i' }}{% endif %}"
+                                    >
+                                </div>
+                            </div>
+                            <input type="hidden" id="start_datetime" name="start_datetime" value="">
+                            <small class="form-text text-muted d-block mt-2">
+                                <span id="daily-schedule-hint" style="display: {% if job.schedule and job.schedule.schedule_type == 'daily' %}inline{% else %}none{% endif %};">
+                                    For <strong>Daily</strong>: runs once per calendar day at the time below (24-hour).
+                                </span>
+                                <span id="generic-schedule-hint" style="display: {% if job.schedule and job.schedule.schedule_type == 'daily' %}none{% else %}inline{% endif %};">
+                                    Shown in your browser&apos;s local time. Leave both empty to start at the next eligible time after you save.
+                                </span>
+                                The server uses Django <code>TIME_ZONE</code> for stored schedule anchors.
+                            </small>
                         </div>
                     </div>
                 </div>
@@ -245,73 +289,135 @@ document.addEventListener('DOMContentLoaded', function() {
         });
         document.querySelector(`[data-sync-type="${selectedType}"]`).classList.add('selected');
         
-        if (selectedType === 'incremental') {
+        if (incrementalSection && selectedType === 'incremental') {
             incrementalSection.classList.add('active');
-            // Make incremental columns required
-            document.querySelectorAll('#incremental-column-section select').forEach(select => {
-                select.required = true;
-            });
-        } else {
+        } else if (incrementalSection) {
             incrementalSection.classList.remove('active');
-            // Make incremental columns not required
-            document.querySelectorAll('#incremental-column-section select').forEach(select => {
-                select.required = false;
-            });
         }
     }
     
-    // Schedule type selection
-    document.getElementById('schedule_type').addEventListener('change', function() {
-        const scheduleType = this.value;
+    function updateScheduleSectionVisibility() {
+        const scheduleType = document.getElementById('schedule_type').value;
         const cronSection = document.getElementById('cron-section');
         const startDatetimeSection = document.getElementById('start-datetime-section');
+        const hourlyIntervalSection = document.getElementById('hourly-interval-section');
         const cronExpression = document.getElementById('cron_expression');
+        const dailyHint = document.getElementById('daily-schedule-hint');
+        const genericHint = document.getElementById('generic-schedule-hint');
         
         if (scheduleType === 'custom') {
             cronSection.style.display = 'block';
             cronExpression.required = true;
             startDatetimeSection.style.display = 'none';
+            if (hourlyIntervalSection) hourlyIntervalSection.style.display = 'none';
+            if (dailyHint) dailyHint.style.display = 'none';
+            if (genericHint) genericHint.style.display = 'inline';
         } else if (scheduleType !== 'once') {
             cronSection.style.display = 'none';
             cronExpression.required = false;
             startDatetimeSection.style.display = 'block';
+            if (hourlyIntervalSection) {
+                hourlyIntervalSection.style.display = scheduleType === 'hourly' ? 'block' : 'none';
+            }
+            if (dailyHint) dailyHint.style.display = scheduleType === 'daily' ? 'inline' : 'none';
+            if (genericHint) genericHint.style.display = scheduleType === 'daily' ? 'none' : 'inline';
         } else {
             cronSection.style.display = 'none';
             cronExpression.required = false;
             startDatetimeSection.style.display = 'none';
+            if (hourlyIntervalSection) hourlyIntervalSection.style.display = 'none';
+            if (dailyHint) dailyHint.style.display = 'none';
+            if (genericHint) genericHint.style.display = 'inline';
         }
-    });
+    }
     
+    document.getElementById('schedule_type').addEventListener('change', updateScheduleSectionVisibility);
+    
+    function mergeStartDateTimeHidden() {
+        const scheduleType = document.getElementById('schedule_type').value;
+        const hidden = document.getElementById('start_datetime');
+        const sd = document.getElementById('start_date');
+        const st = document.getElementById('start_time');
+        if (!hidden || !sd || !st) return;
+        if (scheduleType === 'once' || scheduleType === 'custom') {
+            hidden.value = '';
+            return;
+        }
+        const d = (sd.value || '').trim();
+        const t = (st.value || '').trim();
+        if (!d && !t) {
+            hidden.value = '';
+            return;
+        }
+        const datePart = d || new Date().toISOString().slice(0, 10);
+
+        function normalizeTimeTo24h(value) {
+            const s = (value || '').trim();
+            if (!s) return null;
+
+            // 24-hour: HH:mm or H:mm
+            let m = s.match(/^(\d{1,2}):(\d{2})$/);
+            if (m) {
+                const hour = Number(m[1]);
+                const minute = Number(m[2]);
+                if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+                return String(hour).padStart(2, '0') + ':' + String(minute).padStart(2, '0');
+            }
+
+            // AM/PM: h:mm AM or h:mm PM
+            m = s.match(/^(\d{1,2}):(\d{2})\s*([aApP][mM])$/);
+            if (m) {
+                let hour = Number(m[1]);
+                const minute = Number(m[2]);
+                const ampm = m[3].toLowerCase();
+                if (minute < 0 || minute > 59) return null;
+
+                if (ampm === 'pm' && hour < 12) hour += 12;
+                if (ampm === 'am' && hour === 12) hour = 0;
+                if (hour < 0 || hour > 23) return null;
+
+                return String(hour).padStart(2, '0') + ':' + String(minute).padStart(2, '0');
+            }
+
+            return null;
+        }
+
+        let timePart = '00:00';
+        if (t) {
+            const normalized = normalizeTimeTo24h(t);
+            if (!normalized) {
+                // Let backend validate separately by not setting start_datetime.
+                hidden.value = '';
+                return;
+            }
+            // Keep UI consistent with what we store.
+            st.value = normalized;
+            timePart = normalized;
+        }
+        if (!timePart) {
+            // Let backend validate separately by not setting start_datetime.
+            hidden.value = '';
+            return;
+        }
+        hidden.value = datePart + 'T' + timePart;
+    }
+
     // Form validation
     document.getElementById('edit-form').addEventListener('submit', function(e) {
-        const syncType = document.querySelector('input[name="sync_type"]:checked').value;
         const scheduleType = document.getElementById('schedule_type').value;
         const cronExpression = document.getElementById('cron_expression').value;
-        
-        if (syncType === 'incremental') {
-            const missingColumns = [];
-            document.querySelectorAll('#incremental-column-section select').forEach(select => {
-                if (!select.value) {
-                    missingColumns.push(select.closest('.table-config-row').querySelector('label strong').textContent);
-                }
-            });
-            
-            if (missingColumns.length > 0) {
-                e.preventDefault();
-                alert('Please select incremental columns for all tables:\n' + missingColumns.join('\n'));
-                return false;
-            }
-        }
         
         if (scheduleType === 'custom' && !cronExpression) {
             e.preventDefault();
             alert('Please enter a cron expression for custom schedule.');
             return false;
         }
+        mergeStartDateTimeHidden();
     });
     
     // Initial UI state
     updateSyncTypeUI();
+    updateScheduleSectionVisibility();
 });
 </script>
 {% endblock %}

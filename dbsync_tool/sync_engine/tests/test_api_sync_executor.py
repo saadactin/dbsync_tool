@@ -28,9 +28,9 @@ class APISyncExecutorTests(TestCase):
         )
         
         # Create user profile
-        UserProfile.objects.create(
+        UserProfile.objects.get_or_create(
             user=self.user,
-            role=Role.ADMIN
+            defaults={'role': Role.ADMIN}
         )
         
         # Create database connection
@@ -176,10 +176,8 @@ class APISyncExecutorTests(TestCase):
         self.assertEqual(log.rows_fetched, 2)
         self.assertEqual(log.rows_inserted, 2)
     
-    @patch('sync_engine.api_sync.ZohoConnector')
-    @patch('sync_engine.api_sync.PostgresConnector')
     @patch('sync_engine.api_sync.DataTransformer')
-    def test_sync_module_incremental(self, mock_transformer, mock_postgres, mock_zoho):
+    def test_sync_module_incremental(self, mock_transformer):
         """Test incremental sync for a module"""
         # Create mock connectors
         api_connector = Mock(spec=ZohoConnector)
@@ -187,7 +185,7 @@ class APISyncExecutorTests(TestCase):
         target_connector.database_name = 'test_db'
         target_connector.table_exists = Mock(return_value=True)
         target_connector.add_missing_columns = Mock()
-        target_connector.bulk_insert = Mock()
+        target_connector.upsert_dataframe = Mock()
         
         # Mock API connector to return test data
         test_records = [
@@ -235,11 +233,57 @@ class APISyncExecutorTests(TestCase):
         
         # Verify target connector methods were called
         target_connector.add_missing_columns.assert_called_once()
-        target_connector.bulk_insert.assert_called()
+        target_connector.upsert_dataframe.assert_called()
         
         # Verify sync state was updated
         sync_state.refresh_from_db()
         self.assertIsNotNone(sync_state.last_sync_time)
+
+    @patch('sync_engine.api_sync.DataTransformer')
+    def test_sync_module_incremental_missing_target_table_skips_with_warning(self, mock_transformer):
+        """Incremental sync should skip module when target table is missing."""
+        api_connector = Mock(spec=ZohoConnector)
+        target_connector = Mock(spec=PostgresConnector)
+        target_connector.database_name = 'test_db'
+        target_connector.table_exists = Mock(return_value=False)
+        target_connector.add_missing_columns = Mock()
+        target_connector.upsert_dataframe = Mock()
+
+        test_records = [
+            {'id': '3', 'Name': 'Lead 3', 'Email': 'lead3@test.com', 'Modified_Time': '2024-01-02T10:00:00+05:30'}
+        ]
+        api_connector.fetch_incremental_records = Mock(return_value=test_records)
+
+        mock_transformer_instance = Mock()
+        mock_transformer.return_value = mock_transformer_instance
+        test_df = pd.DataFrame([
+            {'id': '3', 'Name': 'Lead 3', 'Email': 'lead3@test.com', '_ingestion_timestamp': datetime.now()}
+        ])
+        mock_transformer_instance.flatten_json = Mock(return_value=test_df)
+        mock_transformer_instance.prepare_for_database = Mock(return_value=test_df)
+
+        executor = APISyncExecutor(
+            job=self.job,
+            execution=self.execution,
+            api_connector=api_connector,
+            target_connector=target_connector
+        )
+        executor.transformer = mock_transformer_instance
+
+        APISyncState.objects.create(
+            job=self.job,
+            module_name='Leads',
+            last_sync_time=timezone.now(),
+            last_modified_time=datetime(2024, 1, 1, 12, 0, 0)
+        )
+
+        executor._sync_module_incremental('Leads')
+
+        target_connector.add_missing_columns.assert_not_called()
+        target_connector.upsert_dataframe.assert_not_called()
+        log = SyncExecutionLog.objects.get(execution=self.execution, table_name='Leads')
+        self.assertEqual(log.status, 'completed')
+        self.assertIn('does not exist', (log.error_message or '').lower())
     
     @patch('sync_engine.api_sync.ZohoConnector')
     @patch('sync_engine.api_sync.PostgresConnector')

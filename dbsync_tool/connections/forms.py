@@ -5,7 +5,7 @@ import json
 import re
 from django import forms
 from django.core.exceptions import ValidationError
-from .models import DatabaseConnection, APIConnection
+from .models import DatabaseConnection, APIConnection, FileSourceConnection
 from core.constants import (
     DB_TYPE_CHOICES,
     DEFAULT_PORTS,
@@ -143,8 +143,18 @@ class DatabaseConnectionForm(forms.ModelForm):
         
         # Format validation (hostname or IP address)
         # Basic validation - IP or hostname pattern
+        # For SQL Server we additionally accept named instances: HOST\INSTANCE
+        db_type = (
+            self.cleaned_data.get('db_type')
+            or (self.data.get('db_type') if getattr(self, 'data', None) else None)
+        )
         ip_pattern = r'^(\d{1,3}\.){3}\d{1,3}$'
         hostname_pattern = r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$'
+        
+        if db_type == 'sqlserver':
+            sqlserver_instance_pattern = r'^[^\\/\s]+\\[^\\/\s]+$'
+            if re.match(sqlserver_instance_pattern, host):
+                return host
         
         if not (re.match(ip_pattern, host) or re.match(hostname_pattern, host)):
             raise forms.ValidationError("Invalid host format. Please enter a valid hostname or IP address.")
@@ -281,7 +291,7 @@ class DatabaseConnectionForm(forms.ModelForm):
 
 
 class APIConnectionForm(forms.ModelForm):
-    """Form for creating and editing API connections (Zoho and SAP)."""
+    """Form for creating and editing API connections (Zoho, SAP, Azure DevOps)."""
     client_id = forms.CharField(
         max_length=255,
         required=False,
@@ -350,12 +360,53 @@ class APIConnectionForm(forms.ModelForm):
         help_text="SAP password (encrypted at rest)"
     )
 
+    # Azure DevOps-specific form fields (mapped to model in save())
+    organization = forms.CharField(
+        max_length=255,
+        required=False,
+        widget=forms.TextInput(attrs={
+            'class': 'form-control',
+            'id': 'id_organization',
+            'placeholder': 'e.g. MyOrg',
+        }),
+        help_text="Azure DevOps organization name (e.g. MyOrg)"
+    )
+    azure_tenant_id = forms.CharField(
+        max_length=255,
+        required=False,
+        widget=forms.TextInput(attrs={
+            'class': 'form-control',
+            'id': 'id_azure_tenant_id',
+            'placeholder': 'Azure AD Tenant ID (GUID)',
+        }),
+        help_text="Azure AD Tenant ID (GUID)"
+    )
+    azure_client_id = forms.CharField(
+        max_length=255,
+        required=False,
+        widget=forms.TextInput(attrs={
+            'class': 'form-control',
+            'id': 'id_azure_client_id',
+            'placeholder': 'Azure DevOps App (client) ID',
+        }),
+        help_text="Azure DevOps Service Principal Application (client) ID"
+    )
+    azure_client_secret = forms.CharField(
+        required=False,
+        widget=forms.PasswordInput(render_value=False, attrs={
+            'class': 'form-control',
+            'id': 'id_azure_client_secret',
+        }),
+        help_text="Azure DevOps client secret (will be encrypted)"
+    )
+
     class Meta:
         model = APIConnection
         fields = [
             'name', 'api_type', 'client_id', 'client_secret', 'refresh_token',
             'api_domain', 'token_url', 'selected_modules',
             'sap_base_url', 'sap_password', 'sap_endpoints',
+            'organization', 'azure_tenant_id', 'azure_client_id', 'azure_client_secret',
             'is_active'
         ]
         widgets = {
@@ -397,14 +448,18 @@ class APIConnectionForm(forms.ModelForm):
                 'https://accounts.zoho.in/oauth/v2/token'
             )
         
-        # On edit mode, make password/secret fields optional
-        if self.instance and self.instance.pk:
+        # On edit mode (existing instance), adjust password/secret requirements
+        # Note: For models with UUID primary keys, pk is set even before save,
+        # so we must rely on _state.adding to detect persisted instances.
+        if self.instance is not None and hasattr(self.instance, "_state") and not self.instance._state.adding:
+            # For all existing connections, allow leaving secrets blank to keep them
             self.fields['client_secret'].required = False
             self.fields['client_secret'].help_text = "Leave blank to keep existing client secret"
             self.fields['refresh_token'].required = False
             self.fields['refresh_token'].help_text = "Leave blank to keep existing refresh token"
             self.fields['sap_password'].required = False
             self.fields['sap_password'].help_text = "Leave blank to keep existing password"
+
             # SAP initial values when editing
             if self.instance.api_type == 'sap_b1':
                 self.fields['sap_base_url'].initial = self.instance.sap_base_url or ''
@@ -415,15 +470,34 @@ class APIConnectionForm(forms.ModelForm):
                     self.fields['sap_password'].required = True
                     self.fields['sap_password'].help_text = "⚠️ SAP password must be set. Previous password could not be decrypted."
                     self.fields['sap_password'].widget.attrs['class'] = 'form-control is-invalid'
-            # Check if Zoho credentials need to be reset
-            if self.instance.client_secret == 'RESET_REQUIRED' or not self.instance.client_secret:
-                self.fields['client_secret'].required = True
-                self.fields['client_secret'].help_text = "⚠️ Client secret must be set. Previous secret could not be decrypted."
-                self.fields['client_secret'].widget.attrs['class'] = 'form-control is-invalid'
-            if self.instance.refresh_token == 'RESET_REQUIRED' or not self.instance.refresh_token:
-                self.fields['refresh_token'].required = True
-                self.fields['refresh_token'].help_text = "⚠️ Refresh token must be set. Previous token could not be decrypted."
-                self.fields['refresh_token'].widget.attrs['class'] = 'form-control is-invalid'
+
+            # Zoho-specific reset markers should only affect Zoho connections
+            if self.instance.api_type == 'zoho_crm':
+                if self.instance.client_secret == 'RESET_REQUIRED' or not self.instance.client_secret:
+                    self.fields['client_secret'].required = True
+                    self.fields['client_secret'].help_text = "⚠️ Client secret must be set. Previous secret could not be decrypted."
+                    self.fields['client_secret'].widget.attrs['class'] = 'form-control is-invalid'
+                if self.instance.refresh_token == 'RESET_REQUIRED' or not self.instance.refresh_token:
+                    self.fields['refresh_token'].required = True
+                    self.fields['refresh_token'].help_text = "⚠️ Refresh token must be set. Previous token could not be decrypted."
+                    self.fields['refresh_token'].widget.attrs['class'] = 'form-control is-invalid'
+            # Azure DevOps-specific secret handling
+            if self.instance.api_type == 'azure_devops':
+                # Always allow leaving Azure secret blank to keep existing
+                self.fields['azure_client_secret'].required = False
+                self.fields['azure_client_secret'].help_text = "Leave blank to keep existing client secret"
+                if not getattr(self.instance, 'azure_client_secret', None) or self.instance.azure_client_secret == 'RESET_REQUIRED':
+                    self.fields['azure_client_secret'].required = True
+                    self.fields['azure_client_secret'].help_text = (
+                        "⚠️ Azure client secret must be set. Previous secret could not be decrypted."
+                    )
+                    self.fields['azure_client_secret'].widget.attrs['class'] = 'form-control is-invalid'
+
+            # Azure DevOps initial values when editing
+            if self.instance.api_type == 'azure_devops':
+                self.fields['organization'].initial = self.instance.organization or ''
+                self.fields['azure_tenant_id'].initial = self.instance.azure_tenant_id or ''
+                self.fields['azure_client_id'].initial = self.instance.azure_client_id or ''
     
     def clean_name(self):
         """Validate connection name"""
@@ -481,6 +555,68 @@ class APIConnectionForm(forms.ModelForm):
             raise forms.ValidationError("Client ID must be no more than 255 characters long.")
         return client_id
 
+    def clean_organization(self):
+        """Validate organization (required only for Azure DevOps)."""
+        api_type = self._get_api_type()
+        org = self.cleaned_data.get('organization')
+        if api_type != 'azure_devops':
+            return (org or '').strip()
+        if not org or not str(org).strip():
+            raise forms.ValidationError("Organization is required for Azure DevOps connections.")
+        org = sanitize_string(str(org).strip(), max_length=255)
+        if len(org) < 1:
+            raise forms.ValidationError("Organization cannot be empty.")
+        return org
+
+    def clean_azure_tenant_id(self):
+        """Validate Azure tenant ID (required only for Azure DevOps)."""
+        api_type = self._get_api_type()
+        tenant_id = self.cleaned_data.get('azure_tenant_id')
+        if api_type != 'azure_devops':
+            return (tenant_id or '').strip()
+        if not tenant_id or not str(tenant_id).strip():
+            raise forms.ValidationError("Azure Tenant ID is required for Azure DevOps connections.")
+        tenant_id = sanitize_string(str(tenant_id).strip(), max_length=255)
+        if len(tenant_id) < 1:
+            raise forms.ValidationError("Azure Tenant ID cannot be empty.")
+        return tenant_id
+
+    def clean_azure_client_id(self):
+        """Validate Azure client ID (required only for Azure DevOps)."""
+        api_type = self._get_api_type()
+        client_id = self.cleaned_data.get('azure_client_id')
+        if api_type != 'azure_devops':
+            return (client_id or '').strip()
+        if not client_id or not str(client_id).strip():
+            raise forms.ValidationError("Azure Client ID is required for Azure DevOps connections.")
+        client_id = sanitize_string(str(client_id).strip(), max_length=255)
+        if len(client_id) < 1:
+            raise forms.ValidationError("Azure Client ID cannot be empty.")
+        return client_id
+
+    def clean_azure_client_secret(self):
+        """Validate Azure client secret (required only for Azure DevOps)."""
+        api_type = self._get_api_type()
+        secret = self.cleaned_data.get('azure_client_secret')
+        if api_type != 'azure_devops':
+            return secret
+        if not self.instance or not getattr(self.instance, "_state", None) or self.instance._state.adding:
+            # Create mode: required
+            if not secret or not str(secret).strip():
+                raise forms.ValidationError("Azure Client Secret is required for Azure DevOps connections.")
+        else:
+            # Edit mode: allow blank to keep existing secret value on the instance
+            if not secret or not str(secret).strip():
+                # If there is no existing usable secret, we still require one
+                existing = getattr(self.instance, "azure_client_secret", None)
+                if not existing or existing == "RESET_REQUIRED":
+                    raise forms.ValidationError("Azure Client Secret is required for Azure DevOps connections.")
+                # Reuse stored (likely encrypted) value so model validation passes
+                return existing
+        if secret and len(str(secret).strip()) < 1:
+            raise forms.ValidationError("Azure Client Secret cannot be empty.")
+        return secret
+
     def clean_client_secret(self):
         """Validate client secret (required only for Zoho)."""
         api_type = self._get_api_type()
@@ -492,7 +628,11 @@ class APIConnectionForm(forms.ModelForm):
                 raise forms.ValidationError("Client secret is required for Zoho CRM.")
         else:
             if not client_secret:
-                return None
+                # Edit mode: keep existing secret when left blank
+                existing = getattr(self.instance, "client_secret", None)
+                if not existing or existing == "RESET_REQUIRED":
+                    raise forms.ValidationError("Client secret is required for Zoho CRM.")
+                return existing
         if client_secret and len(str(client_secret).strip()) < 1:
             raise forms.ValidationError("Client secret cannot be empty.")
         return client_secret
@@ -508,7 +648,11 @@ class APIConnectionForm(forms.ModelForm):
                 raise forms.ValidationError("Refresh token is required for Zoho CRM.")
         else:
             if not refresh_token:
-                return None
+                # Edit mode: keep existing token when left blank
+                existing = getattr(self.instance, "refresh_token", None)
+                if not existing or existing == "RESET_REQUIRED":
+                    raise forms.ValidationError("Refresh token is required for Zoho CRM.")
+                return existing
         if refresh_token and len(str(refresh_token).strip()) < 1:
             raise forms.ValidationError("Refresh token cannot be empty.")
         return refresh_token
@@ -641,6 +785,11 @@ class APIConnectionForm(forms.ModelForm):
             sap_endpoints = cleaned_data.get('sap_endpoints') or []
             if not sap_endpoints:
                 self.add_error('sap_endpoints', 'Please select at least one SAP endpoint to sync.')
+        elif api_type == 'azure_devops':
+            # Require at least one project selected for Azure DevOps
+            projects = cleaned_data.get('selected_modules') or []
+            if not isinstance(projects, list) or len(projects) == 0:
+                self.add_error('selected_modules', 'Please select at least one project to sync.')
 
         return cleaned_data
 
@@ -662,7 +811,91 @@ class APIConnectionForm(forms.ModelForm):
             instance.sap_endpoints = self.cleaned_data.get('sap_endpoints') or []
             if self.cleaned_data.get('sap_password'):
                 instance.sap_password = self.cleaned_data['sap_password']
+        elif api_type == 'azure_devops':
+            instance.organization = self.cleaned_data.get('organization') or ''
+            instance.azure_tenant_id = self.cleaned_data.get('azure_tenant_id') or ''
+            instance.azure_client_id = self.cleaned_data.get('azure_client_id') or ''
+            instance.selected_modules = self.cleaned_data.get('selected_modules') or []
+            if self.cleaned_data.get('azure_client_secret'):
+                instance.azure_client_secret = self.cleaned_data['azure_client_secret']
 
         if commit:
             instance.save()
         return instance
+
+
+class FileSourceConnectionForm(forms.ModelForm):
+    """Form for creating and editing file source connections."""
+    upload_file = forms.FileField(
+        required=False,
+        widget=forms.ClearableFileInput(attrs={'class': 'form-control', 'accept': '.csv,text/csv'}),
+        help_text='Optional: upload a CSV from this device. If provided, server will store it under FILE_SYNC_ROOT.',
+    )
+
+    class Meta:
+        model = FileSourceConnection
+        fields = ['name', 'relative_path', 'upload_file', 'delimiter', 'encoding', 'has_header', 'is_active']
+        widgets = {
+            'name': forms.TextInput(attrs={'class': 'form-control'}),
+            'relative_path': forms.TextInput(
+                attrs={
+                    'class': 'form-control',
+                    'placeholder': 'imports/customers.csv',
+                }
+            ),
+            'delimiter': forms.TextInput(attrs={'class': 'form-control', 'maxlength': 1}),
+            'encoding': forms.TextInput(attrs={'class': 'form-control'}),
+            'has_header': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+            'is_active': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+        }
+        help_texts = {
+            'relative_path': 'Path relative to FILE_SYNC_ROOT on the application server.',
+        }
+
+    def __init__(self, *args, **kwargs):
+        self.tenant = kwargs.pop('tenant', None)
+        super().__init__(*args, **kwargs)
+
+    def clean_name(self):
+        name = (self.cleaned_data.get('name') or '').strip()
+        if not name:
+            raise forms.ValidationError("Connection name is required.")
+        if len(name) > 255:
+            raise forms.ValidationError("Connection name must be no more than 255 characters long.")
+        if not re.match(r'^[a-zA-Z0-9\s_-]+$', name):
+            raise forms.ValidationError(
+                "Connection name can only contain letters, numbers, spaces, underscores, and hyphens."
+            )
+
+        # Tenant-scoped uniqueness check (friendly form-level message).
+        if self.tenant:
+            qs = FileSourceConnection.objects.filter(tenant=self.tenant, name=name)
+            if self.instance and self.instance.pk:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise forms.ValidationError(
+                    f'A file source with the name "{name}" already exists for this tenant.'
+                )
+        return name
+
+    def clean_relative_path(self):
+        relative_path = (self.cleaned_data.get('relative_path') or '').strip()
+        uploaded = self.files.get('upload_file') or self.cleaned_data.get('upload_file')
+        if not relative_path and not uploaded:
+            raise forms.ValidationError("Relative path is required.")
+        return relative_path
+
+    def clean_delimiter(self):
+        delimiter = self.cleaned_data.get('delimiter')
+        if delimiter is None:
+            raise forms.ValidationError("Delimiter is required.")
+        delimiter = str(delimiter)
+        if len(delimiter) != 1:
+            raise forms.ValidationError("Delimiter must be exactly one character.")
+        return delimiter
+
+    def clean_encoding(self):
+        encoding = (self.cleaned_data.get('encoding') or '').strip()
+        if not encoding:
+            raise forms.ValidationError("Encoding is required.")
+        return encoding

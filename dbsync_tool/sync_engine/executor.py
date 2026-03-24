@@ -11,6 +11,9 @@ from sync_engine.full_sync import FullSyncExecutor
 from sync_engine.incremental_sync import IncrementalSyncExecutor
 from sync_engine.api_sync import APISyncExecutor
 from sync_engine.sap_sync import SAPSyncExecutor
+from sync_engine.zoho_runner import run_zoho_sync
+from sync_engine.azure_devops_runner import run_azure_devops_sync
+from sync_engine.flat_file_sync import FlatFileSyncExecutor
 from sync_engine.exceptions import SyncExecutionError, TableSyncError
 import logging
 import time
@@ -66,39 +69,66 @@ class SyncExecutor:
             
             # Check if source is API or Database
             if self.job.is_api_source():
-                # API source - use APISyncExecutor or SAPSyncExecutor by api_type
+                # API source - route based on api_type
                 logger.info(f"Job {self.job.id} has API source")
                 api_connection = self.job.source_api_connection
                 if not api_connection:
                     raise SyncExecutionError("API connection not found for API source job")
 
-                api_connector = get_api_connector(api_connection)
-                target_connector = self._get_connector_with_retry(self.job.target_connection)
-
-                if api_connection.api_type == "zoho_crm":
-                    executor = APISyncExecutor(
+                # Azure DevOps uses external scripts via AzureDevOpsRunner
+                if api_connection.api_type == "azure_devops":
+                    run_azure_devops_sync(
                         job=self.job,
                         execution=execution,
-                        api_connector=api_connector,
-                        target_connector=target_connector,
+                        mode=self.job.sync_type or "full",
                     )
-                    executor.execute()
-                elif api_connection.api_type == "sap_b1":
-                    executor = SAPSyncExecutor(
+                # Zoho jobs (full + incremental) use external scripts via ZohoRunner
+                elif api_connection.api_type == "zoho_crm":
+                    run_zoho_sync(
                         job=self.job,
                         execution=execution,
-                        api_connector=api_connector,
-                        target_connector=target_connector,
+                        mode=self.job.sync_type or "full",
                     )
-                    executor.execute()
-                    if hasattr(api_connector, "logout"):
-                        try:
-                            api_connector.logout()
-                        except Exception as e:
-                            logger.warning("SAP logout failed: %s", e)
                 else:
-                    raise SyncExecutionError(f"Unsupported API type: {api_connection.api_type}")
+                    # Other APIs (Zoho, SAP) use API connectors
+                    api_connector = get_api_connector(api_connection)
+                    target_connector = self._get_connector_with_retry(self.job.target_connection)
 
+                    if api_connection.api_type == "zoho_crm":
+                        executor = APISyncExecutor(
+                            job=self.job,
+                            execution=execution,
+                            api_connector=api_connector,
+                            target_connector=target_connector,
+                        )
+                        executor.execute()
+                    elif api_connection.api_type == "sap_b1":
+                        executor = SAPSyncExecutor(
+                            job=self.job,
+                            execution=execution,
+                            api_connector=api_connector,
+                            target_connector=target_connector,
+                        )
+                        executor.execute()
+                        if hasattr(api_connector, "logout"):
+                            try:
+                                api_connector.logout()
+                            except Exception as e:
+                                logger.warning("SAP logout failed: %s", e)
+                    else:
+                        raise SyncExecutionError(f"Unsupported API type: {api_connection.api_type}")
+
+            elif self.job.is_flat_file_source():
+                logger.info(f"Job {self.job.id} has flat-file source, using flat-file executor")
+                if self.job.sync_type != 'full':
+                    raise SyncExecutionError("Flat-file sync currently supports full sync only.")
+                target_connector = self._get_connector_with_retry(self.job.target_connection)
+                executor = FlatFileSyncExecutor(
+                    job=self.job,
+                    execution=execution,
+                    target_connector=target_connector,
+                )
+                executor.execute()
             else:
                 # Database source - use existing executors
                 logger.info(f"Job {self.job.id} has database source, using database sync executors")
@@ -136,11 +166,7 @@ class SyncExecutor:
                 self.job.last_run_at = timezone.now()
                 self.job.save()
                 logger.warning(f"Execution {execution.id} finished with status 'failed' for job {self.job.id}")
-                try:
-                    from sync_jobs.notifications import NotificationService
-                    NotificationService.send_job_failed_notification(self.job, execution)
-                except Exception as e:
-                    logger.warning(f"Failed to send failure notification: {str(e)}")
+                self._send_summary_email(execution)
                 try:
                     if hasattr(self.job, 'schedule') and self.job.schedule and self.job.schedule.is_enabled:
                         from scheduler.utils import schedule_job_execution
@@ -164,11 +190,7 @@ class SyncExecutor:
                 except Exception as e:
                     logger.warning(f"Error updating next_run_at after execution: {str(e)}")
                 logger.info(f"Successfully completed execution {execution.id} for job {self.job.id}")
-                try:
-                    from sync_jobs.notifications import NotificationService
-                    NotificationService.send_job_completed_notification(self.job, execution)
-                except Exception as e:
-                    logger.warning(f"Failed to send completion notification: {str(e)}")
+                self._send_summary_email(execution)
             
         except TableSyncError as e:
             # Table-level errors are handled by FullSyncExecutor
@@ -195,13 +217,7 @@ class SyncExecutor:
                 self.execution.error_message = str(e)
                 self.execution.completed_at = timezone.now()
                 self.execution.save()
-                
-                # Send failure notification
-                try:
-                    from sync_jobs.notifications import NotificationService
-                    NotificationService.send_job_failed_notification(self.job, self.execution)
-                except Exception as e:
-                    logger.warning(f"Failed to send failure notification: {str(e)}")
+                self._send_summary_email(self.execution)
             
             self.job.status = 'failed'
             self.job.save()
@@ -273,14 +289,31 @@ class SyncExecutor:
             self.execution.error_message = f"Connection error: {str(error)}"
             self.execution.completed_at = timezone.now()
             self.execution.save()
-            
-            # Send failure notification
-            try:
-                from sync_jobs.notifications import NotificationService
-                NotificationService.send_job_failed_notification(self.job, self.execution)
-            except Exception as e:
-                logger.warning(f"Failed to send failure notification: {str(e)}")
+            self._send_summary_email(self.execution)
         
         self.job.status = 'failed'
         self.job.save()
+
+    def _send_summary_email(self, execution: SyncExecution) -> None:
+        """
+        Send post-execution summary email without affecting execution outcome.
+        """
+        try:
+            from sync_jobs.services.sync_email_service import send_execution_summary_email
+
+            result = send_execution_summary_email(execution)
+            if not result.get("sent"):
+                logger.warning(
+                    "Sync summary email not sent. execution=%s job=%s error=%s",
+                    execution.id,
+                    execution.job_id,
+                    result.get("error_message", ""),
+                )
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning(
+                "Unexpected summary email exception for execution=%s job=%s: %s",
+                execution.id,
+                execution.job_id,
+                str(e),
+            )
 

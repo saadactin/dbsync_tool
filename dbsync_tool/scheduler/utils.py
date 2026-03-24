@@ -1,16 +1,51 @@
 """
 Schedule management utilities
 Handles next run calculation and scheduled job triggering
+
+Daily/hourly schedules use ``SyncSchedule.next_run_at`` as the wall-clock anchor
+(hour/minute) in Django's default timezone (``settings.TIME_ZONE``).
 """
 from typing import Optional
 from django.utils import timezone
-from datetime import timedelta
+from datetime import timedelta, datetime
 from sync_jobs.models import SyncJob, SyncSchedule
 from scheduler.cron_parser import parse_cron_expression
 import logging
 import threading
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_initial_next_run_for_schedule(
+    schedule_type: str,
+    dt: timezone.datetime,
+    *,
+    interval_hours: int = 1,
+) -> timezone.datetime:
+    """
+    Align first-run time for hourly/daily/weekly jobs created from Step 4.
+
+    Preserves hour and minute from the user's Start Date/Time; rolls forward
+    until the time is strictly after *now* (same wall time, next eligible slot).
+    For hourly, steps forward in ``interval_hours``-hour increments on the anchor grid.
+    For weekly, advances in 7-day steps.
+    """
+    ih = max(1, min(24, int(interval_hours or 1)))
+    dt = dt.replace(second=0, microsecond=0)
+    now = timezone.now()
+    if schedule_type == "hourly":
+        while dt <= now:
+            dt += timedelta(hours=ih)
+        return dt
+    if schedule_type == "daily":
+        while dt <= now:
+            dt += timedelta(days=1)
+        return dt
+    if schedule_type == "weekly":
+        while dt <= now:
+            dt += timedelta(weeks=1)
+        return dt
+    return dt
 
 
 def calculate_next_run(schedule: SyncSchedule) -> Optional[timezone.datetime]:
@@ -36,32 +71,45 @@ def calculate_next_run(schedule: SyncSchedule) -> Optional[timezone.datetime]:
         return None
     
     elif schedule.schedule_type == 'hourly':
-        # Run every hour
-        if schedule.next_run_at and schedule.next_run_at > now:
-            return schedule.next_run_at
-        # Calculate next hour
-        next_run = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        # Anchor grid: advance by interval_hours from last anchor when due/past
+        ih = getattr(schedule, "interval_hours", None) or 1
+        ih = max(1, min(24, int(ih)))
+        if schedule.next_run_at:
+            if schedule.next_run_at > now:
+                return schedule.next_run_at
+            n = schedule.next_run_at.replace(second=0, microsecond=0)
+            while n <= now:
+                n += timedelta(hours=ih)
+            return n
+        next_run = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=ih)
         return next_run
-    
+
     elif schedule.schedule_type == 'daily':
-        # Run daily at midnight (or specified time)
-        if schedule.next_run_at and schedule.next_run_at > now:
-            return schedule.next_run_at
-        # Calculate next midnight
+        # Same clock time each day (from next_run_at anchor)
+        if schedule.next_run_at:
+            if schedule.next_run_at > now:
+                return schedule.next_run_at
+            n = schedule.next_run_at.replace(second=0, microsecond=0)
+            while n <= now:
+                n += timedelta(days=1)
+            return n
         next_run = now.replace(hour=0, minute=0, second=0, microsecond=0)
         if next_run <= now:
             next_run += timedelta(days=1)
         return next_run
-    
+
     elif schedule.schedule_type == 'weekly':
-        # Run weekly (Monday at midnight)
-        if schedule.next_run_at and schedule.next_run_at > now:
-            return schedule.next_run_at
-        # Calculate next Monday
+        if schedule.next_run_at:
+            if schedule.next_run_at > now:
+                return schedule.next_run_at
+            n = schedule.next_run_at.replace(second=0, microsecond=0)
+            while n <= now:
+                n += timedelta(weeks=1)
+            return n
         next_run = now.replace(hour=0, minute=0, second=0, microsecond=0)
         days_until_monday = (7 - now.weekday()) % 7
         if days_until_monday == 0:
-            days_until_monday = 7  # Next week's Monday
+            days_until_monday = 7
         next_run += timedelta(days=days_until_monday)
         return next_run
     
@@ -123,7 +171,21 @@ def execute_sync_job_direct(job_id: str):
         try:
             with transaction.atomic():
                 job = SyncJob.objects.select_for_update().get(id=job_id)
-                
+
+                # Cron may fire every hour at :m before DB next_run_at (first-run anchor); do not start early.
+                now = timezone.now()
+                sched = getattr(job, "schedule", None)
+                if sched and sched.next_run_at:
+                    nr = sched.next_run_at
+                    if isinstance(nr, datetime) and nr > now:
+                        logger.info(
+                            "Job %s skipped: not due until %s (now=%s)",
+                            job_id,
+                            nr,
+                            now,
+                        )
+                        return
+
                 # Check if job is already running or paused before spawning thread
                 if job.status == 'running':
                     logger.warning(f"Job {job_id} is already running, skipping")

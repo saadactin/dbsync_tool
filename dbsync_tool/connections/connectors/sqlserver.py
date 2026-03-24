@@ -359,6 +359,25 @@ class SQLServerConnector(DBConnector):
         self._connection.commit()
         cursor.close()
         return cursor
+
+    def execute_query_fetchall(
+        self,
+        query: str,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> List[Tuple]:
+        """Execute a SELECT query and return all rows."""
+        if not self._connection:
+            self.connect()
+
+        cursor = self._connection.cursor()
+        try:
+            if params:
+                cursor.execute(query, params)
+            else:
+                cursor.execute(query)
+            return cursor.fetchall()
+        finally:
+            cursor.close()
     
     def _format_default_value(self, default_value: str, data_type: str) -> str:
         """

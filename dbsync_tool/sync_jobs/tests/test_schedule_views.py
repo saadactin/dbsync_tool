@@ -8,6 +8,7 @@ from django.utils import timezone
 from datetime import timedelta
 from sync_jobs.models import SyncJob, SyncSchedule
 from connections.models import DatabaseConnection
+from accounts.models import UserProfile, Role
 
 
 class ScheduleViewsTestCase(TestCase):
@@ -20,6 +21,10 @@ class ScheduleViewsTestCase(TestCase):
             username='testuser',
             password='testpass123'
         )
+        UserProfile.objects.update_or_create(
+            user=self.user,
+            defaults={'role': Role.ADMIN, 'tenant': self.user},
+        )
         self.client.login(username='testuser', password='testpass123')
         
         self.source_conn = DatabaseConnection.objects.create(
@@ -30,7 +35,8 @@ class ScheduleViewsTestCase(TestCase):
             username='test',
             password='test',
             database_name='test',
-            created_by=self.user
+            created_by=self.user,
+            tenant=self.user,
         )
         
         self.target_conn = DatabaseConnection.objects.create(
@@ -41,7 +47,8 @@ class ScheduleViewsTestCase(TestCase):
             username='test',
             password='test',
             database_name='test',
-            created_by=self.user
+            created_by=self.user,
+            tenant=self.user,
         )
         
         self.job = SyncJob.objects.create(
@@ -50,13 +57,15 @@ class ScheduleViewsTestCase(TestCase):
             target_connection=self.target_conn,
             sync_type='full',
             status='pending',
-            created_by=self.user
+            created_by=self.user,
+            tenant=self.user,
         )
         
         self.schedule = SyncSchedule.objects.create(
             job=self.job,
             schedule_type='hourly',
-            is_enabled=True
+            is_enabled=True,
+            tenant=self.user,
         )
     
     def test_pause_job_disables_schedule(self):
@@ -114,6 +123,24 @@ class ScheduleViewsTestCase(TestCase):
         self.schedule.refresh_from_db()
         self.assertEqual(self.schedule.schedule_type, 'daily')
         self.assertTrue(self.schedule.is_enabled)
+
+    def test_update_schedule_hourly_interval_hours(self):
+        """Hourly schedule stores interval_hours from POST."""
+        url = reverse('sync_jobs:update_schedule', args=[self.job.id])
+        future = (timezone.now() + timedelta(days=1)).isoformat()
+        response = self.client.post(
+            url,
+            {
+                'schedule_type': 'hourly',
+                'is_enabled': 'on',
+                'start_datetime': future,
+                'interval_hours': '4',
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.schedule.refresh_from_db()
+        self.assertEqual(self.schedule.schedule_type, 'hourly')
+        self.assertEqual(self.schedule.interval_hours, 4)
     
     def test_update_schedule_custom_cron(self):
         """Test updating schedule with custom cron expression"""

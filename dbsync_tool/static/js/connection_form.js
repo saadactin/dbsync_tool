@@ -161,21 +161,22 @@ document.addEventListener('DOMContentLoaded', function() {
                 },
                 body: JSON.stringify(requestData)
             })
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                return response.json();
-            })
-            .then(data => {
+            .then(response => response.text().then(text => ({ response, text })))
+            .then(({ response, text }) => {
                 testConnectionBtn.disabled = false;
                 document.getElementById('test-connection-text').textContent = 'Test Connection';
                 document.getElementById('test-connection-spinner').classList.add('d-none');
-                
+
+                const parsed = parseConnectionTestResponse(response, text);
+                if (!parsed.ok) {
+                    showTestMessage(parsed.errorMessage, 'danger');
+                    return;
+                }
+                const data = parsed.data;
+
                 if (data.success) {
-                    showTestMessage(data.message, 'success');
-                    
-                    // Populate database dropdown
+                    showTestMessage(formatConnectionTestMessageHtml(data), 'success');
+
                     if (data.databases && data.databases.length > 0) {
                         databaseSelect.innerHTML = '<option value="">-- Select a database --</option>';
                         data.databases.forEach(db => {
@@ -184,21 +185,26 @@ document.addEventListener('DOMContentLoaded', function() {
                             option.textContent = db;
                             databaseSelect.appendChild(option);
                         });
-                        
-                        // Show database selection section
+
                         databaseSelectionSection.style.display = 'block';
-                        
-                        // Show database name field (hidden)
+
                         if (databaseNameField) {
                             databaseNameField.style.display = 'block';
                         }
                     } else {
-                        showTestMessage('Connection successful but no databases found.', 'warning');
+                        showTestMessage(
+                            formatConnectionTestMessageHtml({
+                                success: true,
+                                message: 'Connection successful but no databases found.',
+                                latency_ms: data.latency_ms,
+                                details: data.details,
+                            }),
+                            'warning'
+                        );
                     }
                 } else {
-                    showTestMessage(data.message || 'Connection test failed', 'danger');
+                    showTestMessage(formatConnectionTestMessageHtml(data), 'danger');
                     databaseSelectionSection.style.display = 'none';
-                    // Keep Service Name field visible for Oracle ADW so user can correct it
                     if (databaseNameField && (!dbTypeSelect || dbTypeSelect.value !== 'oracle_adw')) {
                         databaseNameField.style.display = 'none';
                     }
@@ -302,22 +308,22 @@ document.addEventListener('DOMContentLoaded', function() {
                     'X-CSRFToken': csrfToken
                 }
             })
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                return response.json();
-            })
-            .then(data => {
+            .then(response => response.text().then(text => ({ response, text })))
+            .then(({ response, text }) => {
                 testConnectionBtnEdit.disabled = false;
                 if (testTextEdit) testTextEdit.textContent = 'Test Connection';
                 if (testSpinnerEdit) testSpinnerEdit.classList.add('d-none');
-                
-                if (data.success) {
-                    showTestMessageEdit(data.message || 'Connection test successful!', 'success');
-                } else {
-                    showTestMessageEdit(data.message || 'Connection test failed', 'danger');
+
+                const parsed = parseConnectionTestResponse(response, text);
+                if (!parsed.ok) {
+                    showTestMessageEdit(parsed.errorMessage, 'danger');
+                    return;
                 }
+                const data = parsed.data;
+                showTestMessageEdit(
+                    formatConnectionTestMessageHtml(data),
+                    data.success ? 'success' : 'danger'
+                );
             })
             .catch(error => {
                 console.error('Connection test error:', error);

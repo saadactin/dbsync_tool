@@ -87,17 +87,33 @@ WSGI_APPLICATION = 'dbsync_tool.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
+#
+# Local development / test convenience:
+# - If DB_ENGINE is set to `postgres|postgresql`, use Postgres.
+# - If DB_ENGINE is set to `sqlite|sqlite3` (or unset), default to SQLite.
+DB_ENGINE = os.environ.get("DB_ENGINE", "").strip().lower()
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'tauseef',
-        'USER': 'migration_user',
-        'PASSWORD': 'StrongPassword123',
-        'HOST': 'localhost',
-        'PORT': '5432',
+DATABASES = {}
+
+if DB_ENGINE in {"postgres", "postgresql", "pg"}:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.environ.get('POSTGRES_DB', 'tauseef'),
+            'USER': os.environ.get('POSTGRES_USER', 'migration_user'),
+            'PASSWORD': os.environ.get('POSTGRES_PASSWORD', 'StrongPassword123'),
+            'HOST': os.environ.get('POSTGRES_HOST', 'localhost'),
+            'PORT': os.environ.get('POSTGRES_PORT', '5432'),
+        }
     }
-}
+else:
+    # Default to SQLite so unit tests can run without external Postgres.
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': str(BASE_DIR / 'db.sqlite3'),
+        }
+    }
 
 # Cache Configuration
 # Using LocMemCache for development (in-memory cache)
@@ -130,6 +146,14 @@ EMAIL_USE_SSL = os.environ.get('EMAIL_USE_SSL', 'False').lower() == 'true'
 EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', 'saadpractice4@gmail.com')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', 'txludusmznqxoweo')
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'saadpractice4@gmail.com')
+ADMIN_EMAILS = [
+    email.strip()
+    for email in os.environ.get(
+        "ADMIN_EMAILS",
+        "saadpractice4@gmail.com,saad.sayyed@actin.co.in",
+    ).split(",")
+    if email.strip()
+]
 
 # Site URL for email links
 SITE_URL = os.environ.get('SITE_URL', 'http://localhost:8005')
@@ -189,6 +213,11 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 # Media files
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+# Flat-file sync root (server-side path only).
+# CSV source paths must be provided relative to this directory.
+FILE_SYNC_ROOT = Path(os.environ.get('FILE_SYNC_ROOT', str(BASE_DIR / 'file_sources')))
+FILE_SYNC_STRICT = os.environ.get('FILE_SYNC_STRICT', 'True').lower() == 'true'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field

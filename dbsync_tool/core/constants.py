@@ -83,6 +83,7 @@ TYPE_MAPPING_MODULE = 'core.type_mapping'
 API_TYPE_CHOICES = [
     ('zoho_crm', 'Zoho CRM'),
     ('sap_b1', 'SAP Business One'),
+    ('azure_devops', 'Azure DevOps'),
 ]
 
 # SAP API region mappings (for future multi-region/custom server support)
@@ -90,34 +91,33 @@ SAP_API_REGIONS = {
     'default': 'Custom SAP Server',
 }
 
-# SAP Business One document types / endpoints for sync (full list – all 25)
+# SAP Business One document types / endpoints for sync (full list – all 23)
 # Endpoints match SAP B1 Service Layer OData entity names; id_field used for incremental sync.
+# Last updated: 2026-03-17 13:30 (Added 23 tables and target_table mapping)
 SAP_DOCUMENT_TYPES = [
-    {"name": "Journal Entries", "endpoint": "JournalEntries", "id_field": "JdtNum"},
-    {"name": "Chart Of Accounts", "endpoint": "ChartOfAccounts", "id_field": "Code"},
-    {"name": "Item Master", "endpoint": "Items", "id_field": "ItemCode"},
-    {"name": "Capitalization", "endpoint": "AssetCapitalization", "id_field": "DocEntry"},
-    {"name": "Manual Depreciation", "endpoint": "AssetDepreciation", "id_field": "DocEntry"},
-    {"name": "Sales Orders", "endpoint": "Orders", "id_field": "DocEntry"},
-    {"name": "Delivery Notes", "endpoint": "DeliveryNotes", "id_field": "DocEntry"},
-    {"name": "A/R Invoices", "endpoint": "Invoices", "id_field": "DocEntry"},
-    {"name": "Returns", "endpoint": "Returns", "id_field": "DocEntry"},
-    {"name": "A/R Credit Memos", "endpoint": "CreditNotes", "id_field": "DocEntry"},
-    {"name": "Purchase Orders", "endpoint": "PurchaseOrders", "id_field": "DocEntry"},
-    {"name": "GRPO", "endpoint": "PurchaseDeliveryNotes", "id_field": "DocEntry"},
-    {"name": "Goods Return", "endpoint": "PurchaseReturns", "id_field": "DocEntry"},
-    {"name": "A/P Invoices", "endpoint": "PurchaseInvoices", "id_field": "DocEntry"},
-    {"name": "A/P Credit Memos", "endpoint": "PurchaseCreditNotes", "id_field": "DocEntry"},
-    {"name": "BP Master", "endpoint": "BusinessPartners", "id_field": "CardCode"},
-    {"name": "Incoming Payments", "endpoint": "IncomingPayments", "id_field": "DocEntry"},
-    {"name": "Outgoing Payments", "endpoint": "VendorPayments", "id_field": "DocEntry"},
-    {"name": "Items - Warehouse", "endpoint": "ItemsWarehouse", "id_field": "ItemCode"},
-    {"name": "Goods Receipt", "endpoint": "InventoryGenEntry", "id_field": "DocEntry"},
-    {"name": "Goods Issue", "endpoint": "InventoryGenExit", "id_field": "DocEntry"},
-    {"name": "Inventory Transfer", "endpoint": "StockTransfers", "id_field": "DocEntry"},
-    {"name": "Bill Of Materials", "endpoint": "BillOfMaterials", "id_field": "ItemCode"},
-    {"name": "Production Orders", "endpoint": "ProductionOrders", "id_field": "DocEntry"},
-    {"name": "Price Lists", "endpoint": "PriceLists", "id_field": "PriceListNo"},
+    {"name": "Journal Entries", "endpoint": "JournalEntries", "id_field": "JdtNum", "incremental_field": "TaxDate", "target_table": "journal_entries"},
+    {"name": "Chart Of Accounts", "endpoint": "ChartOfAccounts", "id_field": "Code", "target_table": "chart_of_accounts"},
+    {"name": "Item Master", "endpoint": "Items", "id_field": "ItemCode", "target_table": "items"},
+    {"name": "Capitalization", "endpoint": "AssetCapitalization", "id_field": "DocEntry", "incremental_field": "PostingDate", "target_table": "asset_capitalization"},
+    {"name": "Sales Orders", "endpoint": "Orders", "id_field": "DocEntry", "target_table": "sales_orders"},
+    {"name": "Delivery Notes", "endpoint": "DeliveryNotes", "id_field": "DocEntry", "target_table": "delivery_notes"},
+    {"name": "A/R Invoices", "endpoint": "Invoices", "id_field": "DocEntry", "target_table": "ar_invoices"},
+    {"name": "Returns", "endpoint": "Returns", "id_field": "DocEntry", "target_table": "returns"},
+    {"name": "A/R Credit Memos", "endpoint": "CreditNotes", "id_field": "DocEntry", "target_table": "ar_credit_memos"},
+    {"name": "Purchase Orders", "endpoint": "PurchaseOrders", "id_field": "DocEntry", "target_table": "purchase_orders"},
+    {"name": "GRPO", "endpoint": "PurchaseDeliveryNotes", "id_field": "DocEntry", "target_table": "purchase_delivery_notes"},
+    {"name": "Goods Return", "endpoint": "PurchaseReturns", "id_field": "DocEntry", "target_table": "purchase_returns"},
+    {"name": "A/P Invoices", "endpoint": "PurchaseInvoices", "id_field": "DocEntry", "target_table": "ap_invoices"},
+    {"name": "A/P Credit Memos", "endpoint": "PurchaseCreditNotes", "id_field": "DocEntry", "target_table": "ap_credit_memos"},
+    {"name": "BP Master", "endpoint": "BusinessPartners", "id_field": "CardCode", "target_table": "business_partners"},
+    {"name": "Incoming Payments", "endpoint": "IncomingPayments", "id_field": "DocEntry", "incremental_field": "DocDate", "target_table": "incoming_payments"},
+    {"name": "Outgoing Payments", "endpoint": "VendorPayments", "id_field": "DocEntry", "target_table": "vendor_payments"},
+    {"name": "Items - Warehouse", "endpoint": "ItemsWarehouseInfo", "id_field": "ItemCode", "target_table": "items_warehouse"},
+    {"name": "Goods Receipt", "endpoint": "InventoryGenEntries", "id_field": "DocEntry", "target_table": "inventory_gen_entries"},
+    {"name": "Goods Issue", "endpoint": "InventoryGenExits", "id_field": "DocEntry", "target_table": "inventory_gen_exits"},
+    {"name": "Inventory Transfer", "endpoint": "StockTransfers", "id_field": "DocEntry", "target_table": "stock_transfers"},
+    {"name": "Production Orders", "endpoint": "ProductionOrders", "id_field": "AbsoluteEntry", "target_table": "production_orders"},
+    {"name": "Price Lists", "endpoint": "PriceLists", "id_field": "PriceListNo", "target_table": "price_lists"},
 ]
 
 # Connection category choices (for future use)
@@ -141,3 +141,16 @@ ZOHO_DEFAULT_TOKEN_URLS = {
     'https://www.zohoapis.eu': 'https://accounts.zoho.eu/oauth/v2/token',
     'https://www.zohoapis.com.au': 'https://accounts.zoho.com.au/oauth/v2/token',
 }
+
+# Step 3 protected column defaults.
+# Lower-case values matched exactly against source column names.
+DEFAULT_PROTECTED_COLUMN_NAMES = [
+    "created_at",
+    "createdon",
+    "created_date",
+    "created_time",
+    "createdby",
+    "tenant_id",
+    "company_id",
+    "org_id",
+]

@@ -16,30 +16,8 @@
     {% endif %}
     // SAP document types for endpoint selection (static list / fallback)
     const SAP_DOCUMENT_TYPES = {{ sap_document_types|default:"[]"|safe }};
-
-    // Toggle API type fields when dropdown changes (so selecting SAP Business One shows SAP inputs)
-    function toggleApiTypeFields() {
-        var sel = document.getElementById('id_api_type');
-        var zohoBlock = document.getElementById('zoho-fields');
-        var sapBlock = document.getElementById('sap-fields');
-        var moduleSection = document.getElementById('module-selection-section');
-        var endpointSection = document.getElementById('endpoint-selection-section');
-        if (!sel || !zohoBlock || !sapBlock) return;
-        var isSap = (String(sel.value || '').trim() === 'sap_b1');
-        zohoBlock.style.display = isSap ? 'none' : 'block';
-        sapBlock.style.display = isSap ? 'block' : 'none';
-        if (moduleSection) moduleSection.style.display = isSap ? 'none' : 'block';
-        if (endpointSection) endpointSection.style.display = isSap ? 'block' : 'none';
-    }
-    document.addEventListener('DOMContentLoaded', function() {
-        toggleApiTypeFields();
-        var sel = document.getElementById('id_api_type');
-        if (sel) {
-            sel.addEventListener('change', toggleApiTypeFields);
-            sel.addEventListener('input', toggleApiTypeFields);
-        }
-    });
 </script>
+<script src="{% static 'js/connection_test_alert.js' %}"></script>
 <script src="{% static 'js/api_connection_form.js' %}"></script>
 {% endblock %}
 
@@ -86,7 +64,7 @@
                             {% endif %}
                         </div>
 
-                        <div id="zoho-fields" class="api-type-fields">
+                        <div id="zoho-fields" class="api-type-fields" style="display: none;">
                             <div class="mb-3">
                                 <label for="{{ form.client_id.id_for_label }}" class="form-label">Client ID *</label>
                                 {{ form.client_id }}
@@ -164,6 +142,41 @@
                             </div>
                         </div>
 
+                        <div id="azure-devops-fields" class="api-type-fields" style="display: none;">
+                            <div class="mb-3">
+                                <label for="{{ form.organization.id_for_label }}" class="form-label">Organization *</label>
+                                {{ form.organization }}
+                                {% if form.organization.errors %}
+                                    <div class="text-danger small">{{ form.organization.errors }}</div>
+                                {% endif %}
+                                <small class="form-text text-muted">Azure DevOps organization name (e.g. MyOrg)</small>
+                            </div>
+                            <div class="mb-3">
+                                <label for="{{ form.azure_tenant_id.id_for_label }}" class="form-label">Azure Tenant ID *</label>
+                                {{ form.azure_tenant_id }}
+                                {% if form.azure_tenant_id.errors %}
+                                    <div class="text-danger small">{{ form.azure_tenant_id.errors }}</div>
+                                {% endif %}
+                                <small class="form-text text-muted">Azure AD Tenant ID (GUID)</small>
+                            </div>
+                            <div class="mb-3">
+                                <label for="{{ form.azure_client_id.id_for_label }}" class="form-label">Azure Client ID *</label>
+                                {{ form.azure_client_id }}
+                                {% if form.azure_client_id.errors %}
+                                    <div class="text-danger small">{{ form.azure_client_id.errors }}</div>
+                                {% endif %}
+                                <small class="form-text text-muted">Application (client) ID from Azure App Registration</small>
+                            </div>
+                            <div class="mb-3">
+                                <label for="{{ form.azure_client_secret.id_for_label }}" class="form-label">Azure Client Secret {% if not object %}*{% endif %}</label>
+                                {{ form.azure_client_secret }}
+                                {% if form.azure_client_secret.errors %}
+                                    <div class="text-danger small">{{ form.azure_client_secret.errors }}</div>
+                                {% endif %}
+                                <small class="form-text text-muted">{{ form.azure_client_secret.help_text }}</small>
+                            </div>
+                        </div>
+
                         {{ form.selected_modules }}
                         {{ form.sap_endpoints }}
 
@@ -176,11 +189,11 @@
                         </div>
 
                         <div class="mb-3" id="module-selection-section" style="display: none;">
-                            <label class="form-label">Select Modules to Sync *</label>
+                            <label class="form-label">Select Projects / Modules to Sync *</label>
                             <div id="module-checkboxes" class="border rounded p-3" style="max-height: 300px; overflow-y: auto;">
                                 <!-- Module checkboxes will be populated here -->
                             </div>
-                            <small class="form-text text-muted">Select one or more modules to sync. At least one module must be selected.</small>
+                            <small class="form-text text-muted">Select one or more projects or modules to sync. At least one must be selected.</small>
                             <div id="module-selection-error" class="text-danger small mt-1" style="display: none;"></div>
                         </div>
 

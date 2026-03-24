@@ -2,6 +2,8 @@
 Views for sync jobs
 """
 import logging
+import os
+import re
 from django.shortcuts import render, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
@@ -12,7 +14,7 @@ from django.db import IntegrityError, DatabaseError
 from functools import wraps
 from datetime import datetime, timedelta
 from django.utils import timezone
-from connections.models import DatabaseConnection, APIConnection
+from connections.models import DatabaseConnection, APIConnection, FileSourceConnection
 from metadata.services import load_all_metadata, load_table_columns
 from .models import SyncJob, SyncJobTable, SyncSchedule, SyncCheckpoint, SyncExecution, SyncExecutionLog
 
@@ -115,7 +117,7 @@ def job_list(request):
         ).prefetch_related('tables')
         jobs = TenantService.get_queryset_for_user(jobs, request.user)
         
-        # Filter by source type (database, api, zoho_crm, sap_b1)
+        # Filter by source type (database, api, zoho_crm, sap_b1, azure_devops)
         source_type_filter = request.GET.get('source_type', '')
         if source_type_filter == 'database':
             jobs = jobs.filter(source_connection_type='database')
@@ -125,6 +127,8 @@ def job_list(request):
             jobs = jobs.filter(source_connection_type='api', source_api_connection__api_type='zoho_crm')
         elif source_type_filter == 'sap_b1':
             jobs = jobs.filter(source_connection_type='api', source_api_connection__api_type='sap_b1')
+        elif source_type_filter == 'azure_devops':
+            jobs = jobs.filter(source_connection_type='api', source_api_connection__api_type='azure_devops')
         
         # Filter by status
         status_filter = request.GET.get('status', '')
@@ -222,12 +226,13 @@ def create_job_step1_view(request):
     """
     Step 1: Connection selection view
     First step of sync job creation wizard
-    Supports both database and API connections as source
+    Supports database, API, and flat-file connections as source.
     """
     if request.method == 'POST':
         job_name = request.POST.get('job_name', '').strip()
         source_connection_id = request.POST.get('source_connection')
-        source_connection_type = request.POST.get('source_connection_type', 'database')  # 'database' or 'api'
+        source_file_connection_id = request.POST.get('source_file_connection')
+        source_connection_type = request.POST.get('source_connection_type', '').strip()
         target_connection_id = request.POST.get('target_connection')
         
         # Enhanced validation
@@ -240,21 +245,34 @@ def create_job_step1_view(request):
         except ValidationError as e:
             errors.extend(e.messages if hasattr(e, 'messages') else [str(e)])
         
-        # Source connection validation
-        source_connection_uuid = None
-        if not source_connection_id:
-            errors.append('Source connection is required.')
-        else:
-            try:
-                # Validate UUID format (connection IDs are UUIDs)
-                import uuid
-                source_connection_uuid = uuid.UUID(str(source_connection_id))
-            except (ValueError, TypeError, AttributeError):
-                errors.append('Invalid source connection ID.')
-        
         # Validate source connection type
-        if source_connection_type not in ['database', 'api']:
+        if source_connection_type not in ['database', 'api', 'flat_file']:
             errors.append('Invalid source connection type.')
+        
+        # Source selection validation (exclusive by source type)
+        import uuid
+        source_connection_uuid = None
+        source_file_connection_uuid = None
+        if source_connection_type in ['database', 'api']:
+            if not source_connection_id:
+                errors.append('Source connection is required.')
+            if source_file_connection_id:
+                errors.append('Only one source can be selected.')
+            if source_connection_id:
+                try:
+                    source_connection_uuid = uuid.UUID(str(source_connection_id))
+                except (ValueError, TypeError, AttributeError):
+                    errors.append('Invalid source connection ID.')
+        elif source_connection_type == 'flat_file':
+            if not source_file_connection_id:
+                errors.append('File source is required.')
+            if source_connection_id:
+                errors.append('Only one source can be selected.')
+            if source_file_connection_id:
+                try:
+                    source_file_connection_uuid = uuid.UUID(str(source_file_connection_id))
+                except (ValueError, TypeError, AttributeError):
+                    errors.append('Invalid file source ID.')
         
         # Target connection validation (must always be database)
         target_connection_uuid = None
@@ -320,7 +338,7 @@ def create_job_step1_view(request):
                     request.session['sync_job_source_api_connection_id'] = str(source_api_connection.id)
                     request.session['sync_job_target_connection_id'] = str(target_connection.id)
                     
-                else:
+                elif source_connection_type == 'database':
                     # Source is database connection
                     db_qs = DatabaseConnection.objects.filter(is_active=True)
                     user_db_conns = TenantService.get_queryset_for_user(db_qs, request.user)
@@ -349,12 +367,37 @@ def create_job_step1_view(request):
                     request.session['sync_job_name'] = job_name
                     request.session['sync_job_source_connection_type'] = 'database'
                     request.session['sync_job_source_connection_id'] = str(source_connection.id)
+                    request.session.pop('sync_job_source_api_connection_id', None)
+                    request.session.pop('sync_job_source_file_connection_id', None)
+                    request.session['sync_job_target_connection_id'] = str(target_connection.id)
+                else:
+                    file_qs = FileSourceConnection.objects.filter(is_active=True)
+                    user_file_sources = TenantService.get_queryset_for_user(file_qs, request.user)
+                    source_file_connection = user_file_sources.get(id=source_file_connection_uuid)
+
+                    db_qs = DatabaseConnection.objects.filter(is_active=True)
+                    user_db_conns = TenantService.get_queryset_for_user(db_qs, request.user)
+                    target_connection = user_db_conns.get(id=target_connection_uuid)
+
+                    if not target_connection.last_tested_at:
+                        messages.error(
+                            request,
+                            f'Target database connection "{target_connection.name}" has not been tested. '
+                            f'Please test the connection before creating a sync job.'
+                        )
+                        return redirect('sync_jobs:create_step1')
+
+                    request.session['sync_job_name'] = job_name
+                    request.session['sync_job_source_connection_type'] = 'flat_file'
+                    request.session['sync_job_source_file_connection_id'] = str(source_file_connection.id)
+                    request.session.pop('sync_job_source_connection_id', None)
+                    request.session.pop('sync_job_source_api_connection_id', None)
                     request.session['sync_job_target_connection_id'] = str(target_connection.id)
                 
                 # Redirect to step 2
                 return redirect('sync_jobs:create_step2')
                 
-            except (DatabaseConnection.DoesNotExist, APIConnection.DoesNotExist):
+            except (DatabaseConnection.DoesNotExist, APIConnection.DoesNotExist, FileSourceConnection.DoesNotExist):
                 messages.error(request, 'Selected connection not found or inactive.')
     
     # Get user's active connections
@@ -364,13 +407,20 @@ def create_job_step1_view(request):
     
     api_connections_qs = APIConnection.objects.filter(is_active=True).order_by('name')
     api_connections = TenantService.get_queryset_for_user(api_connections_qs, request.user)
+    file_sources_qs = FileSourceConnection.objects.filter(is_active=True).order_by('name')
+    file_sources = TenantService.get_queryset_for_user(file_sources_qs, request.user)
     
     context = {
         'db_connections': db_connections,
         'api_connections': api_connections,
+        'file_sources': file_sources,
         'page_title': 'Create Sync Job - Step 1',
         'job_name': request.session.get('sync_job_name', ''),
-        'selected_source_id': request.session.get('sync_job_source_connection_id') or request.session.get('sync_job_source_api_connection_id', ''),
+        'selected_source_id': (
+            request.session.get('sync_job_source_connection_id')
+            or request.session.get('sync_job_source_api_connection_id')
+            or request.session.get('sync_job_source_file_connection_id', '')
+        ),
         'selected_source_type': request.session.get('sync_job_source_connection_type', 'database'),
         'selected_target_id': request.session.get('sync_job_target_connection_id', ''),
     }
@@ -383,13 +433,16 @@ def create_job_step2_view(request):
     """
     Step 2: Table/Module selection view
     Gets source connection from session (set in step 1)
-    For API sources: Shows module selection
-    For Database sources: Shows table selection
+    For API sources: Shows module selection.
+    For Database sources: Shows table selection.
+    For flat-file sources: Shows preview mode.
     """
     # Get source connection info from session
     source_connection_type = request.session.get('sync_job_source_connection_type', 'database')
     source_connection_id = request.session.get('sync_job_source_connection_id')
     source_api_connection_id = request.session.get('sync_job_source_api_connection_id')
+    source_file_connection_id = request.session.get('sync_job_source_file_connection_id')
+    source_file_connection_id = request.session.get('sync_job_source_file_connection_id')
     target_connection_id = request.session.get('sync_job_target_connection_id')
     job_name = request.session.get('sync_job_name')
     
@@ -409,8 +462,10 @@ def create_job_step2_view(request):
             user_api_conns = TenantService.get_queryset_for_user(api_qs, request.user)
             source_api_connection = user_api_conns.get(id=source_api_connection_id)
             
-            # Branch on API type: Zoho (modules) vs SAP (endpoints)
-            is_sap = getattr(source_api_connection, 'api_type', None) == 'sap_b1'
+            # Branch on API type: Zoho (modules) vs SAP (endpoints) vs Azure DevOps (projects)
+            api_type = getattr(source_api_connection, 'api_type', None)
+            is_sap = api_type == 'sap_b1'
+            is_azure_devops = api_type == 'azure_devops'
             available_modules = []
             available_endpoints = []
             if is_sap:
@@ -427,14 +482,22 @@ def create_job_step2_view(request):
             else:
                 available_modules = source_api_connection.selected_modules or []
             
+            if is_sap:
+                page_title = 'Select SAP Endpoints - Step 2'
+            elif is_azure_devops:
+                page_title = 'Select Projects - Step 2'
+            else:
+                page_title = 'Select Modules - Step 2'
+            
             context = {
                 'source_connection_type': 'api',
                 'source_api_connection': source_api_connection,
                 'available_modules': available_modules,
                 'available_endpoints': available_endpoints,
                 'is_sap': is_sap,
+                'is_azure_devops': is_azure_devops,
                 'job_name': job_name,
-                'page_title': 'Select Modules - Step 2' if not is_sap else 'Select SAP Endpoints - Step 2',
+                'page_title': page_title,
             }
             
             return render(request, 'sync_jobs/create_step2.html', context)
@@ -443,7 +506,7 @@ def create_job_step2_view(request):
             messages.error(request, 'Source API connection not found or inactive.')
             return redirect('sync_jobs:create_step1')
     
-    else:
+    elif source_connection_type == 'database':
         # Database source - show table selection (existing flow)
         if not source_connection_id:
             messages.error(request, 'Please complete Step 1 first.')
@@ -466,6 +529,63 @@ def create_job_step2_view(request):
         }
         
         return render(request, 'sync_jobs/create_step2.html', context)
+    else:
+        if not source_file_connection_id:
+            messages.error(request, 'Please complete Step 1 first.')
+            return redirect('sync_jobs:create_step1')
+
+        from accounts.services.tenant_service import TenantService
+        try:
+            file_qs = FileSourceConnection.objects.filter(is_active=True)
+            user_file_sources = TenantService.get_queryset_for_user(file_qs, request.user)
+            source_file_connection = user_file_sources.get(id=source_file_connection_id)
+        except FileSourceConnection.DoesNotExist:
+            messages.error(request, 'File source not found or inactive.')
+            return redirect('sync_jobs:create_step1')
+
+        context = {
+            'source_connection_type': 'flat_file',
+            'source_file_connection': source_file_connection,
+            'job_name': job_name,
+            'page_title': 'Select File Preview - Step 2',
+        }
+        return render(request, 'sync_jobs/create_step2.html', context)
+
+
+@login_required
+@require_http_methods(["GET"])
+def create_job_step2_flat_file_preview(request):
+    """Preview file metadata for flat-file Step 2."""
+    source_connection_type = request.session.get('sync_job_source_connection_type', 'database')
+    source_file_connection_id = request.session.get('sync_job_source_file_connection_id')
+    if source_connection_type != 'flat_file' or not source_file_connection_id:
+        return JsonResponse({'success': False, 'message': 'Please complete Step 1 first.'}, status=400)
+
+    from accounts.services.tenant_service import TenantService
+    try:
+        file_qs = FileSourceConnection.objects.filter(is_active=True)
+        user_file_sources = TenantService.get_queryset_for_user(file_qs, request.user)
+        source_file_connection = user_file_sources.get(id=source_file_connection_id)
+    except FileSourceConnection.DoesNotExist:
+        return JsonResponse({'success': False, 'message': 'File source not found or inactive.'}, status=404)
+
+    from sync_jobs.services.flat_file_preview_service import build_flat_file_preview
+
+    try:
+        preview_data = build_flat_file_preview(source_file_connection)
+        return JsonResponse({'success': True, **preview_data})
+    except ValidationError as exc:
+        message = exc.messages[0] if getattr(exc, "messages", None) else str(exc)
+        return JsonResponse({'success': False, 'message': message}, status=400)
+    except PermissionError:
+        return JsonResponse({'success': False, 'message': 'Server cannot read file. Check file permissions.'}, status=200)
+    except UnicodeDecodeError:
+        return JsonResponse({'success': False, 'message': 'Encoding mismatch while reading file. Please verify encoding.'}, status=200)
+    except FileNotFoundError:
+        return JsonResponse({'success': False, 'message': 'File not found under configured source root.'}, status=200)
+    except Exception as exc:
+        logger.exception('Error generating flat-file preview')
+        return JsonResponse({'success': False, 'message': f'Error generating preview: {exc}'}, status=500)
 
 
 @login_required
@@ -701,9 +821,10 @@ def create_job_step2_submit(request):
             request.session['sync_job_selected_tables'] = modules
             request.session['sync_job_table_transformations'] = {}
             messages.success(request, f'Selected {len(modules)} module(s).')
-        return redirect('sync_jobs:create_step3')
+        # For API-based jobs we skip the mapping step and go directly to sync configuration
+        return redirect('sync_jobs:create_step4')
     
-    else:
+    elif source_connection_type == 'database':
         # Database source - handle table selection (existing flow)
         selected_tables = request.POST.getlist('selected_tables')
         
@@ -740,22 +861,717 @@ def create_job_step2_submit(request):
         except:
             request.session['sync_job_table_transformations'] = {}
         
-        # Redirect to step 3
+        # Redirect to step 3 (data type mapping preview)
         messages.success(request, f'Selected {len(tables)} table(s).')
+        return redirect('sync_jobs:create_step3')
+    else:
+        source_file_connection_id = request.session.get('sync_job_source_file_connection_id')
+        if not source_file_connection_id:
+            messages.error(request, 'Please complete Step 1 first.')
+            return redirect('sync_jobs:create_step1')
+
+        from accounts.services.tenant_service import TenantService
+        try:
+            file_qs = FileSourceConnection.objects.filter(is_active=True)
+            user_file_sources = TenantService.get_queryset_for_user(file_qs, request.user)
+            source_file_connection = user_file_sources.get(id=source_file_connection_id)
+        except FileSourceConnection.DoesNotExist:
+            messages.error(request, 'File source not found or inactive.')
+            return redirect('sync_jobs:create_step1')
+
+        target_table_name = (request.POST.get('target_table_name') or '').strip()
+        if not target_table_name:
+            target_table_name = os.path.splitext(os.path.basename(source_file_connection.relative_path))[0] or 'flat_file_source'
+        target_table_name = re.sub(r'[^0-9a-zA-Z_]', '_', target_table_name).strip('_').lower()
+        if not target_table_name:
+            target_table_name = 'flat_file_source'
+        if len(target_table_name) > 63:
+            target_table_name = target_table_name[:63]
+
+        request.session['sync_job_selected_tables'] = [{
+            'schema_name': 'file',
+            'table_name': target_table_name,
+        }]
+        request.session['sync_job_table_transformations'] = {}
+        request.session['sync_job_flat_file_preview_table_name'] = target_table_name
+        messages.success(request, 'Flat-file source selected.')
         return redirect('sync_jobs:create_step3')
 
 
 @login_required
-def create_job_step3_view(request):
+def create_job_step3_mapping_view(request):
     """
-    Step 3: Sync type and scheduling configuration
-    Supports both database and API sources
+    Step 3: Data type mapping preview for database-to-database sync jobs.
+
+    For each selected table/column, show how the source data type maps to the
+    target data type. This step is read-only and does not change runtime
+    behaviour; the actual mapping is still enforced in the sync engine.
+    """
+    job_name = request.session.get('sync_job_name')
+    source_connection_type = request.session.get('sync_job_source_connection_type', 'database')
+    source_connection_id = request.session.get('sync_job_source_connection_id')
+    target_connection_id = request.session.get('sync_job_target_connection_id')
+    selected_tables = request.session.get('sync_job_selected_tables', [])
+
+    if source_connection_type == 'api':
+        return redirect('sync_jobs:create_step4')
+
+    source_file_connection_id = request.session.get('sync_job_source_file_connection_id')
+    if source_connection_type == 'database' and not all([job_name, source_connection_id, target_connection_id, selected_tables]):
+        messages.error(request, 'Please complete previous steps first.')
+        return redirect('sync_jobs:create_step1')
+    if source_connection_type == 'flat_file' and not all([job_name, source_file_connection_id, target_connection_id, selected_tables]):
+        messages.error(request, 'Please complete previous steps first.')
+        return redirect('sync_jobs:create_step1')
+
+    from accounts.services.tenant_service import TenantService
+
+    source_connection = None
+    source_file_connection = None
+
+    # Load source and target connections
+    if source_connection_type == 'database':
+        try:
+            src_qs = DatabaseConnection.objects.filter(is_active=True)
+            user_src_conns = TenantService.get_queryset_for_user(src_qs, request.user)
+            source_connection = user_src_conns.get(id=source_connection_id)
+        except DatabaseConnection.DoesNotExist:
+            messages.error(request, 'Source connection not found.')
+            return redirect('sync_jobs:create_step1')
+    else:
+        try:
+            file_qs = FileSourceConnection.objects.filter(is_active=True)
+            user_file_sources = TenantService.get_queryset_for_user(file_qs, request.user)
+            source_file_connection = user_file_sources.get(id=source_file_connection_id)
+        except FileSourceConnection.DoesNotExist:
+            messages.error(request, 'File source not found or inactive.')
+            return redirect('sync_jobs:create_step2')
+
+    try:
+        tgt_qs = DatabaseConnection.objects.filter(is_active=True)
+        user_tgt_conns = TenantService.get_queryset_for_user(tgt_qs, request.user)
+        target_connection = user_tgt_conns.get(id=target_connection_id)
+    except DatabaseConnection.DoesNotExist:
+        messages.error(request, 'Target connection not found.')
+        return redirect('sync_jobs:create_step1')
+
+    # Build mapping info per table
+    from core.type_mapping import normalize_data_type, map_source_to_oracle_type
+
+    # Derive db_type strings compatible with type-mapping helpers
+    def _normalize_db_type(conn) -> str:
+        dbt = (getattr(conn, "db_type", "") or "").lower()
+        # Internal code uses 'oracle' for Oracle ADW
+        if dbt == "oracle_adw":
+            return "oracle"
+        return dbt
+
+    source_db_type = _normalize_db_type(source_connection) if source_connection else "flat_file"
+    target_db_type = _normalize_db_type(target_connection)
+
+    def compute_allowed_types(src_db: str, tgt_db: str, src_type: str):
+        """
+        Return a small list of reasonable target types for a given source type.
+
+        Focus first on MySQL -> Oracle ADW, fall back to simple same-type mapping for others.
+        """
+        t = (src_type or "").upper()
+
+        # MySQL -> Oracle ADW
+        if src_db == "mysql" and tgt_db == "oracle":
+            # Integer-like
+            if any(kw in t for kw in ["INT", "BIGINT", "SMALLINT", "MEDIUMINT", "TINYINT"]):
+                return ["NUMBER(10)", "NUMBER(38)", "BINARY_DOUBLE", "VARCHAR2(50)", "VARCHAR2(100)"]
+            # Floating point
+            if any(kw in t for kw in ["FLOAT", "DOUBLE", "DECIMAL", "NUMERIC", "REAL"]):
+                return ["BINARY_FLOAT", "BINARY_DOUBLE", "NUMBER(38,10)", "VARCHAR2(100)"]
+            # Textual
+            if any(kw in t for kw in ["CHAR", "TEXT", "CLOB", "JSON", "ENUM", "SET"]):
+                return ["VARCHAR2(100)", "VARCHAR2(255)", "CLOB"]
+            # Date/Time
+            if any(kw in t for kw in ["DATE", "TIME", "TIMESTAMP", "YEAR", "DATETIME"]):
+                return ["DATE", "TIMESTAMP", "VARCHAR2(50)"]
+            # Boolean-ish
+            if "TINYINT(1)" in t or t == "BOOLEAN" or t == "BOOL":
+                return ["NUMBER(1)", "NUMBER(3)", "VARCHAR2(5)"]
+
+        # Default: offer just the current type
+        return [src_type] if src_type else []
+
+    existing_overrides = request.session.get("sync_job_column_type_overrides", {})
+    existing_name_overrides = request.session.get("sync_job_column_name_overrides", {}) or {}
+    existing_excluded_by_table = request.session.get("sync_job_excluded_columns", {}) or {}
+    existing_protected_by_table = request.session.get("sync_job_protected_columns", {}) or {}
+
+    def _is_datetime_like(data_type: str) -> bool:
+        dt = (data_type or "").lower()
+        return any(token in dt for token in ["timestamp", "datetime", "date", "time"])
+
+    def _is_numeric_like(data_type: str) -> bool:
+        dt = (data_type or "").lower()
+        return any(
+            token in dt
+            for token in [
+                "int",
+                "bigint",
+                "serial",
+                "number",
+                "decimal",
+                "numeric",
+                "float",
+                "double",
+                "uint",
+            ]
+        )
+
+    def _resolve_incremental_column_auto_preview(columns: list, pk_columns: list):
+        """
+        Mirror IncrementalSyncExecutor._resolve_incremental_column_auto() (preview-only).
+        Returns the predicted incremental column name or None.
+        """
+        by_name = {}
+        for c in columns:
+            cname = c.get("name") or c.get("column_name")
+            if cname:
+                by_name[cname.lower()] = c
+
+        preferred_datetime_names = [
+            "updated_at",
+            "modified_at",
+            "last_updated",
+            "last_modified",
+            "updatedon",
+            "modifiedon",
+            "update_date",
+            "update_time",
+            "updated_date",
+            "modified_time",
+            "modifieddate",
+        ]
+
+        for cname in preferred_datetime_names:
+            col = by_name.get(cname)
+            if col and _is_datetime_like(col.get("data_type", "")):
+                return col.get("name") or col.get("column_name")
+
+        for col in columns:
+            if _is_datetime_like(col.get("data_type", "")):
+                return col.get("name") or col.get("column_name")
+
+        if pk_columns:
+            pk_lower = {p.lower() for p in pk_columns if p}
+            for col in columns:
+                col_name = col.get("name") or col.get("column_name")
+                if not col_name:
+                    continue
+                if col_name.lower() in pk_lower and _is_numeric_like(col.get("data_type", "")):
+                    return col_name
+            for col in columns:
+                col_name = col.get("name") or col.get("column_name")
+                if not col_name:
+                    continue
+                if col_name.lower() in pk_lower:
+                    return col_name
+
+        return None
+
+    table_mappings: Dict[str, Any] = {}
+
+    from sync_jobs.validators import resolve_protected_columns
+
+    for table_info in selected_tables:
+        schema_name = table_info.get('schema_name')
+        table_name = table_info.get('table_name')
+        table_key = f"{schema_name}.{table_name}"
+
+        if source_connection_type == 'flat_file':
+            from sync_jobs.services.flat_file_preview_service import build_flat_file_preview
+            try:
+                preview = build_flat_file_preview(source_file_connection)
+                headers = preview.get("columns", []) or []
+                if not headers:
+                    messages.error(request, 'No usable columns found in file preview. Please re-run Step 2.')
+                    return redirect('sync_jobs:create_step2')
+                columns = []
+                for idx, header in enumerate(headers, start=1):
+                    safe_target = re.sub(r'[^0-9a-zA-Z_]', '_', (header or '')).strip('_').lower() or f'column_{idx}'
+                    columns.append({
+                        'name': header,
+                        'column_name': header,
+                        'data_type': 'string',
+                        'is_nullable': True,
+                        'is_primary_key': False,
+                        'target_column_name': safe_target,
+                    })
+                request.session['sync_job_flat_file_headers'] = headers
+            except Exception as e:
+                logger.warning("Failed to preview file columns for %s: %s", table_key, e)
+                messages.error(request, 'Unable to load flat-file columns. Please verify Step 2 preview and try again.')
+                return redirect('sync_jobs:create_step2')
+        else:
+            try:
+                columns = load_table_columns(
+                    str(source_connection.id),
+                    schema_name,
+                    table_name,
+                    request.user
+                )
+            except Exception as e:
+                logger.warning("Failed to load columns for %s: %s", table_key, e)
+                table_mappings[table_key] = {
+                    'columns': [],
+                }
+                continue
+
+        mapped_columns = []
+
+        pk_columns = []
+        for col in columns:
+            if col.get("is_primary_key"):
+                pk_columns.append(col.get("name") or col.get("column_name"))
+
+        predicted_incremental_column = _resolve_incremental_column_auto_preview(columns, pk_columns)
+        computed_protected = set(
+            resolve_protected_columns(
+                columns=columns,
+                predicted_incremental_column=predicted_incremental_column,
+                manual_protected=existing_protected_by_table.get(table_key, []) or [],
+            )
+        )
+
+        for col in columns:
+            src_name = col.get('name') or col.get('column_name')
+            src_type = col.get('data_type', '')
+            nullable = col.get('is_nullable', True)
+            is_primary_key = bool(col.get("is_primary_key", False))
+            is_incremental_column = (
+                bool(predicted_incremental_column)
+                and src_name == predicted_incremental_column
+            )
+            src_lower = (src_name or "").lower()
+
+            # Default: assume same type on target
+            target_type_display = src_type
+
+            # Special handling for Oracle targets to match FullSyncExecutor behaviour
+            if target_db_type == 'oracle':
+                try:
+                    _, max_len, prec, scale = normalize_data_type(src_type, source_db_type)
+                    target_type_display = map_source_to_oracle_type(
+                        src_type,
+                        source_db_type,
+                        max_length=col.get('max_length') or max_len,
+                        precision=prec,
+                        scale=scale,
+                    )
+                except Exception as map_err:
+                    logger.warning(
+                        "Type mapping preview failed for %s.%s (%s): %s",
+                        table_key,
+                        src_name,
+                        src_type,
+                        map_err,
+                    )
+
+            # Allowed target type options
+            allowed_target_types = compute_allowed_types(source_db_type, target_db_type, src_type)
+            if target_type_display and target_type_display not in allowed_target_types:
+                allowed_target_types.insert(0, target_type_display)
+
+            # Apply existing override from session, if any (normalize to lowercase for keys)
+            override_for_table = existing_overrides.get(table_key, {})
+            override_value = override_for_table.get((src_name or "").lower())
+            if override_value and override_value in allowed_target_types:
+                target_type_display = override_value
+
+            # Prefill target column rename input from session (only for non-protected columns).
+            target_column_name = col.get('target_column_name') or src_name
+            if not (is_primary_key or is_incremental_column):
+                name_override_for_table = existing_name_overrides.get(table_key, {}) or {}
+                name_override_value = name_override_for_table.get((src_name or "").lower())
+                if name_override_value:
+                    target_column_name = name_override_value
+
+            is_protected = bool(is_primary_key or is_incremental_column or (src_lower in computed_protected))
+            is_excluded = bool(src_lower in set(existing_excluded_by_table.get(table_key, []) or []))
+            if is_protected:
+                is_excluded = False
+
+            mapped_columns.append(
+                {
+                    'name': src_name,
+                    'source_type': src_type,
+                    'target_type': target_type_display,
+                    'nullable': nullable,
+                    'allowed_target_types': allowed_target_types,
+                    'is_primary_key': is_primary_key,
+                    'is_incremental_column': is_incremental_column,
+                    'target_column_name': target_column_name,
+                    'is_protected': is_protected,
+                    'is_excluded': is_excluded,
+                }
+            )
+
+        table_mappings[table_key] = {
+            'columns': mapped_columns,
+        }
+
+    context = {
+        'job_name': job_name,
+        'source_connection': source_connection,
+        'source_file_connection': source_file_connection,
+        'source_connection_type': source_connection_type,
+        'target_connection': target_connection,
+        'selected_tables': selected_tables,
+        'table_mappings': table_mappings,
+        'page_title': 'Review Data Type Mapping - Step 3',
+    }
+
+    return render(request, 'sync_jobs/create_step3_mapping.html', context)
+
+
+@login_required
+@viewer_read_only_required
+def create_job_step3_mapping_submit(request):
+    """
+    Handle Step 3 (mapping) submission.
+
+    Parse per-column overrides, validate them, store in session, and move to Step 4.
+    """
+    if request.method != 'POST':
+        return redirect('sync_jobs:create_step3')
+
+    job_name = request.session.get('sync_job_name')
+    source_connection_type = request.session.get('sync_job_source_connection_type', 'database')
+    source_connection_id = request.session.get('sync_job_source_connection_id')
+    source_file_connection_id = request.session.get('sync_job_source_file_connection_id')
+    target_connection_id = request.session.get('sync_job_target_connection_id')
+    selected_tables = request.session.get('sync_job_selected_tables', [])
+
+    if source_connection_type == 'api':
+        return redirect('sync_jobs:create_step4')
+    if source_connection_type == 'database' and not all([job_name, source_connection_id, target_connection_id, selected_tables]):
+        messages.error(request, 'Please complete previous steps first.')
+        return redirect('sync_jobs:create_step1')
+    if source_connection_type == 'flat_file' and not all([job_name, source_file_connection_id, target_connection_id, selected_tables]):
+        messages.error(request, 'Please complete previous steps first.')
+        return redirect('sync_jobs:create_step1')
+
+    from accounts.services.tenant_service import TenantService
+    from core.type_mapping import normalize_data_type, map_source_to_oracle_type
+
+    source_connection = None
+    source_file_connection = None
+    if source_connection_type == 'database':
+        # Load connections again to recompute mappings and allowed types consistently
+        try:
+            src_qs = DatabaseConnection.objects.filter(is_active=True)
+            user_src_conns = TenantService.get_queryset_for_user(src_qs, request.user)
+            source_connection = user_src_conns.get(id=source_connection_id)
+        except DatabaseConnection.DoesNotExist:
+            messages.error(request, 'Source connection not found.')
+            return redirect('sync_jobs:create_step1')
+    else:
+        try:
+            file_qs = FileSourceConnection.objects.filter(is_active=True)
+            user_file_sources = TenantService.get_queryset_for_user(file_qs, request.user)
+            source_file_connection = user_file_sources.get(id=source_file_connection_id)
+        except FileSourceConnection.DoesNotExist:
+            messages.error(request, 'File source not found or inactive.')
+            return redirect('sync_jobs:create_step2')
+
+    try:
+        tgt_qs = DatabaseConnection.objects.filter(is_active=True)
+        user_tgt_conns = TenantService.get_queryset_for_user(tgt_qs, request.user)
+        target_connection = user_tgt_conns.get(id=target_connection_id)
+    except DatabaseConnection.DoesNotExist:
+        messages.error(request, 'Target connection not found.')
+        return redirect('sync_jobs:create_step1')
+
+    def _normalize_db_type(conn) -> str:
+        dbt = (getattr(conn, "db_type", "") or "").lower()
+        if dbt == "oracle_adw":
+            return "oracle"
+        return dbt
+
+    source_db_type = _normalize_db_type(source_connection) if source_connection else "flat_file"
+    target_db_type = _normalize_db_type(target_connection)
+
+    def compute_allowed_types(src_db: str, tgt_db: str, src_type: str):
+        t = (src_type or "").upper()
+        if src_db == "mysql" and tgt_db == "oracle":
+            if any(kw in t for kw in ["INT", "BIGINT", "SMALLINT", "MEDIUMINT", "TINYINT"]):
+                return ["NUMBER(10)", "NUMBER(38)", "BINARY_DOUBLE", "VARCHAR2(50)", "VARCHAR2(100)"]
+            if any(kw in t for kw in ["FLOAT", "DOUBLE", "DECIMAL", "NUMERIC", "REAL"]):
+                return ["BINARY_FLOAT", "BINARY_DOUBLE", "NUMBER(38,10)", "VARCHAR2(100)"]
+            if any(kw in t for kw in ["CHAR", "TEXT", "CLOB", "JSON", "ENUM", "SET"]):
+                return ["VARCHAR2(100)", "VARCHAR2(255)", "CLOB"]
+            if any(kw in t for kw in ["DATE", "TIME", "TIMESTAMP", "YEAR", "DATETIME"]):
+                return ["DATE", "TIMESTAMP", "VARCHAR2(50)"]
+            if "TINYINT(1)" in t or t == "BOOLEAN" or t == "BOOL":
+                return ["NUMBER(1)", "NUMBER(3)", "VARCHAR2(5)"]
+        return [src_type] if src_type else []
+
+    def _is_datetime_like(data_type: str) -> bool:
+        dt = (data_type or "").lower()
+        return any(token in dt for token in ["timestamp", "datetime", "date", "time"])
+
+    def _is_numeric_like(data_type: str) -> bool:
+        dt = (data_type or "").lower()
+        return any(
+            token in dt
+            for token in [
+                "int",
+                "bigint",
+                "serial",
+                "number",
+                "decimal",
+                "numeric",
+                "float",
+                "double",
+                "uint",
+            ]
+        )
+
+    def _resolve_incremental_column_auto_preview(columns: list, pk_columns: list):
+        by_name = {}
+        for c in columns:
+            cname = c.get("name") or c.get("column_name")
+            if cname:
+                by_name[cname.lower()] = c
+
+        preferred_datetime_names = [
+            "updated_at",
+            "modified_at",
+            "last_updated",
+            "last_modified",
+            "updatedon",
+            "modifiedon",
+            "update_date",
+            "update_time",
+            "updated_date",
+            "modified_time",
+            "modifieddate",
+        ]
+
+        for cname in preferred_datetime_names:
+            col = by_name.get(cname)
+            if col and _is_datetime_like(col.get("data_type", "")):
+                return col.get("name") or col.get("column_name")
+
+        for col in columns:
+            if _is_datetime_like(col.get("data_type", "")):
+                return col.get("name") or col.get("column_name")
+
+        if pk_columns:
+            pk_lower = {p.lower() for p in pk_columns if p}
+            for col in columns:
+                col_name = col.get("name") or col.get("column_name")
+                if not col_name:
+                    continue
+                if col_name.lower() in pk_lower and _is_numeric_like(col.get("data_type", "")):
+                    return col_name
+            for col in columns:
+                col_name = col.get("name") or col.get("column_name")
+                if not col_name:
+                    continue
+                if col_name.lower() in pk_lower:
+                    return col_name
+
+        return None
+
+    from sync_jobs.validators import validate_target_column_name, resolve_protected_columns
+
+    # Build overrides from POST
+    overrides: Dict[str, Dict[str, str]] = {}
+    name_overrides: Dict[str, Dict[str, str]] = {}
+    excluded_by_table: Dict[str, list] = {}
+    protected_by_table: Dict[str, list] = {}
+    errors = []
+
+    for table_info in selected_tables:
+        schema_name = table_info.get('schema_name')
+        table_name = table_info.get('table_name')
+        table_key = f"{schema_name}.{table_name}"
+
+        if source_connection_type == 'flat_file':
+            headers = request.session.get('sync_job_flat_file_headers', []) or []
+            if not headers:
+                messages.error(request, 'Flat-file header snapshot is missing. Please return to Step 2 preview.')
+                return redirect('sync_jobs:create_step2')
+            columns = [
+                {'name': h, 'column_name': h, 'data_type': 'string', 'is_nullable': True, 'is_primary_key': False}
+                for h in headers
+            ]
+        else:
+            try:
+                columns = load_table_columns(
+                    str(source_connection.id),
+                    schema_name,
+                    table_name,
+                    request.user
+                )
+            except Exception as e:
+                logger.warning("Failed to load columns for %s when saving overrides: %s", table_key, e)
+                continue
+
+        for col in columns:
+            src_name = col.get('name') or col.get('column_name')
+            src_type = col.get('data_type', '')
+            field_name = f"override_type_{table_key}.{src_name}"
+            chosen = (request.POST.get(field_name, "") or "").strip()
+            if not chosen:
+                continue
+
+            allowed = compute_allowed_types(source_db_type, target_db_type, src_type)
+            # If mapping view had augmented allowed list (e.g. default), also accept that
+            if src_type and src_type not in allowed:
+                allowed.append(src_type)
+
+            if chosen not in allowed:
+                errors.append(f"Invalid type '{chosen}' for {table_key}.{src_name}")
+                continue
+
+            col_key = (src_name or "").lower()
+            overrides.setdefault(table_key, {})[col_key] = chosen
+
+        # Parse target column name overrides (Step 3 rename).
+        pk_columns = []
+        for col in columns:
+            if col.get("is_primary_key"):
+                pk_columns.append(col.get("name") or col.get("column_name"))
+
+        predicted_incremental_column = _resolve_incremental_column_auto_preview(columns, pk_columns)
+
+        manual_protected = []
+        for col in columns:
+            src_name = col.get('name') or col.get('column_name')
+            if not src_name:
+                continue
+            protected_field_name = f"protect_col_{table_key}.{src_name}"
+            if request.POST.get(protected_field_name):
+                manual_protected.append(src_name)
+
+        resolved_protected = set(
+            resolve_protected_columns(
+                columns=columns,
+                predicted_incremental_column=predicted_incremental_column,
+                manual_protected=manual_protected,
+            )
+        )
+        protected_by_table[table_key] = sorted(resolved_protected)
+
+        final_target_names_by_src_lower = {}
+        final_target_names_list_lower = []
+        excluded_cols_for_table = set()
+
+        for col in columns:
+            src_name = col.get('name') or col.get('column_name')
+            src_lower = (src_name or "").lower()
+            if not src_lower:
+                continue
+
+            is_primary_key = bool(col.get("is_primary_key", False))
+            is_incremental_column = bool(predicted_incremental_column) and (src_name == predicted_incremental_column)
+            protected = src_lower in resolved_protected
+
+            override_field_name = f"override_colname_{table_key}.{src_name}"
+            provided = override_field_name in request.POST
+
+            chosen_colname_raw = request.POST.get(override_field_name, "")
+            chosen_colname = (chosen_colname_raw or "").strip()
+
+            if not provided:
+                # Field absent (likely disabled).
+                final_name = src_name
+            elif not chosen_colname:
+                # User submitted an empty/whitespace name -> invalid.
+                errors.append(f"Target Column Name cannot be empty for {table_key}.{src_name}")
+                final_name = src_name
+            else:
+                if protected:
+                    if chosen_colname.lower() != src_name.lower():
+                        errors.append(
+                            f"Renaming protected column is not allowed: {table_key}.{src_name} -> '{chosen_colname}'"
+                        )
+                    final_name = src_name
+                else:
+                    try:
+                        validate_target_column_name(chosen_colname)
+                    except ValidationError as exc:
+                        errors.append(
+                            f"Invalid Target Column Name for {table_key}.{src_name}: {str(exc)}"
+                        )
+                        final_name = src_name
+                    else:
+                        final_name = chosen_colname
+
+            final_target_names_by_src_lower[src_lower] = final_name
+            final_target_names_list_lower.append(final_name.lower())
+
+            migrate_field_name = f"migrate_col_{table_key}.{src_name}"
+            migrate_present_name = f"migrate_present_{table_key}.{src_name}"
+            if migrate_present_name in request.POST:
+                should_migrate = bool(request.POST.get(migrate_field_name))
+            else:
+                # Backward-compatible fallback for tests/older payloads.
+                should_migrate = True
+            if protected and not should_migrate:
+                errors.append(f"Protected column cannot be excluded: {table_key}.{src_name}")
+            if not protected and not should_migrate:
+                excluded_cols_for_table.add(src_lower)
+
+        # Duplicate detection (case-insensitive) within the table.
+        seen = set()
+        duplicates = set()
+        for nm_lower in final_target_names_list_lower:
+            if nm_lower in seen:
+                duplicates.add(nm_lower)
+            seen.add(nm_lower)
+        if duplicates:
+            errors.append(
+                f"Duplicate Target Column Names are not allowed for {table_key}: {', '.join(sorted(duplicates))}"
+            )
+
+        if len(excluded_cols_for_table) >= len(columns):
+            errors.append(f"At least one column must be migrated for {table_key}")
+        if not errors:
+            excluded_by_table[table_key] = sorted(excluded_cols_for_table)
+
+        # Store only actual changes (change detection).
+        if not duplicates and not errors:
+            for col in columns:
+                src_name = col.get('name') or col.get('column_name')
+                if not src_name:
+                    continue
+                src_lower = src_name.lower()
+                final_name = final_target_names_by_src_lower.get(src_lower, src_name)
+                if final_name.lower() != src_lower:
+                    name_overrides.setdefault(table_key, {})[src_lower] = final_name
+
+    if errors:
+        messages.error(request, " ; ".join(errors))
+        return redirect('sync_jobs:create_step3')
+
+    request.session['sync_job_column_type_overrides'] = overrides
+    request.session['sync_job_column_name_overrides'] = name_overrides
+    request.session['sync_job_excluded_columns'] = excluded_by_table
+    request.session['sync_job_protected_columns'] = protected_by_table
+    return redirect('sync_jobs:create_step4')
+
+
+@login_required
+def create_job_step4_view(request):
+    """
+    Step 4: Sync type and scheduling configuration
+    Supports database, API, and flat-file sources.
     """
     # Get data from session
     job_name = request.session.get('sync_job_name')
     source_connection_type = request.session.get('sync_job_source_connection_type', 'database')
     source_connection_id = request.session.get('sync_job_source_connection_id')
     source_api_connection_id = request.session.get('sync_job_source_api_connection_id')
+    source_file_connection_id = request.session.get('sync_job_source_file_connection_id')
     target_connection_id = request.session.get('sync_job_target_connection_id')
     selected_tables = request.session.get('sync_job_selected_tables', [])
     
@@ -764,8 +1580,12 @@ def create_job_step3_view(request):
         if not all([job_name, source_api_connection_id, target_connection_id, selected_tables]):
             messages.error(request, 'Please complete previous steps first.')
             return redirect('sync_jobs:create_step1')
-    else:
+    elif source_connection_type == 'database':
         if not all([job_name, source_connection_id, target_connection_id, selected_tables]):
+            messages.error(request, 'Please complete previous steps first.')
+            return redirect('sync_jobs:create_step1')
+    else:
+        if not all([job_name, source_file_connection_id, target_connection_id, selected_tables]):
             messages.error(request, 'Please complete previous steps first.')
             return redirect('sync_jobs:create_step1')
     
@@ -776,6 +1596,7 @@ def create_job_step3_view(request):
     table_columns = {}
     source_connection = None
     source_api_connection = None
+    source_file_connection = None
     
     if source_connection_type == 'api':
         # API source - no column loading needed
@@ -786,7 +1607,7 @@ def create_job_step3_view(request):
         except APIConnection.DoesNotExist:
             messages.error(request, 'Source API connection not found.')
             return redirect('sync_jobs:create_step1')
-    else:
+    elif source_connection_type == 'database':
         # Database source - load column information
         try:
             conn_qs = DatabaseConnection.objects.filter(is_active=True)
@@ -833,15 +1654,27 @@ def create_job_step3_view(request):
                         'all_columns': [],
                         'incremental_candidates': []
                     }
+    else:
+        try:
+            file_qs = FileSourceConnection.objects.filter(is_active=True)
+            user_file_sources = TenantService.get_queryset_for_user(file_qs, request.user)
+            source_file_connection = user_file_sources.get(id=source_file_connection_id)
+        except FileSourceConnection.DoesNotExist:
+            messages.error(request, 'File source not found.')
+            return redirect('sync_jobs:create_step1')
+    
+    is_sap = source_api_connection and source_api_connection.api_type == 'sap_b1'
     
     context = {
         'job_name': job_name,
         'source_connection_type': source_connection_type,
         'source_connection': source_connection,
         'source_api_connection': source_api_connection,
+        'source_file_connection': source_file_connection,
         'selected_tables': selected_tables,
         'table_columns': table_columns,
-        'page_title': 'Configure Sync - Step 3',
+        'is_sap': is_sap,
+        'page_title': 'Configure Sync - Step 4',
     }
     
     return render(request, 'sync_jobs/create_step3.html', context)
@@ -849,18 +1682,19 @@ def create_job_step3_view(request):
 
 @login_required
 @viewer_read_only_required
-def create_job_step3_submit(request):
+def create_job_step4_submit(request):
     """
     Handle Step 3 form submission and create the sync job
     """
     if request.method != 'POST':
-        return redirect('sync_jobs:create_step3')
+        return redirect('sync_jobs:create_step4')
     
     # Get data from session
     job_name = request.session.get('sync_job_name')
     source_connection_type = request.session.get('sync_job_source_connection_type', 'database')
     source_connection_id = request.session.get('sync_job_source_connection_id')
     source_api_connection_id = request.session.get('sync_job_source_api_connection_id')
+    source_file_connection_id = request.session.get('sync_job_source_file_connection_id')
     target_connection_id = request.session.get('sync_job_target_connection_id')
     selected_tables = request.session.get('sync_job_selected_tables', [])
     
@@ -869,8 +1703,12 @@ def create_job_step3_submit(request):
         if not all([job_name, source_api_connection_id, target_connection_id, selected_tables]):
             messages.error(request, 'Session expired. Please start over.')
             return redirect('sync_jobs:create_step1')
-    else:
+    elif source_connection_type == 'database':
         if not all([job_name, source_connection_id, target_connection_id, selected_tables]):
+            messages.error(request, 'Session expired. Please start over.')
+            return redirect('sync_jobs:create_step1')
+    else:
+        if not all([job_name, source_file_connection_id, target_connection_id, selected_tables]):
             messages.error(request, 'Session expired. Please start over.')
             return redirect('sync_jobs:create_step1')
     
@@ -879,9 +1717,20 @@ def create_job_step3_submit(request):
     schedule_type = request.POST.get('schedule_type', 'once')
     cron_expression = request.POST.get('cron_expression', '').strip()
     start_datetime = request.POST.get('start_datetime', '').strip()
+    start_date = request.POST.get('start_date', '').strip()
+    start_time = request.POST.get('start_time', '').strip()
+    interval_hours_raw = request.POST.get('interval_hours', '').strip()
+    target_table_prefix = request.POST.get('target_table_prefix', '').strip()
     
     # Enhanced validation
     errors = []
+    
+    # Target table prefix validation (optional; if provided: alphanumeric + underscore only, max 64)
+    if target_table_prefix:
+        if len(target_table_prefix) > 64:
+            errors.append('Target table prefix must be at most 64 characters.')
+        elif not re.match(r'^[a-zA-Z0-9_]+$', target_table_prefix):
+            errors.append('Target table prefix may only contain letters, numbers, and underscores.')
     
     # Sync type validation
     try:
@@ -889,6 +1738,8 @@ def create_job_step3_submit(request):
         sync_type = validate_sync_type(sync_type)
     except ValidationError as e:
         errors.extend(e.messages if hasattr(e, 'messages') else [str(e)])
+    if source_connection_type == 'flat_file' and sync_type == 'incremental':
+        errors.append('Flat-file source currently supports full sync only.')
     
     # Schedule type validation
     try:
@@ -896,6 +1747,14 @@ def create_job_step3_submit(request):
         schedule_type = validate_schedule_type(schedule_type)
     except ValidationError as e:
         errors.extend(e.messages if hasattr(e, 'messages') else [str(e)])
+    
+    interval_hours_val = 1
+    if not errors:
+        try:
+            from sync_jobs.validators import validate_interval_hours
+            interval_hours_val = validate_interval_hours(interval_hours_raw, schedule_type)
+        except ValidationError as e:
+            errors.extend(e.messages if hasattr(e, 'messages') else [str(e)])
     
     # Cron expression validation (if custom schedule)
     if schedule_type == 'custom':
@@ -905,33 +1764,26 @@ def create_job_step3_submit(request):
         except ValidationError as e:
             errors.extend(e.messages if hasattr(e, 'messages') else [str(e)])
     
-    # Start datetime validation
+    # Start datetime validation (combined field and/or date + time)
     try:
-        from sync_jobs.validators import validate_start_datetime
-        start_datetime_obj = validate_start_datetime(start_datetime, schedule_type)
+        from sync_jobs.validators import validate_schedule_start_inputs
+        start_datetime_obj = validate_schedule_start_inputs(
+            start_datetime, start_date, start_time, schedule_type
+        )
     except ValidationError as e:
         errors.extend(e.messages if hasattr(e, 'messages') else [str(e)])
         start_datetime_obj = None
     else:
         start_datetime_obj = start_datetime_obj if start_datetime_obj else None
     
-    # Validate incremental columns if incremental sync
+    # Incremental columns are auto-resolved at execution time for database sources.
     incremental_columns = {}
-    if sync_type == 'incremental':
-        for table_info in selected_tables:
-            table_key = f"{table_info['schema_name']}.{table_info['table_name']}"
-            inc_col = request.POST.get(f'incremental_column_{table_key}', '').strip()
-            try:
-                from sync_jobs.validators import validate_incremental_column
-                inc_col = validate_incremental_column(inc_col, table_key)
-                incremental_columns[table_key] = inc_col
-            except ValidationError as e:
-                errors.extend(e.messages if hasattr(e, 'messages') else [str(e)])
     
     if errors:
         for error in errors:
             messages.error(request, error)
-        return redirect('sync_jobs:create_step3')
+        # Validation errors return user to Step 4 (configure) to fix inputs
+        return redirect('sync_jobs:create_step4')
     
     try:
         # Get connections based on source type
@@ -948,49 +1800,31 @@ def create_job_step3_submit(request):
             user_api_conns = TenantService.get_queryset_for_user(api_qs, request.user)
             source_api_connection = user_api_conns.get(id=source_api_connection_id)
             source_connection = None
-        else:
+        elif source_connection_type == 'database':
             source_connection = user_db_conns.get(id=source_connection_id)
+            source_api_connection = None
+            source_file_connection = None
+        else:
+            file_qs = FileSourceConnection.objects.filter(is_active=True)
+            user_file_conns = TenantService.get_queryset_for_user(file_qs, request.user)
+            source_file_connection = user_file_conns.get(id=source_file_connection_id)
+            source_connection = None
             source_api_connection = None
         
         # Calculate next_run_at based on schedule
         next_run_at = None
         if schedule_type != 'once':
-            # Use validated datetime object if available
-            if start_datetime_obj:
-                next_run_at = start_datetime_obj
-            elif start_datetime:
-                try:
-                    # Parse datetime-local format (YYYY-MM-DDTHH:mm)
-                    dt_str = start_datetime.replace('T', ' ')
-                    if ':' in dt_str:
-                        # Ensure we have seconds
-                        if dt_str.count(':') == 1:
-                            dt_str += ':00'
-                    next_run_at = datetime.strptime(dt_str, '%Y-%m-%d %H:%M:%S')
-                    if timezone.is_naive(next_run_at):
-                        next_run_at = timezone.make_aware(next_run_at)
-                except Exception as e:
-                    # If parsing fails, use current time
-                    next_run_at = timezone.now()
-            else:
-                next_run_at = timezone.now()
-            
-            # Adjust for schedule type
+            next_run_at = start_datetime_obj
+            # Adjust for schedule type (preserve wall time from Step 4; roll forward until after now)
+            from scheduler.utils import normalize_initial_next_run_for_schedule
             if schedule_type == 'hourly':
-                next_run_at = next_run_at.replace(minute=0, second=0, microsecond=0)
-                if next_run_at <= timezone.now():
-                    next_run_at += timedelta(hours=1)
+                next_run_at = normalize_initial_next_run_for_schedule(
+                    'hourly', next_run_at, interval_hours=interval_hours_val
+                )
             elif schedule_type == 'daily':
-                next_run_at = next_run_at.replace(hour=0, minute=0, second=0, microsecond=0)
-                if next_run_at <= timezone.now():
-                    next_run_at += timedelta(days=1)
+                next_run_at = normalize_initial_next_run_for_schedule('daily', next_run_at)
             elif schedule_type == 'weekly':
-                next_run_at = next_run_at.replace(hour=0, minute=0, second=0, microsecond=0)
-                # Set to next Monday
-                days_until_monday = (7 - next_run_at.weekday()) % 7 or 7
-                if days_until_monday == 7 and next_run_at.hour == 0:
-                    days_until_monday = 0
-                next_run_at += timedelta(days=days_until_monday)
+                next_run_at = normalize_initial_next_run_for_schedule('weekly', next_run_at)
         
         # Get tenant for the job
         from accounts.services.tenant_service import TenantService
@@ -1009,27 +1843,30 @@ def create_job_step3_submit(request):
             name=job_name,
             source_connection=source_connection,  # None for API sources
             source_api_connection=source_api_connection,  # None for database sources
+            source_file_connection=source_file_connection,  # None for db/api sources
             source_connection_type=source_connection_type,
             target_connection=target_connection,
             sync_type=sync_type,
             status='pending',
             created_by=request.user,
             tenant=tenant,
-            next_run_at=next_run_at
+            next_run_at=next_run_at,
+            target_table_prefix=target_table_prefix or None
         )
         
         # Get transformation data from session (only for database sources)
         table_transformations = request.session.get('sync_job_table_transformations', {})
         
         # Create SyncJobTable entries
+        overrides_by_table = request.session.get('sync_job_column_type_overrides', {})
+        name_overrides_by_table = request.session.get('sync_job_column_name_overrides', {}) or {}
+        excluded_by_table = request.session.get('sync_job_excluded_columns', {}) or {}
+        protected_by_table = request.session.get('sync_job_protected_columns', {}) or {}
         for table_info in selected_tables:
             table_key = f"{table_info['schema_name']}.{table_info['table_name']}"
             
-            # For API sources, incremental_column is not applicable (uses Modified_Time from API)
-            # For database sources, use incremental_column from form
+            # Incremental column is auto-resolved at runtime (DB) or API-driven (API).
             incremental_column = None
-            if source_connection_type == 'database':
-                incremental_column = incremental_columns.get(table_key)
             
             # Get transformation data for this table (only for database sources)
             transformation_query = None
@@ -1050,6 +1887,7 @@ def create_job_step3_submit(request):
                     if not transformation_query:
                         transformation_query = None
             
+            table_key = f"{table_info['schema_name']}.{table_info['table_name']}"
             SyncJobTable.objects.create(
                 job=sync_job,
                 schema_name=table_info['schema_name'],
@@ -1057,6 +1895,10 @@ def create_job_step3_submit(request):
                 incremental_column=incremental_column,
                 transformation_query=transformation_query,
                 column_transformations=column_transformations if column_transformations else {},
+                column_type_overrides=overrides_by_table.get(table_key, {}),
+                column_name_overrides=name_overrides_by_table.get(table_key, {}),
+                excluded_columns=excluded_by_table.get(table_key, []),
+                protected_columns=protected_by_table.get(table_key, []),
                 is_enabled=True
             )
         
@@ -1080,6 +1922,7 @@ def create_job_step3_submit(request):
                 tenant=sync_job.tenant,  # Inherit from job
                 schedule_type=schedule_type,
                 cron_expression=cron_expression if schedule_type == 'custom' else None,
+                interval_hours=interval_hours_val,
                 is_enabled=True,
                 next_run_at=next_run_at
             )
@@ -1111,8 +1954,13 @@ def create_job_step3_submit(request):
         # Clear session data
         request.session.pop('sync_job_name', None)
         request.session.pop('sync_job_source_connection_id', None)
+        request.session.pop('sync_job_source_api_connection_id', None)
+        request.session.pop('sync_job_source_file_connection_id', None)
         request.session.pop('sync_job_target_connection_id', None)
         request.session.pop('sync_job_selected_tables', None)
+        request.session.pop('sync_job_column_name_overrides', None)
+        request.session.pop('sync_job_excluded_columns', None)
+        request.session.pop('sync_job_protected_columns', None)
         
         messages.success(request, f'Sync job "{job_name}" created successfully!')
         logger.info(f"User {request.user.username} created sync job {sync_job.id}: {job_name}")
@@ -1436,6 +2284,7 @@ def update_schedule(request, job_id):
         schedule_type = request.POST.get('schedule_type')
         cron_expression = request.POST.get('cron_expression', '').strip()
         start_datetime = request.POST.get('start_datetime', '').strip()
+        interval_hours_raw = request.POST.get('interval_hours', '').strip()
         is_enabled = request.POST.get('is_enabled') == 'on'
         
         # Validation
@@ -1445,6 +2294,15 @@ def update_schedule(request, job_id):
         
         if schedule_type == 'custom' and not cron_expression:
             errors.append('Cron expression is required for custom schedules.')
+        
+        interval_hours_val = 1
+        if not errors:
+            try:
+                from sync_jobs.validators import validate_interval_hours
+                interval_hours_val = validate_interval_hours(interval_hours_raw, schedule_type)
+            except ValidationError as e:
+                for msg in e.messages if hasattr(e, 'messages') else [str(e)]:
+                    errors.append(msg)
         
         if errors:
             for error in errors:
@@ -1459,15 +2317,33 @@ def update_schedule(request, job_id):
         try:
             job.schedule.schedule_type = schedule_type
             job.schedule.cron_expression = cron_expression if schedule_type == 'custom' else None
+            job.schedule.interval_hours = interval_hours_val
             job.schedule.is_enabled = is_enabled
             
             if start_datetime:
                 try:
                     job.schedule.next_run_at = timezone.datetime.fromisoformat(start_datetime.replace('Z', '+00:00'))
-                except:
+                except Exception:
                     job.schedule.next_run_at = None
             else:
                 job.schedule.next_run_at = None
+
+            from scheduler.utils import normalize_initial_next_run_for_schedule
+            if (
+                is_enabled
+                and job.schedule.next_run_at
+                and schedule_type in ('hourly', 'daily')
+            ):
+                if schedule_type == 'hourly':
+                    job.schedule.next_run_at = normalize_initial_next_run_for_schedule(
+                        'hourly',
+                        job.schedule.next_run_at,
+                        interval_hours=job.schedule.interval_hours,
+                    )
+                else:
+                    job.schedule.next_run_at = normalize_initial_next_run_for_schedule(
+                        schedule_type, job.schedule.next_run_at
+                    )
             
             job.schedule.save()
             
@@ -1523,6 +2399,10 @@ def job_edit(request, job_id):
         schedule_type = request.POST.get('schedule_type', 'once')
         cron_expression = request.POST.get('cron_expression', '').strip()
         start_datetime = request.POST.get('start_datetime', '').strip()
+        start_date = request.POST.get('start_date', '').strip()
+        start_time = request.POST.get('start_time', '').strip()
+        interval_hours_raw = request.POST.get('interval_hours', '').strip()
+        target_table_prefix = request.POST.get('target_table_prefix', '').strip()
         
         # Validation
         errors = []
@@ -1532,19 +2412,37 @@ def job_edit(request, job_id):
         if sync_type not in ['full', 'incremental']:
             errors.append('Invalid sync type.')
         
+        if target_table_prefix:
+            if len(target_table_prefix) > 64:
+                errors.append('Target table prefix must be at most 64 characters.')
+            elif not re.match(r'^[a-zA-Z0-9_]+$', target_table_prefix):
+                errors.append('Target table prefix may only contain letters, numbers, and underscores.')
+        
         if schedule_type not in ['once', 'hourly', 'daily', 'weekly', 'custom']:
             errors.append('Invalid schedule type.')
         
         if schedule_type == 'custom' and not cron_expression:
             errors.append('Cron expression is required for custom schedules.')
         
-        # Validate incremental columns if changing to incremental
-        if sync_type == 'incremental':
-            for table in job.tables.all():
-                table_key = f"{table.schema_name}.{table.table_name}"
-                inc_col = request.POST.get(f'incremental_column_{table_key}', '').strip()
-                if not inc_col:
-                    errors.append(f'Incremental column is required for table {table_key}.')
+        interval_hours_val = 1
+        if not errors:
+            try:
+                from sync_jobs.validators import validate_interval_hours
+                interval_hours_val = validate_interval_hours(interval_hours_raw, schedule_type)
+            except ValidationError as e:
+                for msg in e.messages if hasattr(e, 'messages') else [str(e)]:
+                    errors.append(msg)
+        
+        start_datetime_obj = None
+        if not errors:
+            try:
+                from sync_jobs.validators import validate_schedule_start_inputs
+                start_datetime_obj = validate_schedule_start_inputs(
+                    start_datetime, start_date, start_time, schedule_type
+                )
+            except ValidationError as e:
+                for msg in e.messages if hasattr(e, 'messages') else [str(e)]:
+                    errors.append(msg)
         
         if errors:
             for error in errors:
@@ -1553,6 +2451,7 @@ def job_edit(request, job_id):
             # Update job
             job.name = job_name
             job.sync_type = sync_type
+            job.target_table_prefix = target_table_prefix or None
             job.save()
             
             # Update schedule
@@ -1567,36 +2466,18 @@ def job_edit(request, job_id):
             # Calculate next_run_at based on schedule
             next_run_at = None
             if schedule_type != 'once':
-                if start_datetime:
-                    try:
-                        dt_str = start_datetime.replace('T', ' ')
-                        if ':' in dt_str:
-                            if dt_str.count(':') == 1:
-                                dt_str += ':00'
-                        next_run_at = datetime.strptime(dt_str, '%Y-%m-%d %H:%M:%S')
-                        if timezone.is_naive(next_run_at):
-                            next_run_at = timezone.make_aware(next_run_at)
-                    except Exception:
-                        next_run_at = timezone.now()
-                else:
-                    next_run_at = timezone.now()
-                
-                # Adjust for schedule type
+                next_run_at = start_datetime_obj
+                from scheduler.utils import normalize_initial_next_run_for_schedule
                 if schedule_type == 'hourly':
-                    next_run_at = next_run_at.replace(minute=0, second=0, microsecond=0)
-                    if next_run_at <= timezone.now():
-                        next_run_at += timedelta(hours=1)
+                    next_run_at = normalize_initial_next_run_for_schedule(
+                        'hourly', next_run_at, interval_hours=interval_hours_val
+                    )
                 elif schedule_type == 'daily':
-                    next_run_at = next_run_at.replace(hour=0, minute=0, second=0, microsecond=0)
-                    if next_run_at <= timezone.now():
-                        next_run_at += timedelta(days=1)
+                    next_run_at = normalize_initial_next_run_for_schedule('daily', next_run_at)
                 elif schedule_type == 'weekly':
-                    next_run_at = next_run_at.replace(hour=0, minute=0, second=0, microsecond=0)
-                    days_until_monday = (7 - next_run_at.weekday()) % 7 or 7
-                    if days_until_monday == 7 and next_run_at.hour == 0:
-                        days_until_monday = 0
-                    next_run_at += timedelta(days=days_until_monday)
+                    next_run_at = normalize_initial_next_run_for_schedule('weekly', next_run_at)
             
+            schedule.interval_hours = interval_hours_val
             schedule.next_run_at = next_run_at
             job.next_run_at = next_run_at
             job.save()
@@ -1612,15 +2493,9 @@ def job_edit(request, job_id):
             except Exception as e:
                 logger.error(f"Error updating scheduler for job {job.id}: {str(e)}", exc_info=True)
             
-            # Update incremental columns
-            if sync_type == 'incremental':
-                for table in job.tables.all():
-                    table_key = f"{table.schema_name}.{table.table_name}"
-                    inc_col = request.POST.get(f'incremental_column_{table_key}', '').strip()
-                    table.incremental_column = inc_col
-                    table.save()
-            else:
-                # Clear incremental columns for full sync
+            # Do not require manual incremental columns in edit flow.
+            # Keep previously stored values for incremental jobs; clear for full sync.
+            if sync_type != 'incremental':
                 job.tables.all().update(incremental_column=None)
             
             messages.success(request, f'Job "{job.name}" updated successfully.')
@@ -1661,7 +2536,9 @@ def job_edit(request, job_id):
     
     # Load column information for incremental column selection
     table_columns = {}
-    if job.sync_type == 'incremental' or request.method == 'GET':
+    is_sap = job.source_api_connection and job.source_api_connection.api_type == 'sap_b1'
+    
+    if (job.sync_type == 'incremental' or request.method == 'GET') and job.source_connection_type == 'database':
         for table in job.tables.all():
             try:
                 columns = load_table_columns(
@@ -1698,6 +2575,7 @@ def job_edit(request, job_id):
     context = {
         'job': job,
         'table_columns': table_columns,
+        'is_sap': is_sap,
         'page_title': f'Edit Job: {job.name}',
     }
     
@@ -1896,6 +2774,7 @@ def execution_status_api(request, job_id, execution_id):
                 'started_at': log.started_at.isoformat() if log.started_at else None,
                 'completed_at': log.completed_at.isoformat() if log.completed_at else None,
                 'error_message': log.error_message,
+                'verification_summary': log.verification_summary or '',
             }
             for log in logs
         ],

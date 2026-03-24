@@ -1,0 +1,83 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{% if object %}Edit{% else %}Create{% endif %} File Source - DB Sync Tool{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-8 offset-md-2">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h3>{% if object %}Edit{% else %}Create{% endif %} File Source</h3>
+                    <a href="{% url 'connections:file_source_list' %}" class="btn btn-outline-secondary btn-sm">
+                        <span>←</span> Back to File Sources
+                    </a>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">
+                        Path is relative to server <code>FILE_SYNC_ROOT</code>, not your browser machine.
+                    </p>
+                    <form method="post" enctype="multipart/form-data">
+                        {% csrf_token %}
+
+                        <div class="mb-3">
+                            <label for="{{ form.name.id_for_label }}" class="form-label">Name *</label>
+                            {{ form.name }}
+                            {% if form.name.errors %}<div class="text-danger small mt-1">{{ form.name.errors|join:", " }}</div>{% endif %}
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="{{ form.relative_path.id_for_label }}" class="form-label">Relative Path *</label>
+                            {{ form.relative_path }}
+                            <div class="form-text">Example: <code>imports/customers.csv</code></div>
+                            {% if form.relative_path.errors %}<div class="text-danger small mt-1">{{ form.relative_path.errors|join:", " }}</div>{% endif %}
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="{{ form.upload_file.id_for_label }}" class="form-label">Upload CSV from this device</label>
+                            {{ form.upload_file }}
+                            <div class="form-text">
+                                Optional: choose a CSV file to upload directly. It will be stored under server <code>FILE_SYNC_ROOT</code>.
+                                If Relative Path is empty, file is saved under <code>uploads/</code>.
+                            </div>
+                            {% if form.upload_file.errors %}<div class="text-danger small mt-1">{{ form.upload_file.errors|join:", " }}</div>{% endif %}
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="{{ form.delimiter.id_for_label }}" class="form-label">Delimiter *</label>
+                                {{ form.delimiter }}
+                                {% if form.delimiter.errors %}<div class="text-danger small mt-1">{{ form.delimiter.errors|join:", " }}</div>{% endif %}
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="{{ form.encoding.id_for_label }}" class="form-label">Encoding *</label>
+                                {{ form.encoding }}
+                                {% if form.encoding.errors %}<div class="text-danger small mt-1">{{ form.encoding.errors|join:", " }}</div>{% endif %}
+                            </div>
+                        </div>
+
+                        <div class="form-check mb-3">
+                            {{ form.has_header }}
+                            <label for="{{ form.has_header.id_for_label }}" class="form-check-label">First row contains headers</label>
+                        </div>
+
+                        <div class="form-check mb-4">
+                            {{ form.is_active }}
+                            <label for="{{ form.is_active.id_for_label }}" class="form-check-label">Active</label>
+                        </div>
+
+                        {% if form.non_field_errors %}
+                            <div class="alert alert-danger">{{ form.non_field_errors|join:", " }}</div>
+                        {% endif %}
+
+                        <button type="submit" class="btn btn-primary">
+                            {% if object %}Update File Source{% else %}Create File Source{% endif %}
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

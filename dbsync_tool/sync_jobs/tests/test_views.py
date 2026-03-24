@@ -2,8 +2,10 @@ from django.test import TestCase, Client
 from django.contrib.auth.models import User
 from django.urls import reverse
 from django.utils import timezone
-from connections.models import DatabaseConnection
+from unittest.mock import patch
+from connections.models import DatabaseConnection, APIConnection
 from sync_jobs.models import SyncJob, SyncJobTable, SyncSchedule, SyncExecution, SyncExecutionLog
+from accounts.models import UserProfile, Role
 
 
 class SyncJobCreationTestCase(TestCase):
@@ -17,7 +19,12 @@ class SyncJobCreationTestCase(TestCase):
             password='testpass123'
         )
         
-        # Create test connections
+        # Ensure user has a tenant profile so TenantService scoping works
+        UserProfile.objects.update_or_create(
+            user=self.user, defaults={'role': Role.ADMIN, 'tenant': self.user}
+        )
+        
+        # Create test connections (assign tenant so tenant scoping includes them)
         self.source_conn = DatabaseConnection.objects.create(
             name='Source DB',
             db_type='postgres',
@@ -26,7 +33,8 @@ class SyncJobCreationTestCase(TestCase):
             username='test',
             password='test',
             database_name='test_db',
-            created_by=self.user
+            created_by=self.user,
+            tenant=self.user,
         )
         
         self.target_conn = DatabaseConnection.objects.create(
@@ -37,7 +45,8 @@ class SyncJobCreationTestCase(TestCase):
             username='test',
             password='test',
             database_name='test_db',
-            created_by=self.user
+            created_by=self.user,
+            tenant=self.user,
         )
     
     def test_step1_access_requires_login(self):
@@ -113,6 +122,36 @@ class SyncJobCreationTestCase(TestCase):
         schedule = SyncSchedule.objects.first()
         self.assertEqual(schedule.schedule_type, 'once')
 
+    @patch('sync_jobs.views.load_table_columns')
+    def test_step3_incremental_db_does_not_require_manual_incremental_columns(self, mock_load_columns):
+        """Incremental DB job creation should succeed without incremental_column_* inputs."""
+        mock_load_columns.return_value = [
+            {'name': 'id', 'data_type': 'int'},
+            {'name': 'updated_at', 'data_type': 'timestamp'},
+        ]
+        self.client.login(username='testuser', password='testpass123')
+
+        session = self.client.session
+        session['sync_job_name'] = 'Auto Incremental Job'
+        session['sync_job_source_connection_type'] = 'database'
+        session['sync_job_source_connection_id'] = str(self.source_conn.id)
+        session['sync_job_target_connection_id'] = str(self.target_conn.id)
+        session['sync_job_selected_tables'] = [
+            {'schema_name': 'public', 'table_name': 'users'}
+        ]
+        session.save()
+
+        response = self.client.post(reverse('sync_jobs:create_step4_submit'), {
+            'sync_type': 'incremental',
+            'schedule_type': 'once',
+        }, follow=True)
+
+        self.assertEqual(response.status_code, 200)
+        job = SyncJob.objects.get(name='Auto Incremental Job')
+        self.assertEqual(job.sync_type, 'incremental')
+        table = SyncJobTable.objects.get(job=job, schema_name='public', table_name='users')
+        self.assertIsNone(table.incremental_column)
+
 
 class SyncJobManagementTestCase(TestCase):
     """Test cases for job management operations"""
@@ -161,7 +200,8 @@ class SyncJobManagementTestCase(TestCase):
             target_connection=self.target_conn,
             sync_type='full',
             status='pending',
-            created_by=self.user
+            created_by=self.user,
+            tenant=self.user,
         )
         
         SyncSchedule.objects.create(
@@ -176,6 +216,36 @@ class SyncJobManagementTestCase(TestCase):
             table_name='users',
             is_enabled=True
         )
+
+        # Azure DevOps API connection and job for listing/filter tests
+        self.azure_api_conn = APIConnection.objects.create(
+            name='Azure DevOps API',
+            api_type='azure_devops',
+            organization='MyOrg',
+            azure_tenant_id='tenant-guid-123',
+            azure_client_id='client-guid-456',
+            azure_client_secret='secret-789',
+            selected_modules=['ProjA', 'ProjB'],
+            tenant=self.user,
+            created_by=self.user
+        )
+        self.azure_job = SyncJob.objects.create(
+            name='Azure DevOps Job',
+            source_connection=None,
+            source_api_connection=self.azure_api_conn,
+            source_connection_type='api',
+            target_connection=self.target_conn,
+            sync_type='full',
+            status='pending',
+            created_by=self.user,
+            tenant=self.user,
+        )
+        SyncJobTable.objects.create(
+            job=self.azure_job,
+            schema_name='api',
+            table_name='ProjA',
+            is_enabled=True
+        )
     
     def test_job_list_requires_login(self):
         """Test that job list requires authentication"""
@@ -188,6 +258,23 @@ class SyncJobManagementTestCase(TestCase):
         response = self.client.get(reverse('sync_jobs:list'))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Test Job')
+        self.assertContains(response, 'Azure DevOps Job')
+
+    def test_job_list_marks_azure_devops_jobs(self):
+        """Job list shows Azure DevOps badge for Azure API jobs."""
+        self.client.login(username='testuser', password='testpass123')
+        response = self.client.get(reverse('sync_jobs:list'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Azure DevOps Job')
+        self.assertContains(response, 'Azure DevOps')
+
+    def test_job_list_filter_by_azure_devops(self):
+        """Filter by Azure DevOps source type returns only Azure DevOps jobs."""
+        self.client.login(username='testuser', password='testpass123')
+        response = self.client.get(reverse('sync_jobs:list'), {'source_type': 'azure_devops'})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Azure DevOps Job')
+        self.assertNotContains(response, 'Test Job')
     
     def test_job_list_filtering_by_status(self):
         """Test job list filtering by status"""

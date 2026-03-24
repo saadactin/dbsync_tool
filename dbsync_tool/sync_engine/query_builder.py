@@ -2,6 +2,7 @@
 Query building utilities for different database types
 """
 from typing import Optional, List, Any, Dict
+from datetime import datetime
 from connections.connectors.base import DBConnector
 from sync_engine.exceptions import QueryBuilderError
 import logging
@@ -142,6 +143,115 @@ class QueryBuilder:
         
         return query
     
+    @staticmethod
+    def build_keyset_select_query(
+        connector: DBConnector,
+        schema: str,
+        table: str,
+        pk_columns: List[str],
+        last_pk_values: Optional[List[Any]] = None,
+        columns: Optional[List[str]] = None,
+        where_clause: Optional[str] = None,
+        limit: Optional[int] = None,
+        column_transformations: Optional[Dict[str, str]] = None
+    ) -> str:
+        """
+        Build SELECT query using Keyset Pagination (WHERE PK > last_pk)
+        
+        Args:
+            connector: Database connector instance
+            schema: Schema/database name
+            table: Table name
+            pk_columns: List of primary key column names
+            last_pk_values: Values of PK columns from last row of the previous batch
+            columns: List of column names (None for *)
+            where_clause: Additional WHERE clause
+            limit: LIMIT value (batch size)
+            column_transformations: Optional dict mapping column_name -> transformation_type
+            
+        Returns:
+            SQL query string
+        """
+        db_type = QueryBuilder.get_db_type(connector)
+        
+        # Build schema.table identifier
+        if db_type == 'postgres' or db_type == 'oracle':
+            schema_part = f'"{schema}"."{table}"'
+            quote = lambda c: f'"{c}"'
+        elif db_type == 'mysql':
+            schema_part = f'`{schema}`.`{table}`'
+            quote = lambda c: f'`{c}`'
+        elif db_type == 'sqlserver':
+            schema_part = f'[{schema}].[{table}]'
+            quote = lambda c: f'[{c}]'
+        elif db_type == 'clickhouse':
+            schema_part = f'`{schema}`.`{table}`'
+            quote = lambda c: f'`{c}`'
+        else:
+            schema_part = f'{schema}.{table}'
+            quote = lambda c: c
+        
+        # Build column list
+        if columns:
+            if column_transformations:
+                col_list = QueryBuilder.apply_column_transformations(
+                    columns, column_transformations, db_type
+                )
+            else:
+                col_list = ', '.join(quote(col) for col in columns)
+        else:
+            col_list = '*'
+        
+        query = f'SELECT {col_list} FROM {schema_part}'
+        
+        # Build pagination condition
+        pag_condition = None
+        if last_pk_values and len(last_pk_values) == len(pk_columns):
+            # Simple case: Single column PK
+            if len(pk_columns) == 1:
+                col = quote(pk_columns[0])
+                val = QueryBuilder._format_checkpoint_value(last_pk_values[0], db_type)
+                pag_condition = f"{col} > {val}"
+            else:
+                # Compound PK: (pk1 > val1) OR (pk1 = val1 AND pk2 > val2) ...
+                conditions = []
+                for i in range(len(pk_columns)):
+                    part = []
+                    for j in range(i):
+                        c = quote(pk_columns[j])
+                        v = QueryBuilder._format_checkpoint_value(last_pk_values[j], db_type)
+                        part.append(f"{c} = {v}")
+                    
+                    c_curr = quote(pk_columns[i])
+                    v_curr = QueryBuilder._format_checkpoint_value(last_pk_values[i], db_type)
+                    part.append(f"{c_curr} > {v_curr}")
+                    conditions.append(f"({' AND '.join(part)})")
+                
+                pag_condition = f"({' OR '.join(conditions)})"
+        
+        # Combine conditions
+        final_where = []
+        if where_clause:
+            final_where.append(f"({QueryBuilder._normalize_where_clause_column_quotes(where_clause, db_type)})")
+        if pag_condition:
+            final_where.append(f"({pag_condition})")
+        
+        if final_where:
+            query += f" WHERE {' AND '.join(final_where)}"
+        
+        # Always order by PK for keyset pagination
+        order_cols = ', '.join(quote(col) for col in pk_columns)
+        query += f" ORDER BY {order_cols}"
+        
+        # Add LIMIT
+        if limit is not None:
+            if db_type == 'sqlserver':
+                query += f' OFFSET 0 ROWS FETCH NEXT {limit} ROWS ONLY'
+            elif db_type != 'oracle':
+                query += f' LIMIT {limit}'
+        
+        return query
+
     @staticmethod
     def build_count_query(
         connector: DBConnector,
@@ -299,6 +409,21 @@ class QueryBuilder:
         """
         if isinstance(value, (int, float)):
             return str(value)
+        elif isinstance(value, bytes):
+            if db_type == 'sqlserver':
+                # MS SQL rowversion/timestamp is binary, needs 0x prefix
+                return f"0x{value.hex()}"
+            return f"'{value.hex()}'"
+        elif isinstance(value, datetime):
+            # Format datetime as ISO string for most DBs
+            formatted = value.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+            if db_type == 'postgres':
+                return f"'{formatted}'::timestamp"
+            elif db_type == 'clickhouse':
+                return f"toDateTime64('{formatted}', 3)"
+            elif db_type == 'sqlserver':
+                return f"'{formatted}'"
+            return f"'{formatted}'"
         elif isinstance(value, str):
             # Try to detect if it's a number string
             try:
@@ -310,11 +435,8 @@ class QueryBuilder:
                 if db_type == 'postgres':
                     return f"'{escaped}'::timestamp"
                 elif db_type == 'clickhouse':
-                    # ClickHouse uses toDateTime() for timestamp conversion
                     return f"toDateTime('{escaped}')"
                 elif db_type == 'oracle':
-                    # For Oracle we rely on implicit conversion based on column type;
-                    # avoid PostgreSQL-style casts or ClickHouse functions.
                     return f"'{escaped}'"
                 else:
                     return f"'{escaped}'"
