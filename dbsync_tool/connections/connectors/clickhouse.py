@@ -7,7 +7,8 @@ from .base import DBConnector, ColumnInfo
 from core.exceptions import DatabaseConnectionError, TableNotFoundError, DatabaseTimeoutError, DatabaseException, DatabaseQueryError
 from core.type_mapping import map_data_type
 from decimal import Decimal
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+import uuid
 import pandas as pd
 import logging
 
@@ -466,6 +467,13 @@ class ClickHouseConnector(DBConnector):
 
         if re.fullmatch(r'newid\s*(\(\s*\))?', lower) or re.fullmatch(r'newsequentialid\s*(\(\s*\))?', lower):
             return 'generateUUIDv4()'
+
+        # PostgreSQL UUID defaults (uuid-ossp extension or built-in gen_random_uuid)
+        if (
+            re.fullmatch(r'([\w]+\.)?uuid_generate_v4\s*(\(\s*\))?', lower)
+            or re.fullmatch(r'([\w]+\.)?gen_random_uuid\s*(\(\s*\))?', lower)
+        ):
+            return 'generateUUIDv4()'
         
         # Skip PostgreSQL sequence defaults (nextval(...) syntax)
         if 'nextval' in default_value.lower():
@@ -685,13 +693,13 @@ class ClickHouseConnector(DBConnector):
             # Handle datetime -> convert to string (YYYY-MM-DD HH:MM:SS)
             elif isinstance(value, datetime):
                 normalized.append(value.strftime('%Y-%m-%d %H:%M:%S'))
-            # Handle bytes -> convert to string (if possible) or keep as bytes
+            # Handle bytes -> convert to string (utf-8) or hex
             elif isinstance(value, bytes):
                 try:
                     normalized.append(value.decode('utf-8'))
                 except UnicodeDecodeError:
-                    # Keep as bytes, ClickHouse String can handle it as base64
-                    normalized.append(value)
+                    # Convert to hex string for ClickHouse String columns
+                    normalized.append(value.hex())
             # Handle boolean -> convert to int (0/1) for ClickHouse
             elif isinstance(value, bool):
                 normalized.append(1 if value else 0)
@@ -700,6 +708,31 @@ class ClickHouseConnector(DBConnector):
                 normalized.append(value)
         
         return tuple(normalized)
+
+    @staticmethod
+    def _coerce_uuid_for_clickhouse(value: Any) -> Any:
+        """
+        clickhouse-connect encodes UUID via hex parsing; hyphenated UUID strings
+        raise ValueError. Normalize to uuid.UUID (or pass through None).
+        """
+        if value is None:
+            return None
+        if isinstance(value, uuid.UUID):
+            return value
+        if isinstance(value, str):
+            s = value.strip()
+            if not s:
+                return value
+            try:
+                return uuid.UUID(s)
+            except ValueError:
+                return value
+        if isinstance(value, (bytes, bytearray)) and len(value) == 16:
+            try:
+                return uuid.UUID(bytes=bytes(value))
+            except ValueError:
+                return value
+        return value
     
     def _normalize_value(self, value: Any) -> Any:
         """
@@ -718,18 +751,23 @@ class ClickHouseConnector(DBConnector):
         # Handle datetime -> keep as datetime object (will be handled by column type check)
         elif isinstance(value, datetime):
             return value
-        # Handle bytes -> convert to string (if possible) or keep as bytes
+        # Handle bytes -> convert to string (utf-8) or hex
         elif isinstance(value, bytes):
             try:
                 return value.decode('utf-8')
             except UnicodeDecodeError:
-                # Keep as bytes, ClickHouse String can handle it as base64
-                return value
+                return value.hex()
         # Handle boolean -> convert to int (0/1) for ClickHouse
         elif isinstance(value, bool):
             return 1 if value else 0
-        # All other types (int, float, str, etc.) - pass through
+        # PostgreSQL interval and similar map to String on ClickHouse
+        elif isinstance(value, timedelta):
+            return str(value)
         else:
+            mod = getattr(type(value), "__module__", "") or ""
+            name = getattr(type(value), "__name__", "")
+            if mod.startswith("psycopg2") and name.endswith("Range"):
+                return str(value)
             return value
     
     def bulk_insert(self, schema: str, table: str, columns: List[str], rows: List[Tuple]):
@@ -744,6 +782,7 @@ class ClickHouseConnector(DBConnector):
             # Get actual column types from ClickHouse table schema
             # This ensures we coerce data to match the actual table types
             column_types = {}
+            column_nullable = {}
             try:
                 table_columns = self.get_columns(schema, table)
                 for col_info in table_columns:
@@ -755,14 +794,33 @@ class ClickHouseConnector(DBConnector):
                         if col_type.startswith('nullable(') and col_type.endswith(')'):
                             col_type = col_type[9:-1]  # Remove 'nullable(' and ')'
                         column_types[col_idx] = col_type
+                        column_nullable[col_idx] = bool(getattr(col_info, "is_nullable", False))
             except Exception as e:
                 logger.warning(f"Could not get column types for {schema}.{table}: {e}. Using data-based inference.")
                 # Fallback: detect string columns from data
                 column_types = {}
+                column_nullable = {}
                 for row in rows:
                     for idx, value in enumerate(row):
                         if isinstance(value, (str, bytes)) and idx not in column_types:
                             column_types[idx] = 'string'
+                            column_nullable[idx] = True
+
+            def _default_for_non_nullable(col_type: str):
+                t = (col_type or "").lower()
+                if 'string' in t or 'fixedstring' in t:
+                    return ''
+                if 'date' in t and 'datetime' not in t and 'timestamp' not in t:
+                    return date(1970, 1, 1)
+                if 'datetime' in t or 'timestamp' in t:
+                    return datetime(1970, 1, 1, 0, 0, 0)
+                if any(k in t for k in ['float', 'double', 'decimal']):
+                    return 0.0
+                if any(k in t for k in ['int', 'uint', 'bool']):
+                    return 0
+                if "uuid" in t:
+                    return uuid.UUID(int=0)
+                return ''
             
             # Coerce data to match column types BEFORE normalization
             # This ensures clickhouse-connect receives consistent types
@@ -771,12 +829,17 @@ class ClickHouseConnector(DBConnector):
                 coerced_values = []
                 for idx, value in enumerate(row):
                     if value is None:
-                        coerced_values.append(None)
+                        if column_nullable.get(idx, True):
+                            coerced_values.append(None)
+                        else:
+                            coerced_values.append(_default_for_non_nullable(column_types.get(idx, '')))
                     elif idx in column_types:
                         col_type = column_types[idx]
+                        if "uuid" in col_type:
+                            coerced_values.append(self._coerce_uuid_for_clickhouse(value))
                         # If column is String type, ensure ALL values are strings
                         # This is critical - clickhouse-connect's String type expects len() to work on all values
-                        if 'string' in col_type or 'fixedstring' in col_type:
+                        elif 'string' in col_type or 'fixedstring' in col_type:
                             if not isinstance(value, (str, bytes)):
                                 coerced_values.append(str(value))
                             else:
@@ -841,7 +904,10 @@ class ClickHouseConnector(DBConnector):
                         value = value.astimezone(timezone.utc).replace(tzinfo=None)
                     
                     if value is None:
-                        normalized.append(None)
+                        if column_nullable.get(idx, True):
+                            normalized.append(None)
+                        else:
+                            normalized.append(_default_for_non_nullable(column_types.get(idx, '')))
                     elif idx in column_types:
                         col_type = column_types[idx]
                         # For Date/DateTime columns, keep as date/datetime objects (NOT strings)
@@ -871,6 +937,8 @@ class ClickHouseConnector(DBConnector):
                                     normalized.append(value)
                             else:
                                 normalized.append(value)
+                        elif "uuid" in col_type:
+                            normalized.append(self._coerce_uuid_for_clickhouse(value))
                         elif 'datetime' in col_type or 'timestamp' in col_type:
                             # DateTime/Timestamp column - needs timezone-naive UTC datetime object
                             if isinstance(value, datetime):

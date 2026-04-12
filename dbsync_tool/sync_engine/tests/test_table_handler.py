@@ -49,6 +49,12 @@ class TestTableHandler(unittest.TestCase):
         self.source_connector.__class__.__name__ = 'OracleADWConnector'
         handler = TableHandler(self.source_connector, self.target_connector)
         self.assertEqual(handler.source_db_type, 'oracle')
+
+    def test_get_db_type_mongodb(self):
+        """Test database type detection for MongoDB"""
+        self.source_connector.__class__.__name__ = 'MongoDBConnector'
+        handler = TableHandler(self.source_connector, self.target_connector)
+        self.assertEqual(handler.source_db_type, 'mongodb')
     
     def test_ensure_schema_exists_success(self):
         """Test successful schema creation"""
@@ -73,6 +79,12 @@ class TestTableHandler(unittest.TestCase):
     def test_create_table_if_not_exists_table_exists(self):
         """Test table creation when table already exists"""
         self.target_connector.table_exists = Mock(return_value=True)
+        self.source_connector.get_columns = Mock(return_value=[
+            ColumnInfo('id', 'int4', False, True, None)
+        ])
+        self.target_connector.get_columns = Mock(return_value=[
+            ColumnInfo('id', 'INT', False, True, None)
+        ])
         result = self.handler.create_table_if_not_exists('schema', 'table')
         self.assertFalse(result)
         self.target_connector.create_table.assert_not_called()
@@ -95,6 +107,7 @@ class TestTableHandler(unittest.TestCase):
         clickhouse_connector = Mock()
         clickhouse_connector.__class__.__name__ = 'ClickHouseConnector'
         clickhouse_connector.ensure_schema_exists = Mock()
+        clickhouse_connector.database_name = None
         
         handler = TableHandler(self.source_connector, clickhouse_connector)
         handler.ensure_schema_exists('test_db')
@@ -108,6 +121,7 @@ class TestTableHandler(unittest.TestCase):
         clickhouse_connector.table_exists = Mock(return_value=False)
         clickhouse_connector.ensure_schema_exists = Mock()
         clickhouse_connector.create_table = Mock()
+        clickhouse_connector.database_name = None
         
         self.source_connector.get_columns = Mock(return_value=[
             ColumnInfo('id', 'int4', False, True, None)
@@ -162,6 +176,7 @@ class TestTableHandler(unittest.TestCase):
         target.table_exists = Mock(return_value=False)
         target.ensure_schema_exists = Mock()
         target.create_table = Mock()
+        target.username = ""
 
         handler = TableHandler(source, target)
         result = handler.create_table_if_not_exists('myschema', 'mytable')

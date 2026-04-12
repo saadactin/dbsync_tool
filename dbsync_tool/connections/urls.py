@@ -14,6 +14,7 @@ urlpatterns = [
 
     # Database connection URLs
     path('', views.ConnectionListView.as_view(), name='list'),
+    path('new/', views.ConnectionCreateHubView.as_view(), name='create_hub'),
     path('create/', views.ConnectionCreateView.as_view(), name='create'),
     path('<uuid:pk>/', views.ConnectionDetailView.as_view(), name='detail'),
     path('<uuid:pk>/edit/', views.ConnectionUpdateView.as_view(), name='update'),

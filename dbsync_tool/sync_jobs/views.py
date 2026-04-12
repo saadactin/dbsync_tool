@@ -1,9 +1,12 @@
 """
 Views for sync jobs
 """
+import json
 import logging
 import os
 import re
+from typing import Any, Dict, List, Optional
+
 from django.shortcuts import render, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
@@ -19,6 +22,47 @@ from metadata.services import load_all_metadata, load_table_columns
 from .models import SyncJob, SyncJobTable, SyncSchedule, SyncCheckpoint, SyncExecution, SyncExecutionLog
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_job_source_db_type(conn: Optional[DatabaseConnection]) -> str:
+    if not conn:
+        return ""
+    dbt = (getattr(conn, "db_type", "") or "").lower()
+    if dbt == "oracle_adw":
+        return "oracle"
+    return dbt
+
+
+def _wizard_table_key(table_info: Dict) -> str:
+    return f"{table_info['schema_name']}.{table_info['table_name']}"
+
+
+def _load_columns_for_mapping_step(
+    request,
+    *,
+    source_connection: Optional[DatabaseConnection],
+    source_connection_type: str,
+    table_info: Dict,
+    user,
+) -> List[Dict]:
+    """Database columns from metadata or synthetic outputs from transform plan."""
+    if source_connection_type != "database" or not source_connection:
+        return []
+    table_key = _wizard_table_key(table_info)
+    plans = request.session.get("sync_job_transform_plan") or {}
+    plan = plans.get(table_key)
+    if isinstance(plan, dict):
+        from sync_jobs.services.transform_plan_service import mapping_columns_from_plan
+
+        synthetic = mapping_columns_from_plan(plan)
+        if synthetic is not None:
+            return synthetic
+    return load_table_columns(
+        str(source_connection.id),
+        table_info["schema_name"],
+        table_info["table_name"],
+        user,
+    )
 
 
 def viewer_read_only_required(view_func):
@@ -861,9 +905,33 @@ def create_job_step2_submit(request):
         except:
             request.session['sync_job_table_transformations'] = {}
         
-        # Redirect to step 3 (data type mapping preview)
+        # Clear model-step state when selection changes
+        request.session.pop('sync_job_transform_plan', None)
+        request.session.pop('sync_job_transform_validated', None)
+        request.session.pop('sync_job_transform_preview_cache', None)
+
+        # Redirect to step 3 model (join/union/lookup), then mapping
         messages.success(request, f'Selected {len(tables)} table(s).')
-        return redirect('sync_jobs:create_step3')
+        # MongoDB is document-based; skip model (SQL join/union/lookup) step.
+        try:
+            from accounts.services.tenant_service import TenantService
+            src_id = request.session.get('sync_job_source_connection_id')
+            if src_id:
+                src_qs = DatabaseConnection.objects.filter(is_active=True)
+                user_src = TenantService.get_queryset_for_user(src_qs, request.user)
+                src_conn = user_src.get(id=src_id)
+                if getattr(src_conn, 'db_type', None) == 'mongodb':
+                    request.session['sync_job_skip_model_step'] = True
+                    request.session.pop('sync_job_transform_validated', None)
+                    request.session.modified = True
+                    return redirect('sync_jobs:create_step3')
+        except Exception:
+            # Fail open to existing flow if anything goes wrong here.
+            pass
+
+        request.session['sync_job_skip_model_step'] = False
+        request.session.modified = True
+        return redirect('sync_jobs:create_step3_model')
     else:
         source_file_connection_id = request.session.get('sync_job_source_file_connection_id')
         if not source_file_connection_id:
@@ -899,6 +967,448 @@ def create_job_step2_submit(request):
 
 
 @login_required
+def create_job_step3_model_view(request):
+    """
+    Step 3a: Model data (single table / join / union / lookup) for database sources.
+    """
+    job_name = request.session.get("sync_job_name")
+    source_connection_type = request.session.get("sync_job_source_connection_type", "database")
+    source_connection_id = request.session.get("sync_job_source_connection_id")
+    target_connection_id = request.session.get("sync_job_target_connection_id")
+    selected_tables = request.session.get("sync_job_selected_tables", [])
+
+    # Defensive: the UI should never render duplicate plan cards.
+    # Some navigation flows can accidentally duplicate session entries, so
+    # we dedupe by schema+table here (and write back to the session).
+    def _dedupe_selected_tables(tables):
+        out = []
+        seen = set()
+        for t in (tables or []):
+            if not isinstance(t, dict):
+                continue
+            schema_name = (t.get("schema_name") or "").strip()
+            table_name = (t.get("table_name") or "").strip()
+            if not schema_name or not table_name:
+                continue
+            key = f"{schema_name.lower()}.{table_name.lower()}"
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"schema_name": schema_name, "table_name": table_name})
+        return out
+
+    selected_tables = _dedupe_selected_tables(selected_tables)
+    request.session["sync_job_selected_tables"] = selected_tables
+    request.session.modified = True
+
+    if source_connection_type == "api":
+        return redirect("sync_jobs:create_step4")
+    if source_connection_type == "flat_file":
+        messages.info(request, "Model Data step applies to database sources only. Continuing to column mapping.")
+        return redirect("sync_jobs:create_step3")
+    if not all([job_name, source_connection_id, target_connection_id, selected_tables]):
+        messages.error(request, "Please complete previous steps first.")
+        return redirect("sync_jobs:create_step1")
+
+    from accounts.services.tenant_service import TenantService
+    from sync_jobs.services.transform_plan_service import ensure_default_plans
+
+    try:
+        src_qs = DatabaseConnection.objects.filter(is_active=True)
+        user_src = TenantService.get_queryset_for_user(src_qs, request.user)
+        source_connection = user_src.get(id=source_connection_id)
+    except DatabaseConnection.DoesNotExist:
+        messages.error(request, "Source connection not found.")
+        return redirect("sync_jobs:create_step1")
+
+    if getattr(source_connection, "db_type", None) == "mongodb":
+        messages.info(
+            request,
+            "Model Data step is not available for MongoDB sources. Continuing to column mapping.",
+        )
+        request.session['sync_job_skip_model_step'] = True
+        request.session.pop('sync_job_transform_validated', None)
+        request.session.modified = True
+        return redirect("sync_jobs:create_step3")
+    try:
+        tgt_qs = DatabaseConnection.objects.filter(is_active=True)
+        user_tgt = TenantService.get_queryset_for_user(tgt_qs, request.user)
+        target_connection = user_tgt.get(id=target_connection_id)
+    except DatabaseConnection.DoesNotExist:
+        messages.error(request, "Target connection not found.")
+        return redirect("sync_jobs:create_step1")
+
+    internal_src_type = _normalize_job_source_db_type(source_connection)
+    existing = request.session.get("sync_job_transform_plan")
+    if not isinstance(existing, dict):
+        existing = {}
+    transform_plans = ensure_default_plans(selected_tables, internal_src_type, existing)
+    request.session["sync_job_transform_plan"] = transform_plans
+    request.session.modified = True
+
+    context = {
+        "job_name": job_name,
+        "source_connection": source_connection,
+        "target_connection": target_connection,
+        "selected_tables": selected_tables,
+        "transform_plans": transform_plans,
+        "source_db_type": internal_src_type,
+        "allow_custom_sql": bool(
+            getattr(getattr(request.user, "userprofile", None), "is_admin", lambda: False)()
+            or getattr(getattr(request.user, "userprofile", None), "is_super_admin", lambda: False)()
+            or getattr(request.user, "is_staff", False)
+        ),
+        "page_title": "Model Data - Step 3",
+    }
+    return render(request, "sync_jobs/create_step3_model.html", context)
+
+
+def _user_can_use_custom_sql(user) -> bool:
+    profile = getattr(user, "userprofile", None)
+    if profile is not None:
+        if callable(getattr(profile, "is_admin", None)) and profile.is_admin():
+            return True
+        if callable(getattr(profile, "is_super_admin", None)) and profile.is_super_admin():
+            return True
+    return bool(getattr(user, "is_staff", False))
+
+
+@login_required
+@viewer_read_only_required
+def create_job_step3_model_preview(request):
+    """Bounded SELECT preview for transform plan (AJAX JSON)."""
+    if request.method != "POST":
+        return JsonResponse(
+            {"ok": False, "error_code": "method_not_allowed", "message": "POST required."},
+            status=405,
+        )
+
+    job_name = request.session.get("sync_job_name")
+    source_connection_type = request.session.get("sync_job_source_connection_type", "database")
+    source_connection_id = request.session.get("sync_job_source_connection_id")
+    selected_tables = request.session.get("sync_job_selected_tables", [])
+
+    if source_connection_type != "database":
+        return JsonResponse(
+            {
+                "ok": False,
+                "error_code": "unsupported_source",
+                "message": "Preview is only available for database sources.",
+            },
+            status=400,
+        )
+    if not all([job_name, source_connection_id, selected_tables]):
+        return JsonResponse(
+            {"ok": False, "error_code": "session_invalid", "message": "Session incomplete. Restart the wizard."},
+            status=401,
+        )
+
+    try:
+        body = json.loads(request.body.decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse(
+            {"ok": False, "error_code": "invalid_json", "message": "Invalid JSON body."},
+            status=400,
+        )
+
+    table_key = (body.get("table_key") or "").strip()
+    plan = body.get("plan")
+    if not table_key or not isinstance(plan, dict):
+        return JsonResponse(
+            {"ok": False, "error_code": "invalid_payload", "message": "table_key and plan are required."},
+            status=400,
+        )
+
+    allowed = {_wizard_table_key(t) for t in selected_tables}
+    if table_key not in allowed:
+        return JsonResponse(
+            {"ok": False, "error_code": "unknown_table", "message": "Table is not part of this job."},
+            status=400,
+        )
+
+    from accounts.services.tenant_service import TenantService
+    from connections.connectors import get_connector
+    from sync_jobs.services.transform_plan_service import (
+        TransformPlanValidationError,
+        builder_to_transform_plan,
+        compile_preview_select,
+        execute_preview_query,
+        validate_transform_plan_column_references,
+        validate_transform_plan,
+        validate_custom_sql_preview,
+    )
+
+    try:
+        src_qs = DatabaseConnection.objects.filter(is_active=True)
+        user_src = TenantService.get_queryset_for_user(src_qs, request.user)
+        source_connection = user_src.get(id=source_connection_id)
+    except DatabaseConnection.DoesNotExist:
+        return JsonResponse(
+            {"ok": False, "error_code": "connection_not_found", "message": "Source connection not found."},
+            status=404,
+        )
+
+    src_type = _normalize_job_source_db_type(source_connection)
+    builder_payload = body.get("builder_payload")
+    try:
+        if isinstance(builder_payload, dict):
+            normalized = builder_to_transform_plan(
+                builder_payload,
+                plan_table_key=table_key,
+                allowed_table_keys=allowed,
+                source_db_type=source_connection.db_type,
+                allow_custom_sql=_user_can_use_custom_sql(request.user),
+            )
+        else:
+            normalized = validate_transform_plan(
+                plan,
+                plan_table_key=table_key,
+                allowed_table_keys=allowed,
+                source_db_type=source_connection.db_type,
+            )
+    except TransformPlanValidationError as e:
+        return JsonResponse(
+            {"ok": False, "error_code": e.error_code, "message": e.message},
+            status=400,
+        )
+
+    connector = None
+    try:
+        connector = get_connector(
+            db_type=source_connection.db_type,
+            host=source_connection.host,
+            port=source_connection.port,
+            username=source_connection.username,
+            password=source_connection.get_decrypted_password(),
+            database_name=source_connection.database_name,
+        )
+        connector.connect()
+        custom_sql = normalized.get("_custom_sql_preview_only")
+        warnings = []
+        if custom_sql:
+            if not _user_can_use_custom_sql(request.user):
+                raise TransformPlanValidationError(
+                    "custom_sql mode is admin-only.",
+                    "custom_sql_not_allowed",
+                )
+            sql = validate_custom_sql_preview(str(custom_sql))
+        else:
+            validate_transform_plan_column_references(normalized, connector)
+            sql, warnings = compile_preview_select(normalized, limit=50)
+        columns, rows = execute_preview_query(connector, sql, max_rows=50)
+        return JsonResponse(
+            {
+                "ok": True,
+                "generated_sql": sql,
+                "columns": columns,
+                "preview_rows": rows,
+                "warnings": warnings,
+                "source_db_type": src_type,
+            }
+        )
+    except TransformPlanValidationError as e:
+        return JsonResponse(
+            {"ok": False, "error_code": e.error_code, "message": e.message},
+            status=400,
+        )
+    except Exception as e:
+        logger.exception("Transform preview failed for %s: %s", table_key, e)
+        safe_msg = "Preview query failed."
+        if getattr(request, "user", None) and request.user.is_staff:
+            safe_msg = f"Preview query failed: {str(e)}"
+        return JsonResponse(
+            {"ok": False, "error_code": "preview_failed", "message": safe_msg},
+            status=500,
+        )
+    finally:
+        if connector and hasattr(connector, "close"):
+            try:
+                connector.close()
+            except Exception:
+                pass
+
+
+@login_required
+@viewer_read_only_required
+def create_job_step3_model_submit(request):
+    """Validate and store transform plans; continue to column mapping."""
+    if request.method != "POST":
+        return redirect("sync_jobs:create_step3_model")
+
+    job_name = request.session.get("sync_job_name")
+    source_connection_type = request.session.get("sync_job_source_connection_type", "database")
+    source_connection_id = request.session.get("sync_job_source_connection_id")
+    target_connection_id = request.session.get("sync_job_target_connection_id")
+    selected_tables = request.session.get("sync_job_selected_tables", [])
+
+    if source_connection_type != "database":
+        messages.error(request, "Invalid step for this source type.")
+        return redirect("sync_jobs:create_step1")
+    if not all([job_name, source_connection_id, target_connection_id, selected_tables]):
+        messages.error(request, "Please complete previous steps first.")
+        return redirect("sync_jobs:create_step1")
+
+    raw = (request.POST.get("transform_plans_json") or "").strip()
+    try:
+        posted = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        messages.error(request, "Invalid transform plan JSON.")
+        return redirect("sync_jobs:create_step3_model")
+
+    if not isinstance(posted, dict):
+        messages.error(request, "Transform plans must be a JSON object keyed by schema.table.")
+        return redirect("sync_jobs:create_step3_model")
+
+    from accounts.services.tenant_service import TenantService
+    from sync_jobs.services.transform_plan_service import (
+        TransformPlanValidationError,
+        builder_to_transform_plan,
+        ensure_default_plans,
+        validate_transform_plan,
+        validate_transform_plan_column_references,
+    )
+
+    try:
+        src_qs = DatabaseConnection.objects.filter(is_active=True)
+        user_src = TenantService.get_queryset_for_user(src_qs, request.user)
+        source_connection = user_src.get(id=source_connection_id)
+    except DatabaseConnection.DoesNotExist:
+        messages.error(request, "Source connection not found.")
+        return redirect("sync_jobs:create_step1")
+
+    internal = _normalize_job_source_db_type(source_connection)
+    allowed = {_wizard_table_key(t) for t in selected_tables}
+    merged = ensure_default_plans(selected_tables, internal, posted)
+    builder_by_table = {}
+    builder_raw = request.POST.get("transform_builder_json")
+    if builder_raw:
+        try:
+            maybe_builder = json.loads(builder_raw)
+            if isinstance(maybe_builder, dict):
+                builder_by_table = maybe_builder
+        except json.JSONDecodeError:
+            messages.error(request, "Invalid builder payload JSON.")
+            return redirect("sync_jobs:create_step3_model")
+    cleaned: Dict[str, Any] = {}
+    errors = []
+    for t in selected_tables:
+        tk = _wizard_table_key(t)
+        plan = merged.get(tk)
+        if not isinstance(plan, dict):
+            errors.append(f"Missing plan for {tk}")
+            continue
+        try:
+            if isinstance(builder_by_table.get(tk), dict):
+                cleaned[tk] = builder_to_transform_plan(
+                    builder_by_table.get(tk),
+                    plan_table_key=tk,
+                    allowed_table_keys=allowed,
+                    source_db_type=source_connection.db_type,
+                    allow_custom_sql=_user_can_use_custom_sql(request.user),
+                )
+            else:
+                cleaned[tk] = validate_transform_plan(
+                    plan,
+                    plan_table_key=tk,
+                    allowed_table_keys=allowed,
+                    source_db_type=source_connection.db_type,
+                )
+        except TransformPlanValidationError as e:
+            errors.append(f"{tk}: {e.message}")
+
+    if errors:
+        messages.error(request, " ; ".join(errors))
+        return redirect("sync_jobs:create_step3_model")
+
+    # Fail fast: validate that transform-plan column references exist in the source DB.
+    # This prevents runtime SQL errors like "Invalid column name ..." during sync.
+    connector = None
+    try:
+        from connections.connectors import get_connector
+
+        connector = get_connector(
+            db_type=source_connection.db_type,
+            host=source_connection.host,
+            port=source_connection.port,
+            username=source_connection.username,
+            password=source_connection.get_decrypted_password(),
+            database_name=source_connection.database_name,
+        )
+        connector.connect()
+
+        for tk, plan_for_table in cleaned.items():
+            if plan_for_table.get("_custom_sql_preview_only"):
+                continue
+            validate_transform_plan_column_references(plan_for_table, connector)
+    except TransformPlanValidationError as e:
+        messages.error(request, f"[{e.error_code}] {e.message}")
+        return redirect("sync_jobs:create_step3_model")
+    finally:
+        if connector and hasattr(connector, "close"):
+            try:
+                connector.close()
+            except Exception:
+                pass
+
+    request.session["sync_job_transform_plan"] = cleaned
+    if builder_by_table:
+        request.session["sync_job_transform_builder"] = builder_by_table
+    request.session["sync_job_transform_validated"] = True
+    request.session.modified = True
+    messages.success(request, "Model configuration saved. Review column mapping next.")
+    return redirect("sync_jobs:create_step3")
+
+
+@login_required
+@require_http_methods(["GET"])
+def create_job_step3_model_builder_metadata(request):
+    """Return selected table columns and join-key suggestions for Step 3 builder UI."""
+    source_connection_id = request.session.get("sync_job_source_connection_id")
+    selected_tables = request.session.get("sync_job_selected_tables", [])
+    if not source_connection_id or not selected_tables:
+        return JsonResponse({"ok": False, "message": "Session incomplete."}, status=400)
+
+    from accounts.services.tenant_service import TenantService
+    from sync_jobs.services.transform_plan_service import suggest_join_keys
+
+    try:
+        src_qs = DatabaseConnection.objects.filter(is_active=True)
+        user_src = TenantService.get_queryset_for_user(src_qs, request.user)
+        source_connection = user_src.get(id=source_connection_id)
+    except DatabaseConnection.DoesNotExist:
+        return JsonResponse({"ok": False, "message": "Source connection not found."}, status=404)
+
+    by_table: Dict[str, Any] = {}
+    for t in selected_tables:
+        schema_name = t.get("schema_name")
+        table_name = t.get("table_name")
+        if not schema_name or not table_name:
+            continue
+        key = f"{schema_name}.{table_name}"
+        try:
+            cols = load_table_columns(str(source_connection.id), schema_name, table_name, request.user) or []
+        except Exception:
+            cols = []
+        col_names = [str(c.get("name") or c.get("column_name") or "").strip() for c in cols]
+        col_names = [c for c in col_names if c]
+        by_table[key] = {"columns": col_names}
+
+    keys = sorted(by_table.keys(), key=lambda s: s.lower())
+    suggestions: Dict[str, Any] = {}
+    for lk in keys:
+        for rk in keys:
+            if lk == rk:
+                continue
+            s_key = f"{lk}__{rk}"
+            suggestions[s_key] = suggest_join_keys(
+                by_table.get(lk, {}).get("columns", []),
+                by_table.get(rk, {}).get("columns", []),
+            )
+
+    return JsonResponse({"ok": True, "tables": by_table, "join_suggestions": suggestions})
+
+
+@login_required
 def create_job_step3_mapping_view(request):
     """
     Step 3: Data type mapping preview for database-to-database sync jobs.
@@ -913,6 +1423,29 @@ def create_job_step3_mapping_view(request):
     target_connection_id = request.session.get('sync_job_target_connection_id')
     selected_tables = request.session.get('sync_job_selected_tables', [])
 
+    # Defensive: avoid duplicate mapping/plan blocks if session contains dupes.
+    # This mirrors create_job_step3_model_view dedupe logic.
+    def _dedupe_selected_tables(tables):
+        out = []
+        seen = set()
+        for t in (tables or []):
+            if not isinstance(t, dict):
+                continue
+            schema_name = (t.get("schema_name") or "").strip()
+            table_name = (t.get("table_name") or "").strip()
+            if not schema_name or not table_name:
+                continue
+            key = f"{schema_name.lower()}.{table_name.lower()}"
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"schema_name": schema_name, "table_name": table_name})
+        return out
+
+    selected_tables = _dedupe_selected_tables(selected_tables)
+    request.session["sync_job_selected_tables"] = selected_tables
+    request.session.modified = True
+
     if source_connection_type == 'api':
         return redirect('sync_jobs:create_step4')
 
@@ -923,6 +1456,18 @@ def create_job_step3_mapping_view(request):
     if source_connection_type == 'flat_file' and not all([job_name, source_file_connection_id, target_connection_id, selected_tables]):
         messages.error(request, 'Please complete previous steps first.')
         return redirect('sync_jobs:create_step1')
+
+    if (
+        source_connection_type == 'database'
+        and not request.session.get('sync_job_skip_model_step')
+        and not request.session.get(
+        "sync_job_transform_validated"
+        )
+    ):
+        messages.info(
+            request, "Configure how source tables are combined, then continue to column mapping."
+        )
+        return redirect("sync_jobs:create_step3_model")
 
     from accounts.services.tenant_service import TenantService
 
@@ -968,6 +1513,7 @@ def create_job_step3_mapping_view(request):
 
     source_db_type = _normalize_db_type(source_connection) if source_connection else "flat_file"
     target_db_type = _normalize_db_type(target_connection)
+    is_mongo_source = source_connection_type == "database" and source_db_type == "mongodb"
 
     def compute_allowed_types(src_db: str, tgt_db: str, src_type: str):
         """
@@ -1110,11 +1656,12 @@ def create_job_step3_mapping_view(request):
                 return redirect('sync_jobs:create_step2')
         else:
             try:
-                columns = load_table_columns(
-                    str(source_connection.id),
-                    schema_name,
-                    table_name,
-                    request.user
+                columns = _load_columns_for_mapping_step(
+                    request,
+                    source_connection=source_connection,
+                    source_connection_type=source_connection_type,
+                    table_info=table_info,
+                    user=request.user,
                 )
             except Exception as e:
                 logger.warning("Failed to load columns for %s: %s", table_key, e)
@@ -1224,7 +1771,8 @@ def create_job_step3_mapping_view(request):
         'target_connection': target_connection,
         'selected_tables': selected_tables,
         'table_mappings': table_mappings,
-        'page_title': 'Review Data Type Mapping - Step 3',
+        'page_title': 'Review Data Type Mapping - Step 4',
+        'is_mongo_source': is_mongo_source,
     }
 
     return render(request, 'sync_jobs/create_step3_mapping.html', context)
@@ -1256,6 +1804,13 @@ def create_job_step3_mapping_submit(request):
     if source_connection_type == 'flat_file' and not all([job_name, source_file_connection_id, target_connection_id, selected_tables]):
         messages.error(request, 'Please complete previous steps first.')
         return redirect('sync_jobs:create_step1')
+    if (
+        source_connection_type == 'database'
+        and not request.session.get('sync_job_skip_model_step')
+        and not request.session.get('sync_job_transform_validated')
+    ):
+        messages.error(request, 'Complete the Model Data step first.')
+        return redirect('sync_jobs:create_step3_model')
 
     from accounts.services.tenant_service import TenantService
     from core.type_mapping import normalize_data_type, map_source_to_oracle_type
@@ -1296,6 +1851,7 @@ def create_job_step3_mapping_submit(request):
 
     source_db_type = _normalize_db_type(source_connection) if source_connection else "flat_file"
     target_db_type = _normalize_db_type(target_connection)
+    is_mongo_source = source_connection_type == "database" and source_db_type == "mongodb"
 
     def compute_allowed_types(src_db: str, tgt_db: str, src_type: str):
         t = (src_type or "").upper()
@@ -1405,35 +1961,39 @@ def create_job_step3_mapping_submit(request):
             ]
         else:
             try:
-                columns = load_table_columns(
-                    str(source_connection.id),
-                    schema_name,
-                    table_name,
-                    request.user
+                columns = _load_columns_for_mapping_step(
+                    request,
+                    source_connection=source_connection,
+                    source_connection_type=source_connection_type,
+                    table_info=table_info,
+                    user=request.user,
                 )
             except Exception as e:
                 logger.warning("Failed to load columns for %s when saving overrides: %s", table_key, e)
                 continue
 
-        for col in columns:
-            src_name = col.get('name') or col.get('column_name')
-            src_type = col.get('data_type', '')
-            field_name = f"override_type_{table_key}.{src_name}"
-            chosen = (request.POST.get(field_name, "") or "").strip()
-            if not chosen:
-                continue
+        # For MongoDB sources, the "type override" UI is hidden (inferred logical types
+        # are mapped via core.type_mapping at runtime). Ignore any posted override_type_*.
+        if not is_mongo_source:
+            for col in columns:
+                src_name = col.get('name') or col.get('column_name')
+                src_type = col.get('data_type', '')
+                field_name = f"override_type_{table_key}.{src_name}"
+                chosen = (request.POST.get(field_name, "") or "").strip()
+                if not chosen:
+                    continue
 
-            allowed = compute_allowed_types(source_db_type, target_db_type, src_type)
-            # If mapping view had augmented allowed list (e.g. default), also accept that
-            if src_type and src_type not in allowed:
-                allowed.append(src_type)
+                allowed = compute_allowed_types(source_db_type, target_db_type, src_type)
+                # If mapping view had augmented allowed list (e.g. default), also accept that
+                if src_type and src_type not in allowed:
+                    allowed.append(src_type)
 
-            if chosen not in allowed:
-                errors.append(f"Invalid type '{chosen}' for {table_key}.{src_name}")
-                continue
+                if chosen not in allowed:
+                    errors.append(f"Invalid type '{chosen}' for {table_key}.{src_name}")
+                    continue
 
-            col_key = (src_name or "").lower()
-            overrides.setdefault(table_key, {})[col_key] = chosen
+                col_key = (src_name or "").lower()
+                overrides.setdefault(table_key, {})[col_key] = chosen
 
         # Parse target column name overrides (Step 3 rename).
         pk_columns = []
@@ -1574,6 +2134,11 @@ def create_job_step4_view(request):
     source_file_connection_id = request.session.get('sync_job_source_file_connection_id')
     target_connection_id = request.session.get('sync_job_target_connection_id')
     selected_tables = request.session.get('sync_job_selected_tables', [])
+    flat_file_headers = request.session.get('sync_job_flat_file_headers', []) or []
+    ff_mode_defaults = request.session.get('sync_job_flat_file_incremental_mode', {}) or {}
+    ff_hash_cols_defaults = request.session.get('sync_job_flat_file_hash_columns', {}) or {}
+    ff_hash_algo_defaults = request.session.get('sync_job_flat_file_hash_algorithm', {}) or {}
+    ff_hash_only_defaults = request.session.get('sync_job_flat_file_allow_hash_only_without_key', {}) or {}
     
     # Validate session data based on source type
     if source_connection_type == 'api':
@@ -1584,6 +2149,12 @@ def create_job_step4_view(request):
         if not all([job_name, source_connection_id, target_connection_id, selected_tables]):
             messages.error(request, 'Please complete previous steps first.')
             return redirect('sync_jobs:create_step1')
+        if (
+            not request.session.get('sync_job_skip_model_step')
+            and not request.session.get('sync_job_transform_validated')
+        ):
+            messages.info(request, 'Complete the Model Data step before scheduling.')
+            return redirect('sync_jobs:create_step3_model')
     else:
         if not all([job_name, source_file_connection_id, target_connection_id, selected_tables]):
             messages.error(request, 'Please complete previous steps first.')
@@ -1623,11 +2194,12 @@ def create_job_step4_view(request):
                 schema_name = table_info.get('schema_name')
                 table_name = table_info.get('table_name')
                 try:
-                    columns = load_table_columns(
-                        str(source_connection.id),
-                        schema_name,
-                        table_name,
-                        request.user
+                    columns = _load_columns_for_mapping_step(
+                        request,
+                        source_connection=source_connection,
+                        source_connection_type=source_connection_type,
+                        table_info=table_info,
+                        user=request.user,
                     )
                     # Filter to date/timestamp columns and integer columns (for incremental sync)
                     # Supports: PostgreSQL, MySQL, SQL Server, and ClickHouse types
@@ -1673,8 +2245,13 @@ def create_job_step4_view(request):
         'source_file_connection': source_file_connection,
         'selected_tables': selected_tables,
         'table_columns': table_columns,
+        'flat_file_headers': flat_file_headers,
+        'flat_file_incremental_mode_defaults': ff_mode_defaults,
+        'flat_file_hash_columns_defaults': ff_hash_cols_defaults,
+        'flat_file_hash_algorithm_defaults': ff_hash_algo_defaults,
+        'flat_file_allow_hash_only_defaults': ff_hash_only_defaults,
         'is_sap': is_sap,
-        'page_title': 'Configure Sync - Step 4',
+        'page_title': 'Configure Sync - Step 5',
     }
     
     return render(request, 'sync_jobs/create_step3.html', context)
@@ -1707,6 +2284,12 @@ def create_job_step4_submit(request):
         if not all([job_name, source_connection_id, target_connection_id, selected_tables]):
             messages.error(request, 'Session expired. Please start over.')
             return redirect('sync_jobs:create_step1')
+        if (
+            not request.session.get('sync_job_skip_model_step')
+            and not request.session.get('sync_job_transform_validated')
+        ):
+            messages.error(request, 'Complete the Model Data step first.')
+            return redirect('sync_jobs:create_step3_model')
     else:
         if not all([job_name, source_file_connection_id, target_connection_id, selected_tables]):
             messages.error(request, 'Session expired. Please start over.')
@@ -1721,9 +2304,46 @@ def create_job_step4_submit(request):
     start_time = request.POST.get('start_time', '').strip()
     interval_hours_raw = request.POST.get('interval_hours', '').strip()
     target_table_prefix = request.POST.get('target_table_prefix', '').strip()
+    overlap_seconds_raw = request.POST.get('incremental_overlap_seconds', '').strip()
+    no_delete_raw = request.POST.get('no_delete_propagation', None)
+    flat_file_mode_posted = {}
+    flat_file_hash_cols_posted = {}
+    flat_file_hash_algo_posted = {}
+    # Backward-compatible default when UI control is absent.
+    no_delete_propagation = True if no_delete_raw is None else str(no_delete_raw).lower() in (
+        '1', 'true', 'yes', 'on'
+    )
     
     # Enhanced validation
     errors = []
+
+    # Parse flat-file hybrid incremental options (per table).
+    if source_connection_type == 'flat_file':
+        for t in selected_tables:
+            tk = f"{t.get('schema_name')}.{t.get('table_name')}"
+            mode_val = (request.POST.get(f"flat_file_incremental_mode_{tk}", "") or "").strip()
+            if mode_val not in ("", "hybrid_hash_control"):
+                errors.append(f"Invalid flat-file incremental mode for {tk}: {mode_val}")
+                continue
+            if not mode_val:
+                mode_val = "hybrid_hash_control"
+            flat_file_mode_posted[tk] = mode_val
+
+            algo_val = (request.POST.get(f"flat_file_hash_algorithm_{tk}", "") or "").strip().lower()
+            if not algo_val:
+                algo_val = "sha256"
+            if algo_val not in ("md5", "sha1", "sha256", "sha512"):
+                errors.append(f"Invalid flat-file hash algorithm for {tk}: {algo_val}")
+            flat_file_hash_algo_posted[tk] = algo_val
+
+            cols_raw = (request.POST.get(f"flat_file_hash_columns_{tk}", "") or "").strip()
+            parsed_cols = []
+            if cols_raw:
+                for c in cols_raw.split(","):
+                    cs = (c or "").strip()
+                    if cs:
+                        parsed_cols.append(cs)
+            flat_file_hash_cols_posted[tk] = parsed_cols
     
     # Target table prefix validation (optional; if provided: alphanumeric + underscore only, max 64)
     if target_table_prefix:
@@ -1738,8 +2358,10 @@ def create_job_step4_submit(request):
         sync_type = validate_sync_type(sync_type)
     except ValidationError as e:
         errors.extend(e.messages if hasattr(e, 'messages') else [str(e)])
-    if source_connection_type == 'flat_file' and sync_type == 'incremental':
-        errors.append('Flat-file source currently supports full sync only.')
+    if source_connection_type == 'database' and sync_type == 'incremental' and not no_delete_propagation:
+        errors.append('Incremental database sync requires no-delete propagation policy to be enabled.')
+    if source_connection_type == 'flat_file' and sync_type == 'incremental' and not no_delete_propagation:
+        errors.append('Incremental flat-file sync requires no-delete propagation policy to be enabled.')
     
     # Schedule type validation
     try:
@@ -1753,6 +2375,14 @@ def create_job_step4_submit(request):
         try:
             from sync_jobs.validators import validate_interval_hours
             interval_hours_val = validate_interval_hours(interval_hours_raw, schedule_type)
+        except ValidationError as e:
+            errors.extend(e.messages if hasattr(e, 'messages') else [str(e)])
+
+    overlap_seconds_val = 120
+    if not errors and source_connection_type in ('database', 'flat_file') and sync_type == 'incremental':
+        try:
+            from sync_jobs.validators import validate_incremental_overlap_seconds
+            overlap_seconds_val = validate_incremental_overlap_seconds(overlap_seconds_raw)
         except ValidationError as e:
             errors.extend(e.messages if hasattr(e, 'messages') else [str(e)])
     
@@ -1778,11 +2408,41 @@ def create_job_step4_submit(request):
     
     # Incremental columns are auto-resolved at execution time for database sources.
     incremental_columns = {}
+
+    # Source-type-specific incremental contract checks (Day 1 scoped).
+    if source_connection_type == 'database' and sync_type == 'incremental':
+        plans = request.session.get('sync_job_transform_plan') or {}
+        for t in selected_tables:
+            tk = f"{t.get('schema_name')}.{t.get('table_name')}"
+            p = plans.get(tk)
+            if not isinstance(p, dict):
+                continue
+            mode = (p.get('mode') or 'single_table').strip().lower()
+            if mode == 'union':
+                errors.append(
+                    f"Incremental contract rejected for {tk}: UNION model transforms are not supported in incremental mode."
+                )
+    if source_connection_type == 'flat_file' and sync_type == 'incremental':
+        protected_by_table = request.session.get('sync_job_protected_columns', {}) or {}
+        for t in selected_tables:
+            tk = f"{t.get('schema_name')}.{t.get('table_name')}"
+            stable_keys = protected_by_table.get(tk) or []
+            has_stable_keys = isinstance(stable_keys, (list, tuple)) and bool(
+                [k for k in stable_keys if str(k).strip()]
+            )
+            if not has_stable_keys:
+                errors.append(
+                    f"Incremental contract rejected for {tk}: select at least one Protected column "
+                    f"to use as stable upsert key."
+                )
     
     if errors:
         for error in errors:
             messages.error(request, error)
         # Validation errors return user to Step 4 (configure) to fix inputs
+        request.session['sync_job_flat_file_incremental_mode'] = flat_file_mode_posted
+        request.session['sync_job_flat_file_hash_columns'] = flat_file_hash_cols_posted
+        request.session['sync_job_flat_file_hash_algorithm'] = flat_file_hash_algo_posted
         return redirect('sync_jobs:create_step4')
     
     try:
@@ -1795,21 +2455,19 @@ def create_job_step4_submit(request):
         target_connection = user_db_conns.get(id=target_connection_id)
         
         # Source connection depends on type
+        source_connection = None
+        source_api_connection = None
+        source_file_connection = None
         if source_connection_type == 'api':
             api_qs = APIConnection.objects.filter(is_active=True)
             user_api_conns = TenantService.get_queryset_for_user(api_qs, request.user)
             source_api_connection = user_api_conns.get(id=source_api_connection_id)
-            source_connection = None
         elif source_connection_type == 'database':
             source_connection = user_db_conns.get(id=source_connection_id)
-            source_api_connection = None
-            source_file_connection = None
         else:
             file_qs = FileSourceConnection.objects.filter(is_active=True)
             user_file_conns = TenantService.get_queryset_for_user(file_qs, request.user)
             source_file_connection = user_file_conns.get(id=source_file_connection_id)
-            source_connection = None
-            source_api_connection = None
         
         # Calculate next_run_at based on schedule
         next_run_at = None
@@ -1847,6 +2505,8 @@ def create_job_step4_submit(request):
             source_connection_type=source_connection_type,
             target_connection=target_connection,
             sync_type=sync_type,
+            no_delete_propagation=no_delete_propagation,
+            incremental_overlap_seconds=overlap_seconds_val,
             status='pending',
             created_by=request.user,
             tenant=tenant,
@@ -1862,11 +2522,13 @@ def create_job_step4_submit(request):
         name_overrides_by_table = request.session.get('sync_job_column_name_overrides', {}) or {}
         excluded_by_table = request.session.get('sync_job_excluded_columns', {}) or {}
         protected_by_table = request.session.get('sync_job_protected_columns', {}) or {}
+        transform_plans_by_table = request.session.get('sync_job_transform_plan') or {}
         for table_info in selected_tables:
             table_key = f"{table_info['schema_name']}.{table_info['table_name']}"
             
             # Incremental column is auto-resolved at runtime (DB) or API-driven (API).
             incremental_column = None
+            incremental_key_columns = []
             
             # Get transformation data for this table (only for database sources)
             transformation_query = None
@@ -1886,6 +2548,19 @@ def create_job_step4_submit(request):
                     transformation_query = transformation_query.strip()
                     if not transformation_query:
                         transformation_query = None
+                # Same stable-key contract as flat-file: persist Step 3 protected columns for upsert.
+                if sync_type == 'incremental':
+                    stable_keys = protected_by_table.get(table_key) or []
+                    if isinstance(stable_keys, (list, tuple)):
+                        incremental_key_columns = [
+                            str(k).strip() for k in stable_keys if str(k).strip()
+                        ]
+            elif source_connection_type == 'flat_file' and sync_type == 'incremental':
+                stable_keys = protected_by_table.get(table_key) or []
+                if isinstance(stable_keys, (list, tuple)):
+                    incremental_key_columns = [
+                        str(k).strip() for k in stable_keys if str(k).strip()
+                    ]
             
             table_key = f"{table_info['schema_name']}.{table_info['table_name']}"
             SyncJobTable.objects.create(
@@ -1893,12 +2568,30 @@ def create_job_step4_submit(request):
                 schema_name=table_info['schema_name'],
                 table_name=table_info['table_name'],
                 incremental_column=incremental_column,
+                incremental_key_columns=incremental_key_columns,
                 transformation_query=transformation_query,
                 column_transformations=column_transformations if column_transformations else {},
                 column_type_overrides=overrides_by_table.get(table_key, {}),
                 column_name_overrides=name_overrides_by_table.get(table_key, {}),
                 excluded_columns=excluded_by_table.get(table_key, []),
                 protected_columns=protected_by_table.get(table_key, []),
+                transform_plan=transform_plans_by_table.get(table_key),
+                flat_file_incremental_mode=(
+                    flat_file_mode_posted.get(table_key, "legacy_mtime")
+                    if source_connection_type == "flat_file"
+                    else "legacy_mtime"
+                ),
+                flat_file_hash_columns=(
+                    flat_file_hash_cols_posted.get(table_key, [])
+                    if source_connection_type == "flat_file"
+                    else []
+                ),
+                flat_file_hash_algorithm=(
+                    flat_file_hash_algo_posted.get(table_key, "sha256")
+                    if source_connection_type == "flat_file"
+                    else "sha256"
+                ),
+                flat_file_allow_hash_only_without_key=False,
                 is_enabled=True
             )
         
@@ -1961,6 +2654,12 @@ def create_job_step4_submit(request):
         request.session.pop('sync_job_column_name_overrides', None)
         request.session.pop('sync_job_excluded_columns', None)
         request.session.pop('sync_job_protected_columns', None)
+        request.session.pop('sync_job_transform_plan', None)
+        request.session.pop('sync_job_transform_validated', None)
+        request.session.pop('sync_job_transform_preview_cache', None)
+        request.session.pop('sync_job_flat_file_incremental_mode', None)
+        request.session.pop('sync_job_flat_file_hash_columns', None)
+        request.session.pop('sync_job_flat_file_hash_algorithm', None)
         
         messages.success(request, f'Sync job "{job_name}" created successfully!')
         logger.info(f"User {request.user.username} created sync job {sync_job.id}: {job_name}")
@@ -2572,9 +3271,24 @@ def job_edit(request, job_id):
                     'incremental_candidates': []
                 }
     
+    transform_summary_rows = []
+    for table in job.tables.all():
+        plan = getattr(table, "transform_plan", None) or {}
+        if not isinstance(plan, dict):
+            continue
+        mode = (plan.get("mode") or "single_table").strip().lower()
+        if mode in ("join", "union", "lookup"):
+            transform_summary_rows.append(
+                {
+                    "table_key": f"{table.schema_name}.{table.table_name}",
+                    "mode": mode,
+                }
+            )
+
     context = {
         'job': job,
         'table_columns': table_columns,
+        'transform_summary_rows': transform_summary_rows,
         'is_sap': is_sap,
         'page_title': f'Edit Job: {job.name}',
     }

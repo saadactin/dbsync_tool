@@ -1,0 +1,30 @@
+<div class="connection-tabs-wrap mb-3">
+    <ul class="nav nav-pills connection-tabs">
+        <li class="nav-item">
+            <a class="nav-link {% if active_tab == 'databases' %}active{% endif %}" href="{% url 'connections:list' %}">
+                <i class="bi bi-database"></i>
+                <span>Databases{% if db_connections_count is not None %} ({{ db_connections_count }}){% endif %}</span>
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link {% if active_tab == 'apis' %}active{% endif %}" href="{% url 'connections:api_list' %}">
+                <i class="bi bi-cloud"></i>
+                <span>APIs{% if api_connections_count is not None %} ({{ api_connections_count }}){% endif %}</span>
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link {% if active_tab == 'flatfiles' %}active{% endif %}" href="{% url 'connections:file_source_list' %}">
+                <i class="bi bi-file-earmark-text"></i>
+                <span>Flat Files{% if file_sources_count is not None %} ({{ file_sources_count }}){% endif %}</span>
+            </a>
+        </li>
+        {% if not user.userprofile.is_viewer %}
+        <li class="nav-item">
+            <a class="nav-link {% if active_tab == 'add' %}active{% endif %}" href="{% url 'connections:create_hub' %}">
+                <i class="bi bi-plus-circle"></i>
+                <span>Add Connection</span>
+            </a>
+        </li>
+        {% endif %}
+    </ul>
+</div>

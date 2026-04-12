@@ -8,10 +8,27 @@ from core.exceptions import DatabaseConnectionError, TableNotFoundError
 from core.type_mapping import map_data_type
 import pandas as pd
 from datetime import date, datetime
+from decimal import Decimal
+import json
 import logging
 import traceback
 
 logger = logging.getLogger(__name__)
+
+try:
+    from bson.decimal128 import Decimal128
+except Exception:  # pragma: no cover - optional dependency behavior
+    Decimal128 = None
+
+try:
+    from bson.objectid import ObjectId
+except Exception:  # pragma: no cover - optional dependency behavior
+    ObjectId = None
+
+try:
+    from bson.binary import Binary
+except Exception:  # pragma: no cover - optional dependency behavior
+    Binary = None
 
 
 class SQLServerConnector(DBConnector):
@@ -318,11 +335,14 @@ class SQLServerConnector(DBConnector):
         if not self._connection:
             self.connect()
         
+        query = query.strip().rstrip(";")
         query_upper = query.upper()
         if order_by and 'ORDER BY' not in query_upper:
             query = f"{query} ORDER BY {order_by}"
         elif 'ORDER BY' not in query_upper:
-            logger.warning(f"Query without ORDER BY: {query}")
+            # SQL Server requires ORDER BY when using OFFSET/FETCH.
+            # Use a stable no-op ordering for ad-hoc batch reads.
+            query = f"{query} ORDER BY (SELECT NULL)"
         
         # SQL Server uses OFFSET/FETCH syntax
         paginated_query = f"{query} OFFSET {offset} ROWS FETCH NEXT {batch_size} ROWS ONLY"
@@ -643,6 +663,27 @@ class SQLServerConnector(DBConnector):
         
         cursor = self._connection.cursor()
         try:
+            def _normalize_sql_param(value: Any) -> Any:
+                if value is None:
+                    return None
+                if Decimal128 is not None and isinstance(value, Decimal128):
+                    try:
+                        return value.to_decimal()
+                    except Exception:
+                        return str(value)
+                if isinstance(value, Decimal):
+                    return value
+                if ObjectId is not None and isinstance(value, ObjectId):
+                    return str(value)
+                if Binary is not None and isinstance(value, Binary):
+                    return bytes(value)
+                if isinstance(value, (dict, list, tuple, set)):
+                    try:
+                        return json.dumps(value, default=str, ensure_ascii=False)
+                    except Exception:
+                        return str(value)
+                return value
+
             # Check if any column is an IDENTITY column by querying sys.identity_columns
             identity_columns = []
             try:
@@ -687,7 +728,11 @@ class SQLServerConnector(DBConnector):
                 insert_query = f"INSERT INTO [{schema}].[{table}] ({col_names}) VALUES ({placeholders})"
                 
                 # Use executemany for batch insert
-                cursor.executemany(insert_query, rows)
+                normalized_rows = [
+                    tuple(_normalize_sql_param(v) for v in row)
+                    for row in rows
+                ]
+                cursor.executemany(insert_query, normalized_rows)
                 self._connection.commit()
             finally:
                 if enable_identity_insert:

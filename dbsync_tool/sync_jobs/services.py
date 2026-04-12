@@ -132,6 +132,40 @@ class DashboardService:
             'api': api_source_jobs.count(),
             'database': database_source_jobs.count(),
         }
+
+        # Database usage (which source DBs are used most and how many tables synced)
+        db_type_labels = {
+            'postgres': 'PostgreSQL',
+            'mysql': 'MySQL',
+            'sqlserver': 'SQL Server',
+            'clickhouse': 'ClickHouse',
+            'oracle_adw': 'Oracle ADW',
+            'mongodb': 'MongoDB',
+        }
+        db_logs_30d = SyncExecutionLog.objects.filter(
+            execution__job__in=database_source_jobs,
+            execution__started_at__gte=last_30d,
+            status='completed',
+        )
+        db_usage_rows = db_logs_30d.values(
+            'execution__job__source_connection__db_type'
+        ).annotate(
+            jobs_count=Count('execution__job', distinct=True),
+            tables_synced=Count('table_name', distinct=True),
+            runs_count=Count('id'),
+            rows_synced=Sum('rows_inserted'),
+        ).order_by('-tables_synced', '-runs_count')
+        database_usage = []
+        for row in db_usage_rows:
+            db_type = row.get('execution__job__source_connection__db_type') or 'unknown'
+            database_usage.append({
+                'db_type': db_type,
+                'label': db_type_labels.get(db_type, db_type.replace('_', ' ').title()),
+                'jobs_count': row.get('jobs_count', 0) or 0,
+                'tables_synced': row.get('tables_synced', 0) or 0,
+                'runs_count': row.get('runs_count', 0) or 0,
+                'rows_synced': row.get('rows_synced', 0) or 0,
+            })
         
         return {
             'jobs': {
@@ -170,6 +204,7 @@ class DashboardService:
             'api_connections': api_connections_stats,
             'api_jobs': api_jobs_stats,
             'source_breakdown': source_breakdown,
+            'database_usage': database_usage,
         }
     
     @staticmethod

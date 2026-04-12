@@ -31,6 +31,11 @@ try:
 except ImportError:  # pragma: no cover
     OracleADWConnector = None
 
+try:
+    from .mongodb import MongoDBConnector
+except ImportError:  # pragma: no cover
+    MongoDBConnector = None
+
 # Import API connectors
 try:
     from .zoho import ZohoConnector
@@ -99,6 +104,18 @@ def get_connector(
             )
         # For Oracle ADW we treat database_name as the service name / TNS alias.
         return OracleADWConnector(host, port, username, password, database_name)
+    elif db_type == "mongodb":
+        if MongoDBConnector is None:
+            raise InvalidDatabaseTypeError(
+                "MongoDB connector not available. Install pymongo."
+            )
+        try:
+            import pymongo  # type: ignore  # noqa: F401
+        except Exception as e:  # pragma: no cover - environment-specific
+            raise InvalidDatabaseTypeError(
+                "MongoDB connector not available. Install pymongo."
+            ) from e
+        return MongoDBConnector(host, port, username, password, database_name)
     else:
         raise InvalidDatabaseTypeError(f"Unsupported database type: {db_type}")
 

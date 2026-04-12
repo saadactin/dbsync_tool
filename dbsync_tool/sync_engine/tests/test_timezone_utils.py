@@ -112,6 +112,14 @@ class TimezoneHandlerTestCase(TestCase):
             'timestamp'
         )
         self.assertIsInstance(value, datetime)
+
+    def test_parse_checkpoint_value_datetime64(self):
+        """Test parsing ClickHouse datetime64 checkpoint value"""
+        value = TimezoneHandler.parse_checkpoint_value(
+            '2024-01-01 12:00:00',
+            'datetime64'
+        )
+        self.assertIsInstance(value, datetime)
     
     def test_parse_checkpoint_value_integer(self):
         """Test parsing integer checkpoint value"""
@@ -134,6 +142,11 @@ class TimezoneHandlerTestCase(TestCase):
         """Test parsing None checkpoint value"""
         value = TimezoneHandler.parse_checkpoint_value('', 'timestamp')
         self.assertIsNone(value)
+
+    def test_parse_checkpoint_value_none_strings(self):
+        self.assertIsNone(TimezoneHandler.parse_checkpoint_value('none', 'timestamp'))
+        self.assertIsNone(TimezoneHandler.parse_checkpoint_value('NULL', 'timestamp'))
+        self.assertIsNone(TimezoneHandler.parse_checkpoint_value('NaN', 'timestamp'))
     
     def test_parse_checkpoint_value_invalid_integer(self):
         """Test parsing invalid integer"""

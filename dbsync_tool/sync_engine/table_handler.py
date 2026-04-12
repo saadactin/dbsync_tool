@@ -41,6 +41,8 @@ class TableHandler:
             return 'sqlserver'
         elif 'ClickHouse' in class_name:
             return 'clickhouse'
+        elif 'MongoDB' in class_name:
+            return 'mongodb'
         elif 'Oracle' in class_name:
             # Covers OracleADWConnector and similar Oracle connectors
             return 'oracle'
@@ -58,6 +60,11 @@ class TableHandler:
             SchemaCreationError: If schema creation fails
         """
         try:
+            # For MongoDB targets: no schema/DDL creation is required.
+            if self.target_db_type == 'mongodb':
+                logger.info("MongoDB target does not require schema creation")
+                return
+
             # For MySQL targets: no schema concept, skip schema creation
             if self.target_db_type == 'mysql':
                 logger.info(f"MySQL doesn't use schemas - skipping schema creation for {schema}")
@@ -119,6 +126,7 @@ class TableHandler:
         protected_columns: Optional[list] = None,
         incremental_column: Optional[str] = None,
         target_table: Optional[str] = None,
+        source_columns_override: Optional[List[ColumnInfo]] = None,
     ) -> bool:
         """
         Create target table if it doesn't exist
@@ -135,6 +143,13 @@ class TableHandler:
         Raises:
             TableCreationError: If table creation fails
         """
+        # MongoDB target: collections are created on write; no DDL required.
+        if self.target_db_type == 'mongodb':
+            logger.info(
+                f"MongoDB target does not require table creation for {schema}.{table}"
+            )
+            return False
+
         if source_schema is None:
             source_schema = schema
         if target_table is None:
@@ -183,11 +198,17 @@ class TableHandler:
                 column_type_overrides=column_type_overrides,
                 column_name_overrides=column_name_overrides,
                 target_table=target_table,
+                excluded_columns=excluded_columns,
+                protected_columns=protected_columns,
+                source_columns_override=source_columns_override,
             )
 
         # Get source table columns (with transaction error handling)
         try:
-            source_columns = self.source_connector.get_columns(source_schema, table)
+            if source_columns_override is not None:
+                source_columns = list(source_columns_override)
+            else:
+                source_columns = self.source_connector.get_columns(source_schema, table)
         except Exception as e:
             raise TableCreationError(
                 f"Failed to get source columns for {source_schema}.{table}: {str(e)}"
@@ -197,16 +218,17 @@ class TableHandler:
             raise TableCreationError(
                 f"No columns found for source table {source_schema}.{table}"
             )
-        # Apply Step 3 exclusion/protection to target DDL contract.
-        excluded = {(c or "").strip().lower() for c in (excluded_columns or []) if c}
-        protected = {(c or "").strip().lower() for c in (protected_columns or []) if c}
-        effective_excluded = excluded - protected
-        if effective_excluded:
-            source_columns = [c for c in source_columns if c.name.lower() not in effective_excluded]
-            if not source_columns:
-                raise TableCreationError(
-                    f"No migratable columns remain for source table {source_schema}.{table}"
-                )
+        # Apply Step 3 exclusion/protection to target DDL contract (skip if override is final).
+        if source_columns_override is None:
+            excluded = {(c or "").strip().lower() for c in (excluded_columns or []) if c}
+            protected = {(c or "").strip().lower() for c in (protected_columns or []) if c}
+            effective_excluded = excluded - protected
+            if effective_excluded:
+                source_columns = [c for c in source_columns if c.name.lower() not in effective_excluded]
+                if not source_columns:
+                    raise TableCreationError(
+                        f"No migratable columns remain for source table {source_schema}.{table}"
+                    )
         
         # Map columns to target database types
         rename_map = { (k or "").lower(): v for k, v in (column_name_overrides or {}).items() }
@@ -366,6 +388,9 @@ class TableHandler:
         column_type_overrides: Optional[dict] = None,
         column_name_overrides: Optional[dict] = None,
         target_table: Optional[str] = None,
+        excluded_columns: Optional[list] = None,
+        protected_columns: Optional[list] = None,
+        source_columns_override: Optional[List[ColumnInfo]] = None,
     ) -> bool:
         """
         Oracle-aware table creation logic.
@@ -382,14 +407,22 @@ class TableHandler:
         source_is_oracle = self.source_db_type == 'oracle'
         target_is_oracle = self.target_db_type == 'oracle'
 
-        # Load source columns
+        # Load source columns (physical table or wizard transform override)
         try:
-            source_columns = self.source_connector.get_columns(source_schema, table)
+            if source_columns_override is not None:
+                source_columns = list(source_columns_override)
+            else:
+                source_columns = self.source_connector.get_columns(source_schema, table)
         except Exception as e:
             raise TableCreationError(
                 f"Failed to get source columns for {source_schema}.{table}: {str(e)}"
             )
 
+        excluded = {(c or "").strip().lower() for c in (excluded_columns or []) if c}
+        protected = {(c or "").strip().lower() for c in (protected_columns or []) if c}
+        effective_excluded = excluded - protected
+        if effective_excluded:
+            source_columns = [c for c in source_columns if c.name.lower() not in effective_excluded]
         if not source_columns:
             raise TableCreationError(
                 f"No columns found for source table {source_schema}.{table}"

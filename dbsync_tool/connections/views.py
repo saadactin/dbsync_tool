@@ -1,12 +1,14 @@
 """
 Views for connection management
 """
-from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView, View
+from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView, View, TemplateView
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.urls import reverse_lazy
 from django.contrib import messages
 from django.http import JsonResponse
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.management import call_command
+from django.db import OperationalError
 from django.utils import timezone
 import json
 import logging
@@ -17,6 +19,7 @@ from pathlib import Path
 from accounts.permissions import ViewerReadOnlyMixin, OperatorOrAboveMixin
 from .models import DatabaseConnection, APIConnection, FileSourceConnection
 from .forms import DatabaseConnectionForm, APIConnectionForm, FileSourceConnectionForm
+from .mongo_local import normalize_mongo_credentials
 from .services import test_database_connection
 from .timing import elapsed_ms_since
 from .connectors import get_connector
@@ -99,6 +102,8 @@ class FileSourceListView(LoginRequiredMixin, ListView):
         )
         context['db_connections_count'] = db_qs.count()
         context['api_connections_count'] = api_qs.count()
+        context['file_sources_count'] = self.get_queryset().count()
+        context['active_tab'] = 'flatfiles'
         return context
 
 
@@ -316,6 +321,7 @@ class ConnectionListView(LoginRequiredMixin, ListView):
             'sqlserver': {'name': 'SQL Server', 'connections': []},
             'clickhouse': {'name': 'ClickHouse', 'connections': []},
             'oracle_adw': {'name': 'Oracle ADW', 'connections': []},
+            'mongodb': {'name': 'MongoDB', 'connections': []},
         }
         
         for conn in connections:
@@ -339,12 +345,17 @@ class ConnectionListView(LoginRequiredMixin, ListView):
         
         context['grouped_list'] = grouped_list
         context['total_connections'] = sum(len(info['connections']) for info in db_type_info.values())
+        context['db_connections_count'] = context['total_connections']
         
         # Add API connections count for navigation
         from accounts.services.tenant_service import TenantService
         api_qs = APIConnection.objects.all().select_related('created_by', 'tenant')
         api_qs = TenantService.get_queryset_for_user(api_qs, self.request.user)
         context['api_connections_count'] = api_qs.count()
+        file_qs = FileSourceConnection.objects.all().select_related('created_by', 'tenant')
+        file_qs = TenantService.get_queryset_for_user(file_qs, self.request.user)
+        context['file_sources_count'] = file_qs.count()
+        context['active_tab'] = 'databases'
         
         return context
 
@@ -561,9 +572,31 @@ class ConnectionDeleteView(ViewerReadOnlyMixin, OperatorOrAboveMixin, DeleteView
         connection_id = connection.id
         connection_name = connection.name
         tenant_id = connection.tenant.id if connection.tenant else None
-        
-        result = super().delete(request, *args, **kwargs)
-        
+
+        def _do_delete():
+            return super(ConnectionDeleteView, self).delete(request, *args, **kwargs)
+
+        try:
+            result = _do_delete()
+        except OperationalError as exc:
+            # CASCADE delete touches sync_jobs → mongo_cdc_checkpoints; if migrations
+            # were never applied locally, the table is missing. Apply migrations once
+            # and retry so deletes work without relying on a manual migrate step.
+            if "mongo_cdc_checkpoints" not in str(exc).lower():
+                raise
+            logger.warning(
+                "Connection delete failed (likely missing mongo_cdc_checkpoints); "
+                "running migrate and retrying once.",
+                extra={"error": str(exc), "connection_id": str(connection_id)},
+                exc_info=True,
+            )
+            try:
+                call_command("migrate", verbosity=0, interactive=False)
+            except Exception as mig_exc:
+                logger.exception("migrate during connection delete failed")
+                raise exc from mig_exc
+            result = _do_delete()
+
         logger.info(
             'Connection deleted',
             extra={
@@ -577,7 +610,7 @@ class ConnectionDeleteView(ViewerReadOnlyMixin, OperatorOrAboveMixin, DeleteView
                 'ip_address': self._get_client_ip(request),
             }
         )
-        
+
         messages.success(request, f'Connection "{connection_name}" deleted successfully!')
         return result
 
@@ -625,17 +658,40 @@ class ConnectionTestAndListDatabasesView(LoginRequiredMixin, View):
             db_type = data.get('db_type')
             host = data.get('host')
             port = data.get('port')
-            username = data.get('username')
+            username = (data.get('username') or '').strip()
+            # JSON may send null; treat as empty (same as an empty password field).
             password = data.get('password')
+            if password is None:
+                password = ''
             database_name = (data.get('database_name') or '').strip() or None
 
-            if not all([db_type, host, port, username, password]):
+            if not all([db_type, host, port]):
                 return JsonResponse({
                     'success': False,
-                    'message': 'Missing required fields: db_type, host, port, username, password',
+                    'message': 'Missing required fields: db_type, host, port',
                     'latency_ms': 0,
                     'details': {},
                 }, status=400)
+
+            # Align JSON test endpoint with `DatabaseConnectionForm` rules for MongoDB localhost.
+            if db_type == 'mongodb':
+                try:
+                    username, password = normalize_mongo_credentials(host, username, password)
+                except ValueError as e:
+                    return JsonResponse({
+                        'success': False,
+                        'message': str(e),
+                        'latency_ms': 0,
+                        'details': {'db_type': db_type, 'host': host or '', 'port': port},
+                    }, status=400)
+            else:
+                if not username or not password:
+                    return JsonResponse({
+                        'success': False,
+                        'message': 'Missing required fields: username, password',
+                        'latency_ms': 0,
+                        'details': {},
+                    }, status=400)
             if db_type == 'oracle_adw' and not database_name:
                 return JsonResponse({
                     'success': False,
@@ -782,7 +838,45 @@ class APIConnectionListView(LoginRequiredMixin, ListView):
         
         context['grouped_list'] = grouped_list
         context['total_connections'] = sum(len(info['connections']) for info in api_type_info.values())
+        context['api_connections_count'] = context['total_connections']
+        from accounts.services.tenant_service import TenantService
+        db_qs = TenantService.get_queryset_for_user(
+            DatabaseConnection.objects.all().select_related('created_by', 'tenant'),
+            self.request.user,
+        )
+        file_qs = TenantService.get_queryset_for_user(
+            FileSourceConnection.objects.all().select_related('created_by', 'tenant'),
+            self.request.user,
+        )
+        context['db_connections_count'] = db_qs.count()
+        context['file_sources_count'] = file_qs.count()
+        context['active_tab'] = 'apis'
         
+        return context
+
+
+class ConnectionCreateHubView(LoginRequiredMixin, TemplateView):
+    template_name = 'connections/connection_create_hub.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from accounts.services.tenant_service import TenantService
+        db_qs = TenantService.get_queryset_for_user(
+            DatabaseConnection.objects.all().select_related('created_by', 'tenant'),
+            self.request.user,
+        )
+        api_qs = TenantService.get_queryset_for_user(
+            APIConnection.objects.all().select_related('created_by', 'tenant'),
+            self.request.user,
+        )
+        file_qs = TenantService.get_queryset_for_user(
+            FileSourceConnection.objects.all().select_related('created_by', 'tenant'),
+            self.request.user,
+        )
+        context['db_connections_count'] = db_qs.count()
+        context['api_connections_count'] = api_qs.count()
+        context['file_sources_count'] = file_qs.count()
+        context['active_tab'] = 'add'
         return context
 
 

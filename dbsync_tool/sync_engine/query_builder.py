@@ -12,6 +12,27 @@ logger = logging.getLogger(__name__)
 
 class QueryBuilder:
     """Builds database-specific queries"""
+
+    @staticmethod
+    def _dedupe_order_by(order_by: str) -> list[str]:
+        """
+        Deduplicate ORDER BY parts while preserving order.
+
+        SQL Server rejects duplicate columns in ORDER BY.
+        """
+        parts = [p.strip() for p in (order_by or "").split(",") if p.strip()]
+        seen = set()
+        out: list[str] = []
+        for part in parts:
+            # Base identifier = first token, strip common quoting chars
+            base = part.strip().split()[0].strip()
+            base = base.strip('`"[]')
+            key = base.lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(part)
+        return out
     
     @staticmethod
     def get_db_type(connector: DBConnector) -> str:
@@ -111,16 +132,17 @@ class QueryBuilder:
             query += f' WHERE {normalized_where}'
         
         if order_by:
+            order_parts = QueryBuilder._dedupe_order_by(order_by)
             # Format order_by columns with proper quoting for the database type
             if db_type == 'postgres' or db_type == 'oracle':
                 # Split by comma, strip, and quote each column
-                order_cols = ', '.join(f'"{col.strip()}"' for col in order_by.split(','))
+                order_cols = ', '.join(f'"{col.strip()}"' for col in order_parts)
             elif db_type == 'mysql':
-                order_cols = ', '.join(f'`{col.strip()}`' for col in order_by.split(','))
+                order_cols = ', '.join(f'`{col.strip()}`' for col in order_parts)
             elif db_type == 'sqlserver':
-                order_cols = ', '.join(f'[{col.strip()}]' for col in order_by.split(','))
+                order_cols = ', '.join(f'[{col.strip()}]' for col in order_parts)
             elif db_type == 'clickhouse':
-                order_cols = ', '.join(f'`{col.strip()}`' for col in order_by.split(','))
+                order_cols = ', '.join(f'`{col.strip()}`' for col in order_parts)
             else:
                 order_cols = order_by
             query += f' ORDER BY {order_cols}'
@@ -377,15 +399,16 @@ class QueryBuilder:
         
         # Add ORDER BY
         if order_by:
+            order_parts = QueryBuilder._dedupe_order_by(order_by)
             # Format order_by columns
             if db_type == 'postgres' or db_type == 'oracle':
-                order_cols = ', '.join(f'"{col.strip()}"' for col in order_by.split(','))
+                order_cols = ', '.join(f'"{col.strip()}"' for col in order_parts)
             elif db_type == 'mysql':
-                order_cols = ', '.join(f'`{col.strip()}`' for col in order_by.split(','))
+                order_cols = ', '.join(f'`{col.strip()}`' for col in order_parts)
             elif db_type == 'sqlserver':
-                order_cols = ', '.join(f'[{col.strip()}]' for col in order_by.split(','))
+                order_cols = ', '.join(f'[{col.strip()}]' for col in order_parts)
             elif db_type == 'clickhouse':
-                order_cols = ', '.join(f'`{col.strip()}`' for col in order_by.split(','))
+                order_cols = ', '.join(f'`{col.strip()}`' for col in order_parts)
             else:
                 order_cols = order_by
             query += f' ORDER BY {order_cols}'
@@ -394,6 +417,72 @@ class QueryBuilder:
             query += f' ORDER BY {inc_col}'
         
         return query
+
+    @staticmethod
+    def _sql_ident_fragment(db_type: str, name: str) -> str:
+        """Quote a single SQL identifier for use in generated SQL."""
+        n = (name or "").strip()
+        if db_type == "postgres" or db_type == "oracle":
+            return f'"{n.replace(chr(34), chr(34) + chr(34))}"'
+        if db_type == "mysql" or db_type == "clickhouse":
+            return f"`{n.replace(chr(96), chr(96) + chr(96))}`"
+        if db_type == "sqlserver":
+            return f"[{n.replace(']', ']]')}]"
+        return n
+
+    @staticmethod
+    def _sql_table_alias(db_type: str, alias: str) -> str:
+        a = (alias or "").strip()
+        return QueryBuilder._sql_ident_fragment(db_type, a)
+
+    @staticmethod
+    def build_incremental_on_subquery(
+        connector: DBConnector,
+        inner_sql: str,
+        subquery_alias: str,
+        incremental_column: str,
+        checkpoint_value: Optional[Any],
+        columns: List[str],
+        order_by: Optional[str] = None,
+    ) -> str:
+        """
+        Wrap a transform SELECT (inner_sql) with incremental WHERE / ORDER BY on outer aliases.
+
+        inner_sql must be a SELECT that exposes output columns matching `columns` (aliases).
+        """
+        if not inner_sql or not incremental_column or not columns:
+            raise QueryBuilderError("inner_sql, incremental_column, and columns are required")
+        db_type = QueryBuilder.get_db_type(connector)
+        inner_sql = inner_sql.strip().rstrip(";")
+        qa = QueryBuilder._sql_table_alias(db_type, subquery_alias)
+        col_list = ", ".join(f"{qa}.{QueryBuilder._sql_ident_fragment(db_type, c)}" for c in columns)
+        inc = f"{qa}.{QueryBuilder._sql_ident_fragment(db_type, incremental_column)}"
+
+        if checkpoint_value is not None:
+            formatted_value = QueryBuilder._format_checkpoint_value(checkpoint_value, db_type)
+            if db_type == "clickhouse":
+                where_clause = f"WHERE {inc} > {formatted_value} AND {inc} IS NOT NULL"
+            else:
+                where_clause = f"WHERE {inc} > {formatted_value}"
+        else:
+            if db_type == "clickhouse":
+                where_clause = f"WHERE {inc} IS NOT NULL"
+            else:
+                where_clause = "WHERE 1=1"
+
+        if db_type == "oracle":
+            from_clause = f"FROM ({inner_sql}) {qa}"
+        else:
+            from_clause = f"FROM ({inner_sql}) AS {qa}"
+
+        if order_by:
+            parts = [p.strip() for p in order_by.split(",") if p.strip()]
+            ob = ", ".join(f"{qa}.{QueryBuilder._sql_ident_fragment(db_type, p)}" for p in parts)
+            order_sql = f" ORDER BY {ob}"
+        else:
+            order_sql = f" ORDER BY {inc}"
+
+        return f"SELECT {col_list} {from_clause} {where_clause}{order_sql}"
     
     @staticmethod
     def _format_checkpoint_value(value: Any, db_type: str) -> str:

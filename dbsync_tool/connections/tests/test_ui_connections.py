@@ -57,6 +57,37 @@ class ConnectionManagementUITests(UserManagementUITestCase):
         new_conn = DatabaseConnection.objects.get(name='New Admin A Connection')
         self.assertEqual(new_conn.tenant, self.admin_a)
         self.assertEqual(new_conn.created_by, self.admin_a)
+
+    def test_admin_creates_mongodb_connection_and_grouped_list_contains_mongodb(self):
+        """MongoDB: Admin can create connection and list groups show MongoDB."""
+        self.login_as(self.admin_a)
+        url = reverse('connections:create')
+
+        response = self.client.post(url, {
+            'name': 'Mongo Admin A Connection',
+            'db_type': 'mongodb',
+            'host': 'localhost',
+            'port': 27017,
+            'username': 'testuser',
+            'password': 'testpass',
+            'database_name': 'testdb',
+            'is_active': True
+        })
+        self.assertEqual(response.status_code, 302)
+
+        # Verify created
+        conn = DatabaseConnection.objects.get(name='Mongo Admin A Connection')
+        self.assertEqual(conn.db_type, 'mongodb')
+        self.assertEqual(conn.tenant, self.admin_a)
+
+        # Verify grouped list has mongodb group
+        response = self.client.get(reverse('connections:list'))
+        self.assertEqual(response.status_code, 200)
+        grouped = response.context.get('grouped_list') or []
+        mongodb_group = next((g for g in grouped if g.get('type') == 'mongodb'), None)
+        self.assertIsNotNone(mongodb_group)
+        self.assertEqual(mongodb_group.get('name'), 'MongoDB')
+        self.assertGreaterEqual(mongodb_group.get('count', 0), 1)
     
     def test_22_admin_sees_only_tenant_connections(self):
         """Test 22: Admin Sees Only Tenant Connections"""

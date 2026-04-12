@@ -8,30 +8,19 @@
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid">
+<div class="container-fluid db-connections-page">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h1>Database Connections</h1>
-        <div class="btn-group" role="group">
-            <a href="{% url 'connections:api_list' %}" class="btn btn-outline-primary">
-                <span>🔌</span> API Connections{% if api_connections_count > 0 %} ({{ api_connections_count }}){% endif %}
-            </a>
-            {% if not user.userprofile.is_viewer %}
-                <a href="{% url 'connections:create' %}" class="btn btn-primary">
-                    <span>➕</span> Add Database Connection
-                </a>
-                <a href="{% url 'connections:api_create' %}" class="btn btn-success">
-                    <span>➕</span> Add API Connection
-                </a>
-                <a href="{% url 'connections:file_source_create' %}" class="btn btn-info">
-                    <span>➕</span> Add Flat File Source
-                </a>
-            {% endif %}
-        </div>
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="window.history.back();">
+            <i class="bi bi-arrow-left"></i> Back
+        </button>
     </div>
+
+    {% include 'connections/_connection_tabs.html' %}
 
     {% if grouped_list %}
         {% if total_connections > 0 %}
-            <div class="accordion" id="connectionsAccordion">
+            <div class="accordion connection-accordion" id="connectionsAccordion">
                 {% for group in grouped_list %}
                     {% if group.connections %}
                         <div class="accordion-item" data-db-type="{{ group.type }}">
@@ -54,7 +43,7 @@
                                  data-bs-parent="#connectionsAccordion">
                                 <div class="accordion-body p-0">
                                     <div class="table-responsive">
-                                        <table class="table table-hover mb-0">
+                                        <table class="table table-hover mb-0 table-modern">
                                             <thead>
                                                 <tr>
                                                     <th>Name</th>
@@ -102,18 +91,18 @@
                                                     </td>
                                                     {% if not user.userprofile.is_viewer %}
                                                         <td>
-                                                            <div class="btn-group" role="group">
-                                                                <a href="{% url 'connections:detail' connection.id %}" class="btn btn-sm btn-outline-primary" title="View">
-                                                                    <span>👁️</span>
+                                                            <div class="btn-group action-btn-group" role="group">
+                                                                <a href="{% url 'connections:detail' connection.id %}" class="btn btn-sm btn-outline-primary action-btn" title="View">
+                                                                    <i class="bi bi-eye"></i>
                                                                 </a>
-                                                                <a href="{% url 'connections:update' connection.id %}" class="btn btn-sm btn-outline-secondary" title="Edit">
-                                                                    <span>✏️</span>
+                                                                <a href="{% url 'connections:update' connection.id %}" class="btn btn-sm btn-outline-secondary action-btn" title="Edit">
+                                                                    <i class="bi bi-pencil"></i>
                                                                 </a>
-                                                                <button type="button" class="btn btn-sm btn-outline-info test-connection" data-connection-id="{{ connection.id }}" title="Test">
-                                                                    <span>🔌</span>
+                                                                <button type="button" class="btn btn-sm btn-outline-info test-connection action-btn" data-connection-id="{{ connection.id }}" title="Test">
+                                                                    <i class="bi bi-plug"></i>
                                                                 </button>
-                                                                <a href="{% url 'connections:delete' connection.id %}" class="btn btn-sm btn-outline-danger" title="Delete">
-                                                                    <span>🗑️</span>
+                                                                <a href="{% url 'connections:delete' connection.id %}" class="btn btn-sm btn-outline-danger action-btn" title="Delete">
+                                                                    <i class="bi bi-trash3"></i>
                                                                 </a>
                                                             </div>
                                                         </td>

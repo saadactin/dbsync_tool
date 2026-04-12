@@ -89,6 +89,7 @@ class TransformationUITest(TestCase):
         # Set up session data
         session = self.client.session
         session['sync_job_name'] = 'Test Job'
+        session['sync_job_source_connection_type'] = 'database'
         session['sync_job_source_connection_id'] = str(self.connection.id)
         session['sync_job_target_connection_id'] = str(self.connection.id)
         session.save()
@@ -107,8 +108,8 @@ class TransformationUITest(TestCase):
             'table_transformations': json.dumps(transformations)
         })
         
-        # Should redirect to step3 (or handle error gracefully)
-        self.assertEqual(response.status_code in [302, 200], True)
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/sync-jobs/create/step3-model/", response.get("Location", ""))
         
         # Check that transformations are stored in session
         session = self.client.session
@@ -123,6 +124,7 @@ class TransformationUITest(TestCase):
         # Set up session data
         session = self.client.session
         session['sync_job_name'] = 'Test Job'
+        session['sync_job_source_connection_type'] = 'database'
         session['sync_job_source_connection_id'] = str(self.connection.id)
         session['sync_job_target_connection_id'] = str(self.connection.id)
         session['sync_job_selected_tables'] = [
@@ -135,13 +137,14 @@ class TransformationUITest(TestCase):
             }
         }
         session.save()
-        
-        # Submit step3
+
+        from sync_jobs.tests.wizard_helpers import seed_transform_plans_in_session
+
+        seed_transform_plans_in_session(self.client, source_db_type='postgres')
+
+        # Submit mapping step (step 4)
         url = reverse('sync_jobs:create_step3_submit')
-        response = self.client.post(url, {
-            'sync_type': 'full',
-            'schedule_type': 'once'
-        })
+        response = self.client.post(url, {})
         
         # Should create job successfully (or handle error)
         self.assertEqual(response.status_code in [302, 200], True)
@@ -189,6 +192,7 @@ class TransformationUITest(TestCase):
         # Step 2: Submit with transformations
         session = self.client.session
         session['sync_job_name'] = 'Test Job'
+        session['sync_job_source_connection_type'] = 'database'
         session['sync_job_source_connection_id'] = str(self.connection.id)
         session['sync_job_target_connection_id'] = str(self.connection.id)
         session.save()

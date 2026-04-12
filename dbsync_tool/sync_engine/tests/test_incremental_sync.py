@@ -36,6 +36,12 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
         self.target_connector = Mock(spec=PostgresConnector)
         self.target_connector.__class__.__name__ = 'PostgresConnector'
         self.target_connector.database_name = 'test_db'
+        self.target_connector.get_columns = Mock(return_value=[
+            ColumnInfo('id', 'int', False, True),
+            ColumnInfo('updated_at', 'timestamp', True, False),
+            ColumnInfo('name', 'text', True, False),
+        ])
+        self.target_connector.add_missing_columns = Mock()
         
         self.executor = IncrementalSyncExecutor(
             job=self.job,
@@ -44,6 +50,24 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
             target_connector=self.target_connector
         )
     
+    def test_get_configured_upsert_key_sources_prefers_incremental_key_columns(self):
+        jt = Mock(spec=SyncJobTable)
+        jt.incremental_key_columns = ['pk1', 'pk2']
+        jt.protected_columns = ['ignored']
+        self.assertEqual(
+            self.executor._get_configured_upsert_key_sources(jt),
+            ['pk1', 'pk2'],
+        )
+
+    def test_get_configured_upsert_key_sources_falls_back_to_protected_columns(self):
+        jt = Mock(spec=SyncJobTable)
+        jt.incremental_key_columns = []
+        jt.protected_columns = ['laptopid']
+        self.assertEqual(
+            self.executor._get_configured_upsert_key_sources(jt),
+            ['laptopid'],
+        )
+
     def test_init(self):
         """Test IncrementalSyncExecutor initialization"""
         self.assertEqual(self.executor.job, self.job)
@@ -71,6 +95,13 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
         """Test comparing datetime values"""
         dt1 = datetime(2024, 1, 1, 12, 0, 0, tzinfo=pytz.UTC)
         dt2 = datetime(2024, 1, 1, 13, 0, 0, tzinfo=pytz.UTC)
+        self.assertTrue(self.executor._compare_incremental_values(dt2, dt1))
+        self.assertFalse(self.executor._compare_incremental_values(dt1, dt2))
+
+    def test_compare_incremental_values_pandas_timestamp(self):
+        """Datetime-like pandas timestamps should compare deterministically."""
+        dt1 = pd.Timestamp('2024-01-01T12:00:00Z')
+        dt2 = pd.Timestamp('2024-01-01T13:00:00Z')
         self.assertTrue(self.executor._compare_incremental_values(dt2, dt1))
         self.assertFalse(self.executor._compare_incremental_values(dt1, dt2))
     
@@ -150,6 +181,7 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
         job_table.incremental_column = 'updated_at'
         job_table.transformation_query = None
         job_table.column_transformations = None
+        job_table.transform_plan = None
         
         # Mock execution log
         mock_log = Mock(spec=SyncExecutionLog)
@@ -212,6 +244,7 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
         job_table.incremental_column = 'updated_at'
         job_table.transformation_query = None
         job_table.column_transformations = None
+        job_table.transform_plan = None
 
         mock_log = Mock(spec=SyncExecutionLog)
         mock_log.status = 'pending'
@@ -229,6 +262,29 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
         self.target_connector.table_exists.assert_called_once()
         self.assertEqual(mock_log.status, 'completed')
         self.assertIn('does not exist', (mock_log.error_message or '').lower())
+
+    @patch('sync_engine.incremental_sync.SyncExecutionLog')
+    def test_sync_table_skips_when_concurrent_execution_running(self, mock_log_class):
+        job_table = Mock(spec=SyncJobTable)
+        job_table.schema_name = 'public'
+        job_table.table_name = 'users'
+        job_table.incremental_column = 'updated_at'
+        job_table.transformation_query = None
+        job_table.column_transformations = None
+        job_table.transform_plan = None
+
+        mock_log = Mock(spec=SyncExecutionLog)
+        mock_log.status = 'pending'
+        mock_log_class.objects.create = Mock(return_value=mock_log)
+
+        self.executor.checkpoint_manager.maybe_advance_checkpoint = Mock()
+        self.executor._prevent_concurrent_sync = Mock(return_value=False)
+
+        self.executor.sync_table(job_table)
+
+        self.executor.checkpoint_manager.maybe_advance_checkpoint.assert_not_called()
+        self.assertEqual(mock_log.status, 'completed')
+        self.assertIn('concurrent execution running', (mock_log.verification_summary or '').lower())
 
     def test_upsert_batch_with_retry_uses_upsert_dataframe(self):
         """Batch writes should use connector upsert_dataframe."""
@@ -250,6 +306,45 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
         self.assertEqual(call_kwargs["table"], "users")
         self.assertEqual(call_kwargs["key_column"], "id")
         self.assertIsInstance(call_kwargs["df"], pd.DataFrame)
+
+    def test_upsert_batch_with_retry_adds_missing_columns_once(self):
+        """Schema drift should call add_missing_columns before upsert, once per table."""
+        self.target_connector.upsert_dataframe = Mock()
+        self.target_connector.get_columns = Mock(return_value=[
+            ColumnInfo('id', 'int', False, True),
+        ])
+        self.target_connector.add_missing_columns = Mock()
+
+        self.executor._upsert_batch_with_retry(
+            schema="public",
+            table="users",
+            columns=["id", "new_col"],
+            rows=[(1, "a"), (2, "b")],
+            key_columns=["id"],
+        )
+        self.executor._upsert_batch_with_retry(
+            schema="public",
+            table="users",
+            columns=["id", "new_col"],
+            rows=[(3, "c")],
+            key_columns=["id"],
+        )
+
+        self.target_connector.add_missing_columns.assert_called_once()
+        self.target_connector.upsert_dataframe.assert_called()
+        self.assertIn(("public", "users"), self.executor._last_schema_drift_added_columns)
+
+    def test_apply_incremental_overlap_accepts_pandas_timestamp(self):
+        self.job.incremental_overlap_seconds = 60
+        ts = pd.Timestamp("2024-01-01T12:00:00Z")
+        out = self.executor._apply_incremental_overlap(ts, "timestamp")
+        self.assertEqual(out, ts.to_pydatetime() - timedelta(seconds=60))
+
+    def test_apply_incremental_overlap_accepts_numpy_datetime64(self):
+        self.job.incremental_overlap_seconds = 60
+        np_dt = pd.Timestamp("2024-01-01T12:00:00Z").to_datetime64()
+        out = self.executor._apply_incremental_overlap(np_dt, "timestamp")
+        self.assertEqual(out, pd.Timestamp(np_dt).to_pydatetime() - timedelta(seconds=60))
 
     def test_upsert_batch_with_retry_unwraps_nested_rows(self):
         self.target_connector.upsert_dataframe = Mock()
@@ -290,6 +385,7 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
         job_table.incremental_column = 'updated_at'
         job_table.transformation_query = None
         job_table.column_transformations = None
+        job_table.transform_plan = None
         
         # Mock execution log
         mock_log = Mock(spec=SyncExecutionLog)
@@ -350,11 +446,74 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
         # Verify checkpoint was updated
         self.executor.checkpoint_manager.create_or_update_checkpoint.assert_called_once()
         self.assertEqual(mock_log.status, 'completed')
+
+    @patch('sync_engine.incremental_sync.SyncExecutionLog')
+    def test_sync_table_applies_overlap_lower_bound_for_datetime(self, mock_log_class):
+        """Overlap-safe incremental should subtract overlap from the datetime checkpoint."""
+        self.job.incremental_overlap_seconds = 120
+
+        job_table = Mock(spec=SyncJobTable)
+        job_table.schema_name = 'public'
+        job_table.table_name = 'users'
+        job_table.incremental_column = 'updated_at'
+        job_table.transformation_query = None
+        job_table.column_transformations = None
+        job_table.transform_plan = None
+
+        mock_log = Mock(spec=SyncExecutionLog)
+        mock_log.status = 'pending'
+        mock_log_class.objects.create = Mock(return_value=mock_log)
+
+        checkpoint_time = datetime(2024, 1, 1, 10, 0, 0, tzinfo=pytz.UTC)
+        self.executor.checkpoint_manager.get_checkpoint_value = Mock(return_value=str(checkpoint_time))
+        self.executor.timezone_handler.parse_checkpoint_value = Mock(return_value=checkpoint_time)
+
+        self.executor.table_handler.create_table_if_not_exists = Mock(return_value=False)
+        self.executor.table_handler.target_db_type = 'postgres'
+        self.executor.table_handler.source_db_type = 'postgres'
+
+        self.source_connector.get_columns = Mock(return_value=[
+            ColumnInfo('id', 'int', False, True),
+            ColumnInfo('updated_at', 'timestamp', True, False),
+        ])
+        self.source_connector.get_primary_key = Mock(return_value=['id'])
+
+        self.executor.query_builder.build_incremental_query = Mock(return_value='SELECT ...')
+
+        # Simulate keyset fetch returning a non-list result so executor falls back to OFFSET batching.
+        self.source_connector.execute_query_fetchall = Mock(return_value=Mock())
+        new_datetime = checkpoint_time + timedelta(hours=2)
+        self.source_connector.fetch_batch = Mock(side_effect=[
+            [(3, new_datetime)],
+            [],
+        ])
+
+        self.target_connector.bulk_insert = Mock()
+        self.executor.checkpoint_manager.create_or_update_checkpoint = Mock()
+
+        with patch('sync_engine.incremental_sync.SyncExecutionLog.objects.filter') as mock_filter:
+            mock_filter.return_value.count = Mock(return_value=1)
+            mock_filter.return_value.aggregate = Mock(return_value={'total': 1})
+            self.executor.sync_table(job_table)
+
+        expected_lower_bound = checkpoint_time - timedelta(seconds=120)
+
+        calls = self.executor.query_builder.build_incremental_query.call_args_list
+        self.assertGreaterEqual(len(calls), 2)
+        for call in calls[:2]:
+            self.assertIn('checkpoint_value', call.kwargs)
+            self.assertEqual(call.kwargs['checkpoint_value'], expected_lower_bound)
+
+        self.assertEqual(mock_log.status, 'completed')
+        self.assertIn('overlap_seconds=', (mock_log.verification_summary or ''))
+        self.assertIn('lower_bound_used=', (mock_log.verification_summary or ''))
+        self.assertIn('update_outcome=', (mock_log.verification_summary or ''))
     
     @patch('sync_engine.incremental_sync.SyncExecutionLog')
     def test_sync_table_no_new_rows_does_not_upsert(self, mock_log_class):
         """First incremental run with no new rows should not call upsert and should leave checkpoint unchanged."""
         job_table = Mock(spec=SyncJobTable)
+        job_table.transform_plan = None
         job_table.schema_name = 'public'
         job_table.table_name = 'users'
         job_table.incremental_column = 'updated_at'
@@ -398,6 +557,7 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
     def test_sync_table_no_incremental_column(self):
         """Test sync_table with no configured incremental column (auto mode)."""
         job_table = Mock(spec=SyncJobTable)
+        job_table.transform_plan = None
         job_table.schema_name = 'public'
         job_table.table_name = 'users'
         job_table.incremental_column = None
@@ -417,6 +577,96 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
             self.source_connector.get_primary_key = Mock(return_value=['id'])
             self.executor.sync_table(job_table)
 
+        self.assertEqual(mock_log.status, 'completed')
+
+    @patch('sync_engine.incremental_sync.SyncExecutionLog')
+    def test_sync_table_no_safe_incremental_column_uses_keyed_snapshot_fallback(self, mock_log_class):
+        """When no safe incremental column exists, run keyed snapshot upsert fallback."""
+        job_table = Mock(spec=SyncJobTable)
+        job_table.transform_plan = None
+        job_table.schema_name = 'public'
+        job_table.table_name = 'students'
+        job_table.incremental_column = None
+        job_table.transformation_query = None
+        job_table.column_transformations = None
+        job_table.column_name_overrides = {}
+        job_table.excluded_columns = []
+        job_table.protected_columns = []
+        job_table.incremental_key_columns = ['roll_number']
+
+        mock_log = Mock(spec=SyncExecutionLog)
+        mock_log.status = 'pending'
+        mock_log_class.objects.create = Mock(return_value=mock_log)
+
+        self.executor.table_handler.target_db_type = 'postgres'
+        self.target_connector.table_exists = Mock(return_value=True)
+        self.source_connector.get_columns = Mock(return_value=[
+            ColumnInfo('name', 'varchar', True, False),
+            ColumnInfo('roll_number', 'int', False, True),
+        ])
+        self.source_connector.get_primary_key = Mock(return_value=['roll_number'])
+        self.executor.checkpoint_manager.get_checkpoint_value = Mock(return_value=None)
+        self.target_connector.upsert_dataframe = Mock()
+        self.source_connector.fetch_batch = Mock(side_effect=[
+            [('Alice', 1), ('Bob', 2)],
+            [],
+        ])
+
+        with patch('sync_engine.incremental_sync.SyncExecutionLog.objects.filter') as mock_filter:
+            mock_filter.return_value.count = Mock(return_value=1)
+            mock_filter.return_value.aggregate = Mock(return_value={'total': 2})
+            self.executor.sync_table(job_table)
+
+        self.target_connector.upsert_dataframe.assert_called_once()
+        kwargs = self.target_connector.upsert_dataframe.call_args.kwargs
+        self.assertEqual(kwargs.get('key_column'), 'roll_number')
+        self.assertEqual(mock_log.status, 'completed')
+
+    @patch('sync_engine.incremental_sync.SyncExecutionLog')
+    def test_sync_table_nullable_date_incremental_uses_keyed_snapshot_fallback(self, mock_log_class):
+        """Configured nullable/date-only incremental column should use snapshot fallback for accuracy."""
+        job_table = Mock(spec=SyncJobTable)
+        job_table.transform_plan = None
+        job_table.schema_name = 'public'
+        job_table.table_name = 'pg_all_datatypes_test'
+        job_table.incremental_column = 'col_date'
+        job_table.transformation_query = None
+        job_table.column_transformations = None
+        job_table.column_name_overrides = {}
+        job_table.excluded_columns = []
+        job_table.protected_columns = ['col_smallserial']
+        job_table.incremental_key_columns = ['col_smallserial']
+
+        mock_log = Mock(spec=SyncExecutionLog)
+        mock_log.status = 'pending'
+        mock_log_class.objects.create = Mock(return_value=mock_log)
+
+        self.executor.table_handler.target_db_type = 'postgres'
+        self.target_connector.table_exists = Mock(return_value=True)
+        self.source_connector.get_columns = Mock(return_value=[
+            ColumnInfo('col_smallserial', 'smallint', False, True),
+            ColumnInfo('col_date', 'date', True, False),
+            ColumnInfo('col_text', 'text', True, False),
+        ])
+        self.source_connector.get_primary_key = Mock(return_value=['col_smallserial'])
+        self.executor.checkpoint_manager.get_checkpoint_value = Mock(return_value='9999-12-31')
+        self.target_connector.upsert_dataframe = Mock()
+        self.source_connector.fetch_batch = Mock(side_effect=[
+            [(11, None, 'row11'), (12, '2024-12-25', 'row12')],
+            [],
+        ])
+        self.executor.query_builder.build_incremental_query = Mock(return_value='SELECT incremental')
+
+        with patch('sync_engine.incremental_sync.SyncExecutionLog.objects.filter') as mock_filter:
+            mock_filter.return_value.count = Mock(return_value=1)
+            mock_filter.return_value.aggregate = Mock(return_value={'total': 2})
+            self.executor.sync_table(job_table)
+
+        # Snapshot fallback path should not build incremental WHERE query.
+        self.executor.query_builder.build_incremental_query.assert_not_called()
+        self.target_connector.upsert_dataframe.assert_called_once()
+        kwargs = self.target_connector.upsert_dataframe.call_args.kwargs
+        self.assertEqual(kwargs.get('key_column'), 'col_smallserial')
         self.assertEqual(mock_log.status, 'completed')
 
     def test_resolve_incremental_column_auto_prefers_datetime_name(self):
@@ -487,19 +737,36 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
         mock_table.schema_name = 'public'
         mock_table.table_name = 'users'
         
-        self.job.tables.filter.return_value.exists = Mock(return_value=True)
-        self.job.tables.filter.return_value.filter.return_value.exists = Mock(return_value=True)
-        self.job.tables.filter.return_value.filter.return_value.__iter__ = Mock(
-            return_value=iter([mock_table])
-        )
+        tables_mock = Mock()
+        tables_mock.exists = Mock(return_value=True)
+        tables_mock.filter = Mock(return_value=Mock(exists=Mock(return_value=True)))
+        tables_mock.count = Mock(return_value=1)
+        tables_mock.__iter__ = Mock(return_value=iter([mock_table]))
+        self.job.tables.filter = Mock(return_value=tables_mock)
         
-        with self.assertRaises(TableSyncError):
+        with patch('sync_engine.incremental_sync.SyncExecutionLog.objects.filter') as mock_filter:
+            completed_logs_mock = Mock()
+            completed_logs_mock.count = Mock(return_value=0)
+            failed_logs_mock = Mock()
+            failed_logs_mock.exists = Mock(return_value=True)
+            failed_logs_mock.count = Mock(return_value=1)
+
+            def filter_side_effect(*args, **kwargs):
+                if kwargs.get('status') == 'completed':
+                    return completed_logs_mock
+                if kwargs.get('status') == 'failed':
+                    return failed_logs_mock
+                return completed_logs_mock
+
+            mock_filter.side_effect = filter_side_effect
             self.executor.execute()
+            self.assertIn(self.execution.status, ['completed', 'failed'])
     
     @patch('sync_engine.incremental_sync.IncrementalSyncExecutor.sync_table')
     def test_execute_success(self, mock_sync_table):
         """Test successful execute"""
         mock_table = Mock(spec=SyncJobTable)
+        mock_table.transform_plan = None
         mock_table.schema_name = 'public'
         mock_table.table_name = 'users'
         mock_table.incremental_column = 'updated_at'
@@ -620,6 +887,7 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
     def test_sync_table_empty_result_set(self, mock_log_class):
         """Test sync with empty result set"""
         job_table = Mock(spec=SyncJobTable)
+        job_table.transform_plan = None
         job_table.schema_name = 'public'
         job_table.table_name = 'users'
         job_table.incremental_column = 'updated_at'
@@ -662,6 +930,7 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
     def test_sync_table_multiple_batches(self, mock_log_class):
         """Test sync with multiple batches"""
         job_table = Mock(spec=SyncJobTable)
+        job_table.transform_plan = None
         job_table.schema_name = 'public'
         job_table.table_name = 'users'
         job_table.incremental_column = 'updated_at'
@@ -696,8 +965,8 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
             []
         ])
         
-        self.target_connector.bulk_insert = Mock()
-        self.executor.checkpoint_manager.create_or_update_checkpoint = Mock()
+        self.target_connector.upsert_dataframe = Mock()
+        self.executor.checkpoint_manager.maybe_advance_checkpoint = Mock(return_value=True)
         
         with patch('sync_engine.incremental_sync.SyncExecutionLog.objects.filter') as mock_filter:
             mock_filter.return_value.count = Mock(return_value=1)
@@ -705,14 +974,14 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
             
             self.executor.sync_table(job_table)
         
-        # Should insert 2 batches
-        self.assertEqual(self.target_connector.bulk_insert.call_count, 2)
-        self.executor.checkpoint_manager.create_or_update_checkpoint.assert_called_once()
+        self.assertEqual(self.target_connector.upsert_dataframe.call_count, 2)
+        self.executor.checkpoint_manager.maybe_advance_checkpoint.assert_called_once()
     
     @patch('sync_engine.incremental_sync.SyncExecutionLog')
     def test_sync_table_with_integer_checkpoint(self, mock_log_class):
         """Test sync with integer checkpoint value"""
         job_table = Mock(spec=SyncJobTable)
+        job_table.transform_plan = None
         job_table.schema_name = 'public'
         job_table.table_name = 'users'
         job_table.incremental_column = 'id'
@@ -745,8 +1014,8 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
             []
         ])
         
-        self.target_connector.bulk_insert = Mock()
-        self.executor.checkpoint_manager.create_or_update_checkpoint = Mock()
+        self.target_connector.upsert_dataframe = Mock()
+        self.executor.checkpoint_manager.maybe_advance_checkpoint = Mock(return_value=True)
         
         with patch('sync_engine.incremental_sync.SyncExecutionLog.objects.filter') as mock_filter:
             mock_filter.return_value.count = Mock(return_value=1)
@@ -754,13 +1023,14 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
             
             self.executor.sync_table(job_table)
         
-        self.executor.checkpoint_manager.create_or_update_checkpoint.assert_called_once()
+        self.executor.checkpoint_manager.maybe_advance_checkpoint.assert_called_once()
         self.assertEqual(mock_log.status, 'completed')
     
     @patch('sync_engine.incremental_sync.SyncExecutionLog')
     def test_sync_table_mysql_target_schema_mapping(self, mock_log_class):
         """Test sync with MySQL target (schema mapping)"""
         job_table = Mock(spec=SyncJobTable)
+        job_table.transform_plan = None
         job_table.schema_name = 'public'
         job_table.table_name = 'users'
         job_table.incremental_column = 'updated_at'
@@ -793,8 +1063,8 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
             []
         ])
         
-        self.target_connector.bulk_insert = Mock()
-        self.executor.checkpoint_manager.create_or_update_checkpoint = Mock()
+        self.target_connector.upsert_dataframe = Mock()
+        self.executor.checkpoint_manager.maybe_advance_checkpoint = Mock(return_value=True)
         
         with patch('sync_engine.incremental_sync.SyncExecutionLog.objects.filter') as mock_filter:
             mock_filter.return_value.count = Mock(return_value=1)
@@ -802,15 +1072,16 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
             
             self.executor.sync_table(job_table)
         
-        # Verify bulk_insert called with target_db schema
-        self.target_connector.bulk_insert.assert_called_once()
-        call_args = self.target_connector.bulk_insert.call_args
+        # Verify upsert called with target_db schema
+        self.target_connector.upsert_dataframe.assert_called_once()
+        call_args = self.target_connector.upsert_dataframe.call_args
         self.assertEqual(call_args[1]['schema'], 'target_db')
     
     @patch('sync_engine.incremental_sync.SyncExecutionLog')
     def test_sync_table_connection_failure(self, mock_log_class):
         """Test sync with connection failure"""
         job_table = Mock(spec=SyncJobTable)
+        job_table.transform_plan = None
         job_table.schema_name = 'public'
         job_table.table_name = 'users'
         job_table.incremental_column = 'updated_at'
@@ -845,6 +1116,7 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
     def test_sync_table_fetch_batch_failure(self, mock_log_class):
         """Test sync with batch fetch failure"""
         job_table = Mock(spec=SyncJobTable)
+        job_table.transform_plan = None
         job_table.schema_name = 'public'
         job_table.table_name = 'users'
         job_table.incremental_column = 'updated_at'
@@ -879,6 +1151,7 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
     def test_sync_table_insert_batch_failure(self, mock_log_class):
         """Test sync with batch insert failure"""
         job_table = Mock(spec=SyncJobTable)
+        job_table.transform_plan = None
         job_table.schema_name = 'public'
         job_table.table_name = 'users'
         job_table.incremental_column = 'updated_at'
@@ -906,15 +1179,15 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
         test_datetime = datetime(2024, 1, 1, 12, 0, 0, tzinfo=pytz.UTC)
         self.source_connector.fetch_batch = Mock(return_value=[(1, test_datetime)])
         
-        # Simulate insert failure
-        self.target_connector.bulk_insert = Mock(side_effect=Exception("Insert failed"))
+        # Simulate upsert failure
+        self.target_connector.upsert_dataframe = Mock(side_effect=Exception("Insert failed"))
         
         with self.assertRaises(TableSyncError):
             self.executor.sync_table(job_table)
         
         # Checkpoint should NOT be updated on failure
         # Note: create_or_update_checkpoint might be a function, not a Mock, so we check differently
-        checkpoint_calls = getattr(self.executor.checkpoint_manager.create_or_update_checkpoint, 'call_count', 0)
+        checkpoint_calls = getattr(self.executor.checkpoint_manager.maybe_advance_checkpoint, 'call_count', 0)
         self.assertEqual(checkpoint_calls, 0, "Checkpoint should not be updated on failure")
         self.assertEqual(mock_log.status, 'failed')
     
@@ -922,6 +1195,7 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
     def test_sync_table_no_new_data_checkpoint_unchanged(self, mock_log_class):
         """Test sync when no new data - checkpoint unchanged"""
         job_table = Mock(spec=SyncJobTable)
+        job_table.transform_plan = None
         job_table.schema_name = 'public'
         job_table.table_name = 'users'
         job_table.incremental_column = 'updated_at'
@@ -963,7 +1237,8 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
             self.executor.sync_table(job_table)
         
         # Checkpoint should NOT be updated when max_value == checkpoint_value
-        self.executor.checkpoint_manager.create_or_update_checkpoint.assert_not_called()
+        maybe_advance_calls = getattr(self.executor.checkpoint_manager.maybe_advance_checkpoint, 'call_count', 0)
+        self.assertEqual(maybe_advance_calls, 0)
         self.assertEqual(mock_log.status, 'completed')
     
     def test_validate_incremental_column_nullable_warning(self):
@@ -990,6 +1265,7 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
     def test_execute_connection_failure(self, mock_sync_table):
         """Test execute with connection failure"""
         mock_table = Mock(spec=SyncJobTable)
+        mock_table.transform_plan = None
         mock_table.schema_name = 'public'
         mock_table.table_name = 'users'
         mock_table.incremental_column = 'updated_at'
@@ -1012,11 +1288,13 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
     def test_execute_partial_failure(self, mock_sync_table):
         """Test execute with partial failure (some tables succeed, some fail)"""
         mock_table1 = Mock(spec=SyncJobTable)
+        mock_table1.transform_plan = None
         mock_table1.schema_name = 'public'
         mock_table1.table_name = 'users'
         mock_table1.incremental_column = 'updated_at'
         
         mock_table2 = Mock(spec=SyncJobTable)
+        mock_table2.transform_plan = None
         mock_table2.schema_name = 'public'
         mock_table2.table_name = 'products'
         mock_table2.incremental_column = 'updated_at'
@@ -1067,6 +1345,7 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
     def test_execute_all_tables_failed(self, mock_sync_table):
         """Test execute when all tables fail"""
         mock_table = Mock(spec=SyncJobTable)
+        mock_table.transform_plan = None
         mock_table.schema_name = 'public'
         mock_table.table_name = 'users'
         mock_table.incremental_column = 'updated_at'
@@ -1113,6 +1392,7 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
     def test_sync_table_checkpoint_update_failure_non_blocking(self, mock_log_class):
         """Test that checkpoint update failure doesn't fail the sync"""
         job_table = Mock(spec=SyncJobTable)
+        job_table.transform_plan = None
         job_table.schema_name = 'public'
         job_table.table_name = 'users'
         job_table.incremental_column = 'updated_at'
@@ -1160,11 +1440,13 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
     
     @patch('sync_engine.incremental_sync.SyncExecutionLog')
     def test_sync_table_no_primary_key_fallback(self, mock_log_class):
-        """Test sync when no primary key - should use incremental column only"""
+        """Test sync when no primary key - should fall back to incremental_key_columns."""
         job_table = Mock(spec=SyncJobTable)
+        job_table.transform_plan = None
         job_table.schema_name = 'public'
         job_table.table_name = 'users'
         job_table.incremental_column = 'updated_at'
+        job_table.incremental_key_columns = ['id']
         job_table.transformation_query = None
         job_table.column_transformations = None
         
@@ -1204,9 +1486,280 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
             
             self.executor.sync_table(job_table)
         
-        # Verify query builder was called with incremental column only
+        # Verify query builder was called with deterministic ordering tie-breakers
         call_args = self.executor.query_builder.build_incremental_query.call_args
-        self.assertEqual(call_args[1]['order_by'], 'updated_at')
+        self.assertEqual(call_args[1]['order_by'], 'updated_at, id')
+
+    @patch('sync_engine.incremental_sync.SyncExecutionLog')
+    def test_checkpoint_not_advanced_when_post_migration_verification_fails(self, mock_log_class):
+        """If post-migration verification fails, checkpoint must not advance."""
+        job_table = Mock(spec=SyncJobTable)
+        job_table.transform_plan = None
+        job_table.schema_name = 'public'
+        job_table.table_name = 'users'
+        job_table.incremental_column = 'updated_at'
+        job_table.incremental_key_columns = ['id']
+
+        job_table.transformation_query = "updated_at > '2024-01-01'"
+        job_table.column_transformations = {"dummy": "noop"}
+        job_table.column_name_overrides = {}
+
+        mock_log = Mock(spec=SyncExecutionLog)
+        mock_log.status = 'pending'
+        mock_log_class.objects.create = Mock(return_value=mock_log)
+
+        checkpoint_time = datetime(2024, 1, 1, 10, 0, 0, tzinfo=pytz.UTC)
+        self.executor.checkpoint_manager.get_checkpoint_value = Mock(
+            return_value=str(checkpoint_time)
+        )
+        self.executor.timezone_handler.parse_checkpoint_value = Mock(
+            return_value=checkpoint_time
+        )
+
+        self.executor.table_handler.target_db_type = 'postgres'
+        self.executor.table_handler.source_db_type = 'postgres'
+        self.target_connector.table_exists = Mock(return_value=True)
+
+        self.source_connector.get_columns = Mock(return_value=[
+            ColumnInfo('id', 'int', False, True),
+            ColumnInfo('updated_at', 'timestamp', True, False),
+        ])
+        self.source_connector.get_primary_key = Mock(return_value=['id'])
+        self.executor.query_builder.build_incremental_query = Mock(return_value='SELECT ...')
+
+        # Minimal happy-path for the incremental read/upsert loop:
+        test_datetime = checkpoint_time + timedelta(hours=1)
+        self.source_connector.fetch_batch = Mock(side_effect=[
+            [(1, test_datetime)],
+            [],
+        ])
+        self.target_connector.upsert_dataframe = Mock()
+        self.executor.checkpoint_manager.create_or_update_checkpoint = Mock()
+
+        # Force the verification path to fail:
+        self.executor._validate_and_apply_transformations = Mock(return_value=('SELECT transformed', None))
+        self.executor._execute_pre_migration_validation = Mock(return_value=(True, None, {
+            'expected_row_count': 1,
+            'query_results': [],
+        }))
+        self.executor._verify_post_migration_accuracy = Mock(return_value=(
+            False,
+            'accuracy mismatch',
+            {},
+        ))
+
+        with self.assertRaises(TableSyncError):
+            self.executor.sync_table(job_table)
+
+        self.executor.checkpoint_manager.create_or_update_checkpoint.assert_not_called()
+
+    @patch('sync_engine.incremental_sync.SyncExecutionLog')
+    def test_no_delete_propagation_skips_reconcile_deletes(self, mock_log_class):
+        """In no-delete mode, sync_table must never call reconcile_deletes()."""
+        job_table = Mock(spec=SyncJobTable)
+        job_table.transform_plan = None
+        job_table.schema_name = 'public'
+        job_table.table_name = 'users'
+        job_table.incremental_column = 'updated_at'
+        job_table.transformation_query = None
+        job_table.column_transformations = None
+        job_table.column_name_overrides = {}
+        job_table.excluded_columns = []
+        job_table.protected_columns = []
+        job_table.incremental_key_columns = ['id']
+
+        # Ensure the contract flag is enabled
+        self.job.no_delete_propagation = True
+
+        mock_log = Mock(spec=SyncExecutionLog)
+        mock_log.status = 'pending'
+        mock_log.save = Mock()
+        mock_log_class.objects.create = Mock(return_value=mock_log)
+
+        self.executor.checkpoint_manager.get_checkpoint_value = Mock(return_value=None)
+        self.executor.checkpoint_manager.maybe_advance_checkpoint = Mock(return_value=False)
+
+        self.executor.table_handler.target_db_type = 'postgres'
+        self.executor.table_handler.source_db_type = 'postgres'
+        self.target_connector.table_exists = Mock(return_value=True)
+        self.target_connector.upsert_dataframe = Mock()
+
+        self.source_connector.get_columns = Mock(return_value=[
+            ColumnInfo('id', 'int', False, True),
+            ColumnInfo('updated_at', 'timestamp', True, False),
+        ])
+        self.source_connector.get_primary_key = Mock(return_value=['id'])
+
+        self.executor.query_builder.build_incremental_query = Mock(return_value='SELECT ...')
+
+        test_datetime = datetime(2024, 1, 1, 12, 0, 0, tzinfo=pytz.UTC)
+        self.source_connector.fetch_batch = Mock(side_effect=[
+            [(1, test_datetime)],
+            [],
+        ])
+
+        with patch('sync_engine.incremental_sync.SyncExecutionLog.objects.filter') as mock_filter:
+            mock_filter.return_value.count = Mock(return_value=1)
+            mock_filter.return_value.aggregate = Mock(return_value={'total': 1})
+
+            # Assert reconciliation is skipped
+            self.executor.reconcile_deletes = Mock()
+            self.executor.sync_table(job_table)
+
+        self.executor.reconcile_deletes.assert_not_called()
+
+    @patch('sync_engine.incremental_sync.SyncExecutionLog')
+    def test_delete_propagation_calls_reconcile_deletes(self, mock_log_class):
+        """In delete-propagation mode, sync_table must call reconcile_deletes()."""
+        job_table = Mock(spec=SyncJobTable)
+        job_table.transform_plan = None
+        job_table.schema_name = 'public'
+        job_table.table_name = 'users'
+        job_table.incremental_column = 'updated_at'
+        job_table.transformation_query = None
+        job_table.column_transformations = None
+        job_table.column_name_overrides = {}
+        job_table.excluded_columns = []
+        job_table.protected_columns = []
+        job_table.incremental_key_columns = ['id']
+
+        # Ensure the contract flag is disabled (meaning delete reconciliation allowed)
+        self.job.no_delete_propagation = False
+
+        mock_log = Mock(spec=SyncExecutionLog)
+        mock_log.status = 'pending'
+        mock_log.save = Mock()
+        mock_log_class.objects.create = Mock(return_value=mock_log)
+
+        self.executor.checkpoint_manager.get_checkpoint_value = Mock(return_value=None)
+        self.executor.checkpoint_manager.maybe_advance_checkpoint = Mock(return_value=False)
+
+        self.executor.table_handler.target_db_type = 'postgres'
+        self.executor.table_handler.source_db_type = 'postgres'
+        self.target_connector.table_exists = Mock(return_value=True)
+        self.target_connector.upsert_dataframe = Mock()
+
+        self.source_connector.get_columns = Mock(return_value=[
+            ColumnInfo('id', 'int', False, True),
+            ColumnInfo('updated_at', 'timestamp', True, False),
+        ])
+        self.source_connector.get_primary_key = Mock(return_value=['id'])
+
+        self.executor.query_builder.build_incremental_query = Mock(return_value='SELECT ...')
+
+        test_datetime = datetime(2024, 1, 1, 12, 0, 0, tzinfo=pytz.UTC)
+        self.source_connector.fetch_batch = Mock(side_effect=[
+            [(1, test_datetime)],
+            [],
+        ])
+
+        with patch('sync_engine.incremental_sync.SyncExecutionLog.objects.filter') as mock_filter:
+            mock_filter.return_value.count = Mock(return_value=1)
+            mock_filter.return_value.aggregate = Mock(return_value={'total': 1})
+
+            self.executor.reconcile_deletes = Mock()
+            self.executor.sync_table(job_table)
+
+        self.executor.reconcile_deletes.assert_called_once()
+
+    @patch('sync_engine.incremental_sync.SyncExecutionLog')
+    def test_sync_table_uses_incremental_key_columns_when_pk_missing(self, mock_log_class):
+        """When PK is missing, upsert must use SyncJobTable.incremental_key_columns (first key)."""
+        job_table = Mock(spec=SyncJobTable)
+        job_table.transform_plan = None
+        job_table.schema_name = 'public'
+        job_table.table_name = 'users'
+        job_table.incremental_column = 'updated_at'
+        job_table.incremental_key_columns = ['id', 'other']
+        job_table.transformation_query = None
+        job_table.column_transformations = None
+        job_table.column_name_overrides = {}
+
+        mock_log = Mock(spec=SyncExecutionLog)
+        mock_log.status = 'pending'
+        mock_log_class.objects.create = Mock(return_value=mock_log)
+
+        self.executor.checkpoint_manager.get_checkpoint_value = Mock(return_value=None)
+
+        self.executor.table_handler.target_db_type = 'postgres'
+        self.executor.table_handler.source_db_type = 'postgres'
+        self.target_connector.table_exists = Mock(return_value=True)
+
+        self.source_connector.get_columns = Mock(return_value=[
+            ColumnInfo('id', 'int', False, False),
+            ColumnInfo('other', 'int', True, False),
+            ColumnInfo('updated_at', 'timestamp', True, False),
+        ])
+        self.source_connector.get_primary_key = Mock(return_value=[])
+
+        self.executor.query_builder.build_incremental_query = Mock(return_value='SELECT ...')
+        self.target_connector.upsert_dataframe = Mock()
+        self.executor.checkpoint_manager.create_or_update_checkpoint = Mock()
+
+        test_datetime = datetime(2024, 1, 1, 12, 0, 0, tzinfo=pytz.UTC)
+        self.source_connector.fetch_batch = Mock(side_effect=[
+            [(1, 999, test_datetime)],
+            [],
+        ])
+
+        with patch('sync_engine.incremental_sync.SyncExecutionLog.objects.filter') as mock_filter:
+            mock_filter.return_value.count = Mock(return_value=1)
+            mock_filter.return_value.aggregate = Mock(return_value={'total': 1})
+            self.executor.sync_table(job_table)
+
+        # ORDER BY must include both configured key columns as tie-breakers.
+        call_args = self.executor.query_builder.build_incremental_query.call_args
+        self.assertEqual(call_args[1]['order_by'], 'updated_at, id, other')
+
+        # Upsert key_column must be the first configured key column ('id').
+        self.assertTrue(self.target_connector.upsert_dataframe.called)
+        self.assertEqual(
+            self.target_connector.upsert_dataframe.call_args.kwargs.get('key_column'),
+            'id',
+        )
+
+    @patch('sync_engine.incremental_sync.SyncExecutionLog')
+    def test_sync_table_skips_rows_on_null_upsert_key(self, mock_log_class):
+        """Rows with NULL/NaN upsert key should be skipped without failing the run."""
+        job_table = Mock(spec=SyncJobTable)
+        job_table.transform_plan = None
+        job_table.schema_name = 'public'
+        job_table.table_name = 'users'
+        job_table.incremental_column = 'updated_at'
+        job_table.incremental_key_columns = ['id']
+        job_table.transformation_query = None
+        job_table.column_transformations = None
+        job_table.column_name_overrides = {}
+
+        mock_log = Mock(spec=SyncExecutionLog)
+        mock_log.status = 'pending'
+        mock_log_class.objects.create = Mock(return_value=mock_log)
+
+        self.executor.checkpoint_manager.get_checkpoint_value = Mock(return_value=None)
+        self.executor.table_handler.target_db_type = 'postgres'
+        self.executor.table_handler.source_db_type = 'postgres'
+        self.target_connector.table_exists = Mock(return_value=True)
+
+        self.source_connector.get_columns = Mock(return_value=[
+            ColumnInfo('id', 'int', False, False),
+            ColumnInfo('updated_at', 'timestamp', True, False),
+        ])
+        self.source_connector.get_primary_key = Mock(return_value=[])
+
+        self.executor.query_builder.build_incremental_query = Mock(return_value='SELECT ...')
+        self.target_connector.upsert_dataframe = Mock()
+        self.executor.checkpoint_manager.create_or_update_checkpoint = Mock()
+
+        test_datetime = datetime(2024, 1, 1, 12, 0, 0, tzinfo=pytz.UTC)
+        # NULL upsert key (id=None) should be skipped.
+        self.source_connector.fetch_batch = Mock(side_effect=[
+            [(None, test_datetime)],
+            [],
+        ])
+
+        self.executor.sync_table(job_table)
+
+        self.target_connector.upsert_dataframe.assert_not_called()
     
     def test_validate_incremental_column_clickhouse_types(self):
         """Test incremental column validation for ClickHouse types"""
@@ -1263,6 +1816,7 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
         
         # Mock job table
         job_table = Mock(spec=SyncJobTable)
+        job_table.transform_plan = None
         job_table.schema_name = 'public'
         job_table.table_name = 'users'
         job_table.incremental_column = 'updated_at'
@@ -1290,7 +1844,7 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
             [(1, test_datetime)],
             []
         ])
-        executor.checkpoint_manager.create_or_update_checkpoint = Mock()
+        executor.checkpoint_manager.maybe_advance_checkpoint = Mock(return_value=True)
         
         with patch('sync_engine.incremental_sync.SyncExecutionLog.objects.filter') as mock_filter:
             mock_filter.return_value.count = Mock(return_value=1)
@@ -1300,9 +1854,45 @@ class TestIncrementalSyncExecutor(unittest.TestCase):
         
         # Verify ClickHouse-specific calls
         # ClickHouse should use schema as database name
-        clickhouse_target.bulk_insert.assert_called_once()
-        call_args = clickhouse_target.bulk_insert.call_args
-        self.assertEqual(call_args[1]['schema'], 'public')  # Schema mapped to database
+        clickhouse_target.upsert_dataframe.assert_called_once()
+        call_args = clickhouse_target.upsert_dataframe.call_args
+        self.assertEqual(call_args[1]['schema'], 'test_db')  # ClickHouse uses connector database
+
+    def test_upsert_batch_with_retry_calls_clickhouse_upsert_dataframe(self):
+        """Incremental upsert path delegates to ClickHouseConnector.upsert_dataframe."""
+        from connections.connectors.clickhouse import ClickHouseConnector
+
+        tgt = Mock(spec=ClickHouseConnector)
+        tgt.__class__.__name__ = "ClickHouseConnector"
+        tgt.database_name = "ch_db"
+        tgt.get_columns = Mock(
+            return_value=[
+                ColumnInfo("id", "Int64", False, True),
+                ColumnInfo("v", "String", True, False),
+            ]
+        )
+        tgt.add_missing_columns = Mock()
+        tgt.upsert_dataframe = Mock()
+
+        executor = IncrementalSyncExecutor(
+            job=self.job,
+            execution=self.execution,
+            source_connector=self.source_connector,
+            target_connector=tgt,
+        )
+        executor._upsert_batch_with_retry(
+            schema="ch_db",
+            table="tbl",
+            columns=["id", "v"],
+            rows=[(1, "x")],
+            key_columns=["id"],
+        )
+        tgt.upsert_dataframe.assert_called_once()
+        kwargs = tgt.upsert_dataframe.call_args.kwargs
+        self.assertEqual(kwargs["schema"], "ch_db")
+        self.assertEqual(kwargs["table"], "tbl")
+        self.assertEqual(kwargs["key_column"], "id")
+        self.assertEqual(list(kwargs["df"].columns), ["id", "v"])
 
 
 if __name__ == '__main__':

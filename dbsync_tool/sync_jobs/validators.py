@@ -93,6 +93,25 @@ def validate_interval_hours(raw, schedule_type) -> int:
     return n
 
 
+def validate_incremental_overlap_seconds(raw) -> int:
+    """
+    Validate incremental overlap window in seconds.
+    Defaults to 120 when omitted.
+    """
+    if raw is None:
+        return 120
+    s = raw.strip() if isinstance(raw, str) else str(raw)
+    if not s:
+        return 120
+    try:
+        n = int(s)
+    except ValueError:
+        raise ValidationError("Incremental overlap seconds must be a whole number between 0 and 86400.")
+    if n < 0 or n > 86400:
+        raise ValidationError("Incremental overlap seconds must be between 0 and 86400.")
+    return n
+
+
 def validate_schedule_type(schedule_type):
     """
     Validate schedule type

@@ -121,7 +121,13 @@
         </div>
         <div class="col-md-3">
             <div class="stat-card">
-                <div class="stat-label">Rows Synced</div>
+                <div class="stat-label">
+                    {% if job.sync_type == 'incremental' %}
+                        Rows Processed (Upserted)
+                    {% else %}
+                        Rows Synced
+                    {% endif %}
+                </div>
                 <div class="stat-value">{{ execution.total_rows_synced|intcomma }}</div>
             </div>
         </div>
@@ -168,7 +174,13 @@
                             <th>Status</th>
                             <th>Batches</th>
                             <th>Rows Fetched</th>
-                            <th>Rows Inserted</th>
+                            <th>
+                                {% if job.sync_type == 'incremental' %}
+                                    Rows Upserted
+                                {% else %}
+                                    Rows Inserted
+                                {% endif %}
+                            </th>
                             <th>Duration</th>
                             <th>Verification</th>
                             <th>Error</th>
@@ -213,8 +225,11 @@
                             </td>
                             <td>
                                 {% if log.error_message %}
-                                    <button class="btn btn-sm btn-outline-danger" 
-                                            data-bs-toggle="modal" 
+                                    <div class="small text-danger mb-1" title="{{ log.error_message }}">
+                                        {{ log.error_message|truncatechars:120 }}
+                                    </div>
+                                    <button class="btn btn-sm btn-outline-danger"
+                                            data-bs-toggle="modal"
                                             data-bs-target="#errorModal{{ log.id }}">
                                         View Error
                                     </button>
@@ -289,7 +304,8 @@ function exportLogs(format) {
 }
 
 function exportToCSV(logs) {
-    const headers = ['Schema', 'Table', 'Status', 'Batches', 'Rows Fetched', 'Rows Inserted', 'Started At', 'Completed At', 'Error'];
+    const rowCountHeader = {% if job.sync_type == 'incremental' %}'Rows Upserted'{% else %}'Rows Inserted'{% endif %};
+    const headers = ['Schema', 'Table', 'Status', 'Batches', 'Rows Fetched', rowCountHeader, 'Started At', 'Completed At', 'Error'];
     const rows = logs.map(log => [
         log.schema,
         log.table,

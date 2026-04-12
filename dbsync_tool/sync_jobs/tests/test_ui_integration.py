@@ -12,6 +12,8 @@ import pytz
 
 from sync_jobs.models import SyncJob, SyncJobTable, SyncExecution, SyncExecutionLog, SyncCheckpoint
 from connections.models import DatabaseConnection
+from accounts.models import Role, UserProfile
+from django.utils import timezone
 
 
 class IncrementalSyncUITestCase(TestCase):
@@ -26,7 +28,10 @@ class IncrementalSyncUITestCase(TestCase):
             password='testpass123'
         )
         self.client.login(username='testuser', password='testpass123')
-        
+        UserProfile.objects.update_or_create(
+            user=self.user, defaults={'role': Role.ADMIN, 'tenant': self.user}
+        )
+
         # Create test connections
         self.source_conn = DatabaseConnection.objects.create(
             name='Test Source',
@@ -36,7 +41,9 @@ class IncrementalSyncUITestCase(TestCase):
             username='test',
             password='test',
             database_name='test_source',
-            created_by=self.user
+            created_by=self.user,
+            tenant=self.user,
+            last_tested_at=timezone.now(),
         )
         
         self.target_conn = DatabaseConnection.objects.create(
@@ -47,26 +54,29 @@ class IncrementalSyncUITestCase(TestCase):
             username='test',
             password='test',
             database_name='test_target',
-            created_by=self.user
+            created_by=self.user,
+            tenant=self.user,
+            last_tested_at=timezone.now(),
         )
     
     def test_create_job_step3_incremental_sync_display(self):
-        """Test that Step 3 shows incremental column selection for incremental sync"""
-        # Navigate to Step 3 (requires session data from Step 1 and Step 2)
-        # For this test, we'll check the template directly
+        """Schedule step shows incremental sync options (wizard step 5)."""
         session = self.client.session
-        session['job_name'] = 'Test Job'
-        session['source_connection_id'] = str(self.source_conn.id)
-        session['target_connection_id'] = str(self.target_conn.id)
-        session['selected_tables'] = [
+        session['sync_job_name'] = 'Test Job'
+        session['sync_job_source_connection_type'] = 'database'
+        session['sync_job_source_connection_id'] = str(self.source_conn.id)
+        session['sync_job_target_connection_id'] = str(self.target_conn.id)
+        session['sync_job_selected_tables'] = [
             {'schema_name': 'public', 'table_name': 'users'}
         ]
         session.save()
-        
-        response = self.client.get(reverse('sync_jobs:create_step3'))
-        
+        from sync_jobs.tests.wizard_helpers import seed_transform_plans_in_session
+
+        seed_transform_plans_in_session(self.client, source_db_type='postgres')
+
+        response = self.client.get(reverse('sync_jobs:create_step4'))
+
         self.assertEqual(response.status_code, 200)
-        # Verify incremental sync option is present
         self.assertContains(response, 'incremental')
         self.assertContains(response, 'Incremental Sync')
     

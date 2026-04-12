@@ -32,6 +32,7 @@ class FullSyncColumnExclusionTests(unittest.TestCase):
         job_table.column_transformations = {}
         job_table.column_type_overrides = {}
         job_table.column_name_overrides = {}
+        job_table.transform_plan = None
         job_table.excluded_columns = ["email"]
         job_table.protected_columns = []
 

@@ -212,7 +212,9 @@ function updateLogRow(row, log) {
     
     // Error column
     if (log.error_message) {
+        const shortErr = escapeHtml(log.error_message.length > 120 ? `${log.error_message.slice(0, 117)}...` : log.error_message);
         cells[7].innerHTML = `
+            <div class="small text-danger mb-1" title="${escapeHtmlAttr(log.error_message)}">${shortErr}</div>
             <button class="btn btn-sm btn-outline-danger" 
                     data-bs-toggle="modal" 
                     data-bs-target="#errorModal${log.id}">
@@ -254,7 +256,7 @@ function addLogRow(tbody, log) {
         ? `<span class="badge bg-info" title="${escapeHtmlAttr(ver)}">${escapeHtml(ver.split(/\s+/).slice(0, 8).join(' '))}</span>`
         : '-';
     const errCell = log.error_message
-        ? `<button class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#errorModal${log.id}">View Error</button>`
+        ? `<div class="small text-danger mb-1" title="${escapeHtmlAttr(log.error_message)}">${escapeHtml((log.error_message.length > 120 ? `${log.error_message.slice(0, 117)}...` : log.error_message))}</div><button class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#errorModal${log.id}">View Error</button>`
         : '-';
     
     row.innerHTML = `

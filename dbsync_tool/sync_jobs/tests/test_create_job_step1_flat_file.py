@@ -102,13 +102,14 @@ class CreateJobStep1FlatFileTestCase(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Selected connection not found or inactive.')
 
-    def test_flat_file_incremental_sync_rejected(self):
+    def test_flat_file_incremental_sync_rejected_without_stable_key(self):
         session = self.client.session
         session['sync_job_name'] = 'Flat Incremental'
         session['sync_job_source_connection_type'] = 'flat_file'
         session['sync_job_source_file_connection_id'] = str(self.file_source.id)
         session['sync_job_target_connection_id'] = str(self.target_db.id)
         session['sync_job_selected_tables'] = [{'schema_name': 'file', 'table_name': 'orders'}]
+        session['sync_job_protected_columns'] = {}
         session.save()
 
         response = self.client.post(
@@ -117,5 +118,61 @@ class CreateJobStep1FlatFileTestCase(TestCase):
             follow=True,
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Flat-file source currently supports full sync only.')
+        self.assertContains(
+            response,
+            'select at least one Protected column to use as stable upsert key',
+        )
+
+    def test_flat_file_incremental_sync_accepts_with_stable_key(self):
+        session = self.client.session
+        session['sync_job_name'] = 'Flat Incremental'
+        session['sync_job_source_connection_type'] = 'flat_file'
+        session['sync_job_source_file_connection_id'] = str(self.file_source.id)
+        session['sync_job_target_connection_id'] = str(self.target_db.id)
+        session['sync_job_selected_tables'] = [{'schema_name': 'file', 'table_name': 'orders'}]
+        session['sync_job_protected_columns'] = {'file.orders': ['Order ID']}
+        session.save()
+
+        response = self.client.post(
+            reverse('sync_jobs:create_step4_submit'),
+            {'sync_type': 'incremental', 'schedule_type': 'once'},
+            follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'created successfully')
+
+    def test_flat_file_hybrid_fields_persist_to_syncjobtable(self):
+        session = self.client.session
+        session['sync_job_name'] = 'Flat Incremental Hybrid'
+        session['sync_job_source_connection_type'] = 'flat_file'
+        session['sync_job_source_file_connection_id'] = str(self.file_source.id)
+        session['sync_job_target_connection_id'] = str(self.target_db.id)
+        session['sync_job_selected_tables'] = [{'schema_name': 'file', 'table_name': 'orders'}]
+        session['sync_job_protected_columns'] = {'file.orders': ['Order ID']}
+        session['sync_job_flat_file_headers'] = ['Order ID', 'Customer Name', 'Amount']
+        session.save()
+
+        response = self.client.post(
+            reverse('sync_jobs:create_step4_submit'),
+            {
+                'sync_type': 'incremental',
+                'schedule_type': 'once',
+                'flat_file_incremental_mode_file.orders': 'hybrid_hash_control',
+                'flat_file_hash_algorithm_file.orders': 'sha256',
+                'flat_file_hash_columns_file.orders': 'Order ID, Amount',
+                'flat_file_allow_hash_only_without_key_file.orders': '1',
+            },
+            follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'created successfully')
+
+        from sync_jobs.models import SyncJobTable
+
+        table = SyncJobTable.objects.filter(job__name='Flat Incremental Hybrid').first()
+        self.assertIsNotNone(table)
+        self.assertEqual(table.flat_file_incremental_mode, 'hybrid_hash_control')
+        self.assertEqual(table.flat_file_hash_algorithm, 'sha256')
+        self.assertEqual(table.flat_file_hash_columns, ['Order ID', 'Amount'])
+        self.assertFalse(table.flat_file_allow_hash_only_without_key)
 

@@ -175,23 +175,25 @@ class ClickHouseJobCreationTests(TestCase):
             self.assertEqual(response.context['source_connection'].db_type, 'clickhouse')
     
     def test_step3_clickhouse_incremental_columns(self):
-        """Test Step 3 incremental column selection for ClickHouse"""
-        # Set up session data for step 3
+        """Schedule step loads ClickHouse source metadata for incremental options."""
         session = self.client.session
         session['sync_job_name'] = 'Test ClickHouse Incremental Job'
+        session['sync_job_source_connection_type'] = 'database'
         session['sync_job_source_connection_id'] = str(self.clickhouse_conn.id)
         session['sync_job_target_connection_id'] = str(self.postgres_conn.id)
-        session['sync_job_selected_tables'] = [{'schema': 'default', 'table_name': 'test_table'}]
+        session['sync_job_selected_tables'] = [
+            {'schema_name': 'default', 'table_name': 'test_table'}
+        ]
         session.save()
-        
-        # Test Step 3 view
-        url = reverse('sync_jobs:create_step3')
+        from sync_jobs.tests.wizard_helpers import seed_transform_plans_in_session
+
+        seed_transform_plans_in_session(self.client, source_db_type='clickhouse')
+
+        url = reverse('sync_jobs:create_step4')
         response = self.client.get(url)
-        
-        # Should load successfully
-        self.assertIn(response.status_code, [200, 302])  # 302 if redirect needed
-        
-        # If successful, verify context has source connection
+
+        self.assertIn(response.status_code, [200, 302])
+
         if response.status_code == 200:
             self.assertIn('source_connection', response.context)
             self.assertEqual(response.context['source_connection'].db_type, 'clickhouse')

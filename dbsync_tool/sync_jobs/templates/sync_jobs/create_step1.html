@@ -253,7 +253,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const nextBtn = document.getElementById('next-btn');
     const oracleSourceHint = document.getElementById('oracle-source-hint');
     const oracleTargetHint = document.getElementById('oracle-target-hint');
-    
+    const sourceConnectionHidden = document.getElementById('source_connection_hidden');
+
     // Handle source connection type selection
     if (sourceTypeSelect) {
         sourceTypeSelect.addEventListener('change', function() {
@@ -306,85 +307,65 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // Function to update disabled state based on selected database types
+    // Function to update disabled state: same saved connection cannot be both source and target
+    // (e.g. Postgres → another Postgres is allowed; Postgres2 → Postgres2 is not.)
     function updateDisabledConnections() {
-        // Get selected source connection
         const sourceType = sourceConnectionTypeHidden ? sourceConnectionTypeHidden.value : '';
-        let selectedSourceId = null;
+        let selectedSourceId = '';
         let selectedSourceDbType = null;
-        
+
         if (sourceType === 'database' && sourceDbSelect) {
-            selectedSourceId = sourceDbSelect.value;
+            selectedSourceId = sourceDbSelect.value || '';
             if (selectedSourceId) {
                 const selectedOption = sourceDbSelect.options[sourceDbSelect.selectedIndex];
                 selectedSourceDbType = selectedOption ? selectedOption.dataset.dbType : null;
             }
         }
-        
-        // Get selected target connection's db_type
-        let selectedTargetDbType = null;
-        if (targetConnectionSelect && targetConnectionSelect.value) {
-            const selectedOption = targetConnectionSelect.options[targetConnectionSelect.selectedIndex];
-            selectedTargetDbType = selectedOption ? selectedOption.dataset.dbType : null;
-        }
-        
-        // Disable target connections with same db_type as selected source (only for database sources)
-        if (sourceType === 'database' && selectedSourceDbType && targetConnectionSelect) {
+
+        if (targetConnectionSelect) {
             Array.from(targetConnectionSelect.options).forEach(option => {
-                if (option.value && option.dataset.dbType === selectedSourceDbType) {
-                    option.disabled = true;
-                    // If this target is currently selected, clear it
-                    if (option.selected) {
-                        targetConnectionSelect.value = '';
-                    }
-                } else if (option.value) {
-                    option.disabled = false;
-                }
-            });
-        } else if (targetConnectionSelect) {
-            // For API sources or no source selected, enable all targets
-            Array.from(targetConnectionSelect.options).forEach(option => {
-                if (option.value) {
-                    option.disabled = false;
+                if (!option.value) return;
+                const block =
+                    sourceType === 'database' &&
+                    selectedSourceId &&
+                    option.value === selectedSourceId;
+                option.disabled = block;
+                if (block && option.selected) {
+                    targetConnectionSelect.value = '';
                 }
             });
         }
-        
-        // Disable source database connections with same db_type as selected target
-        if (selectedTargetDbType && sourceDbSelect) {
+
+        const effectiveTargetId = targetConnectionSelect ? (targetConnectionSelect.value || '') : '';
+        if (sourceDbSelect) {
             Array.from(sourceDbSelect.options).forEach(option => {
-                if (option.value && option.dataset.dbType === selectedTargetDbType) {
-                    option.disabled = true;
-                    // If this source is currently selected, clear it
-                    if (option.selected) {
-                        sourceDbSelect.value = '';
-                        sourceConnectionTypeHidden.value = '';
-                        if (sourceTypeSelect) sourceTypeSelect.value = '';
-                        sourceDbContainer.style.display = 'none';
-                        sourceDbSelect.disabled = true;
+                if (!option.value) return;
+                const block = effectiveTargetId && option.value === effectiveTargetId;
+                option.disabled = block;
+                if (block && option.selected) {
+                    sourceDbSelect.value = '';
+                    if (sourceConnectionHidden) {
+                        sourceConnectionHidden.value = '';
                     }
-                } else if (option.value) {
-                    option.disabled = false;
                 }
             });
         }
-        
-        // Re-validate form after disabling
+
         validateForm();
 
-        // Show/hide Oracle-specific hints
         if (oracleSourceHint) {
             const showSourceHint = sourceType === 'database' && selectedSourceDbType === 'oracle_adw';
             oracleSourceHint.style.display = showSourceHint ? 'block' : 'none';
         }
-        if (oracleTargetHint && selectedTargetDbType) {
-            oracleTargetHint.style.display = selectedTargetDbType === 'oracle_adw' ? 'block' : 'none';
+        if (oracleTargetHint && targetConnectionSelect) {
+            const opt = targetConnectionSelect.selectedIndex >= 0
+                ? targetConnectionSelect.options[targetConnectionSelect.selectedIndex]
+                : null;
+            const tt = opt ? opt.dataset.dbType : null;
+            oracleTargetHint.style.display = tt === 'oracle_adw' ? 'block' : 'none';
         }
     }
-    
-    // Hidden field for source connection (used for form submission)
-    const sourceConnectionHidden = document.getElementById('source_connection_hidden');
-    
+
     // Function to update hidden source_connection field
     function updateSourceConnectionHidden() {
         const sourceType = sourceConnectionTypeHidden.value;
@@ -489,31 +470,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 const errorDiv = document.createElement('div');
                 errorDiv.id = 'same-connection-error';
                 errorDiv.className = 'alert alert-danger mt-3';
-                errorDiv.textContent = 'Source and target connections cannot be the same.';
+                errorDiv.textContent = 'Source and target cannot be the same database connection.';
                 const form = document.getElementById('step1-form');
                 if (form) form.insertBefore(errorDiv, form.querySelector('.mb-4:last-of-type'));
                 return;
             }
-            
-            // Check if source and target have the same database type (only for database sources)
-            if (sourceType === 'database') {
-                const sourceOption = sourceDbSelect.options[sourceDbSelect.selectedIndex];
-                const targetOption = targetConnectionSelect.options[targetConnectionSelect.selectedIndex];
-                const sourceDbType = sourceOption ? sourceOption.dataset.dbType : null;
-                const targetDbType = targetOption ? targetOption.dataset.dbType : null;
-                
-                if (sourceDbType && targetDbType && sourceDbType === targetDbType) {
-                    if (nextBtn) nextBtn.disabled = true;
-                    const errorDiv = document.createElement('div');
-                    errorDiv.id = 'same-connection-error';
-                    errorDiv.className = 'alert alert-danger mt-3';
-                    errorDiv.textContent = 'Source and target connections cannot have the same database type.';
-                    const form = document.getElementById('step1-form');
-                    if (form) form.insertBefore(errorDiv, form.querySelector('.mb-4:last-of-type'));
-                    return;
-                }
-            }
-            
+
             if (nextBtn) nextBtn.disabled = false;
         } else {
             if (nextBtn) nextBtn.disabled = true;
@@ -547,22 +509,8 @@ document.addEventListener('DOMContentLoaded', function() {
             
             if (sourceConnection === targetConnection) {
                 e.preventDefault();
-                alert('Source and target connections cannot be the same.');
+                alert('Source and target cannot be the same database connection.');
                 return false;
-            }
-            
-            // Check if source and target have the same database type (only for database sources)
-            if (sourceType === 'database') {
-                const sourceOption = sourceDbSelect.options[sourceDbSelect.selectedIndex];
-                const targetOption = targetConnectionSelect.options[targetConnectionSelect.selectedIndex];
-                const sourceDbType = sourceOption ? sourceOption.dataset.dbType : null;
-                const targetDbType = targetOption ? targetOption.dataset.dbType : null;
-                
-                if (sourceDbType && targetDbType && sourceDbType === targetDbType) {
-                    e.preventDefault();
-                    alert('Source and target connections cannot have the same database type.');
-                    return false;
-                }
             }
         });
     }

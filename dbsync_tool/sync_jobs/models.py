@@ -55,6 +55,17 @@ class SyncJob(models.Model):
         choices=[('full', 'Full Sync'), ('incremental', 'Incremental Sync')],
         default='full'
     )
+    no_delete_propagation = models.BooleanField(
+        default=True,
+        help_text="When true, incremental sync will not propagate source-side deletes to target.",
+    )
+    incremental_overlap_seconds = models.PositiveIntegerField(
+        default=120,
+        help_text=(
+            "Safety overlap window for incremental re-reads (seconds). "
+            "Used to reduce missed rows around equal/low-precision watermark boundaries."
+        ),
+    )
     status = models.CharField(
         max_length=20,
         choices=[
@@ -180,6 +191,15 @@ class SyncJobTable(models.Model):
     schema_name = models.CharField(max_length=255)
     table_name = models.CharField(max_length=255)
     incremental_column = models.CharField(max_length=255, null=True, blank=True)
+    incremental_key_columns = models.JSONField(
+        default=list,
+        null=True,
+        blank=True,
+        help_text=(
+            "Optional ordered key columns for incremental upsert policy. "
+            "If empty, runtime uses source PK or fallback policy."
+        ),
+    )
     is_enabled = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     
@@ -221,6 +241,49 @@ class SyncJobTable(models.Model):
         null=True,
         blank=True,
         help_text="Resolved protected source columns always included in migration (lowercased).",
+    )
+    transform_plan = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Model-data transform contract: mode (single_table|join|union|lookup), base_table, "
+            "join_nodes, union_branches, union_select_columns, lookup block, "
+            "selected_output_columns, structured_filters (no raw SQL), order_by, source_db_type."
+        ),
+    )
+    flat_file_incremental_mode = models.CharField(
+        max_length=40,
+        choices=[
+            ("legacy_mtime", "Legacy mtime"),
+            ("hybrid_hash_control", "Hybrid hash + control table"),
+        ],
+        default="legacy_mtime",
+        help_text=(
+            "Flat-file incremental strategy. "
+            "'legacy_mtime' keeps existing checkpoint watermark behavior; "
+            "'hybrid_hash_control' enables file-hash control tracking and row-hash change detection."
+        ),
+    )
+    flat_file_hash_columns = models.JSONField(
+        default=list,
+        null=True,
+        blank=True,
+        help_text=(
+            "Optional source-column allowlist used to build deterministic row hashes "
+            "for flat-file hybrid incremental mode. Empty means all effective columns."
+        ),
+    )
+    flat_file_hash_algorithm = models.CharField(
+        max_length=20,
+        default="sha256",
+        help_text="Hash algorithm for flat-file row/file hashing (default: sha256).",
+    )
+    flat_file_allow_hash_only_without_key = models.BooleanField(
+        default=False,
+        help_text=(
+            "Allow hash-only dedup semantics when stable key columns are not configured "
+            "for flat-file hybrid incremental mode."
+        ),
     )
     
     class Meta:
@@ -321,6 +384,87 @@ class SyncCheckpoint(models.Model):
         return f"Checkpoint for {self.job.name} - {self.schema_name}.{self.table_name}"
 
 
+class MongoCdcCheckpoint(models.Model):
+    """
+    Checkpoint for MongoDB Change Streams (resume token per job+db+collection).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.ForeignKey(
+        SyncJob,
+        on_delete=models.CASCADE,
+        related_name="mongo_cdc_checkpoints",
+    )
+    schema_name = models.CharField(max_length=255)
+    table_name = models.CharField(max_length=255)
+    resume_token = models.TextField(
+        null=True,
+        blank=True,
+        help_text="MongoDB resume token (stored as JSON/text) for Change Streams resumption",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "mongo_cdc_checkpoints"
+        unique_together = [["job", "schema_name", "table_name"]]
+        indexes = [
+            models.Index(fields=["job", "schema_name", "table_name"]),
+        ]
+
+    def __str__(self):
+        return f"MongoCDC checkpoint for {self.job.name} - {self.schema_name}.{self.table_name}"
+
+
+class FlatFileIngestionControl(models.Model):
+    """Per-file control/audit records for flat-file hybrid incremental sync."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.ForeignKey(
+        SyncJob,
+        on_delete=models.CASCADE,
+        related_name="flat_file_controls",
+    )
+    schema_name = models.CharField(max_length=255)
+    table_name = models.CharField(max_length=255)
+    file_name = models.CharField(max_length=1024)
+    file_hash = models.CharField(max_length=128)
+    file_size_bytes = models.BigIntegerField(default=0)
+    file_mtime_utc = models.DateTimeField(null=True, blank=True)
+    rows_read = models.BigIntegerField(default=0)
+    rows_inserted = models.BigIntegerField(default=0)
+    rows_updated = models.BigIntegerField(default=0)
+    rows_skipped = models.BigIntegerField(default=0)
+    status = models.CharField(
+        max_length=20,
+        choices=[("success", "Success"), ("failed", "Failed")],
+        default="success",
+    )
+    error_message = models.TextField(null=True, blank=True)
+    processed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "flat_file_ingestion_controls"
+        ordering = ["-processed_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["job", "schema_name", "table_name", "file_name", "file_hash"],
+                name="uniq_flat_file_control_job_table_file_hash",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["job", "-processed_at"]),
+            models.Index(fields=["job", "schema_name", "table_name"]),
+            models.Index(fields=["file_name", "file_hash"]),
+            models.Index(fields=["status", "-processed_at"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.job.name} | {self.schema_name}.{self.table_name} | "
+            f"{self.file_name} [{self.status}]"
+        )
+
+
 class SyncExecution(models.Model):
     """
     Execution record for a sync job run
@@ -347,6 +491,8 @@ class SyncExecution(models.Model):
     total_tables = models.IntegerField(default=0)
     completed_tables = models.IntegerField(default=0)
     total_rows_synced = models.BigIntegerField(default=0)
+    total_source_bytes = models.BigIntegerField(default=0)
+    total_target_bytes = models.BigIntegerField(default=0)
     error_message = models.TextField(null=True, blank=True)
     memory_peak_mb = models.FloatField(null=True, blank=True)
     query_count = models.IntegerField(null=True, blank=True)
@@ -389,6 +535,8 @@ class SyncExecutionLog(models.Model):
     )
     rows_fetched = models.BigIntegerField(default=0)
     rows_inserted = models.BigIntegerField(default=0)
+    source_size_bytes = models.BigIntegerField(default=0)
+    target_size_bytes = models.BigIntegerField(default=0)
     batch_number = models.IntegerField(default=0)
     error_message = models.TextField(null=True, blank=True)
     # Verification summary for post-migration accuracy (e.g. "Rows: 100/100, Perfect accuracy: Yes")

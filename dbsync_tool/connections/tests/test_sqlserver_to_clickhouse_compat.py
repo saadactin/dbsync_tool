@@ -43,6 +43,20 @@ class ClickHouseSQLServerCompatibilityTests(TestCase):
             "generateUUIDv4()",
         )
 
+    def test_format_default_value_postgres_uuid_defaults_to_generateuuidv4(self):
+        self.assertEqual(
+            self.connector._format_default_value("uuid_generate_v4()", "UUID"),
+            "generateUUIDv4()",
+        )
+        self.assertEqual(
+            self.connector._format_default_value("public.uuid_generate_v4()", "UUID"),
+            "generateUUIDv4()",
+        )
+        self.assertEqual(
+            self.connector._format_default_value("gen_random_uuid()", "UUID"),
+            "generateUUIDv4()",
+        )
+
     def test_create_table_includes_allow_nullable_key_and_assume_not_null_for_nullable_order_by(self):
         # Mock the connection so `create_table` captures the generated DDL.
         self.connector._connection = Mock()

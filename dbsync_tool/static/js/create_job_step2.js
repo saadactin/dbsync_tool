@@ -153,6 +153,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     // Get connection ID from global variable set in template
     const connectionId = typeof SOURCE_CONNECTION_ID !== 'undefined' ? SOURCE_CONNECTION_ID : null;
+    const sourceDbType = typeof SOURCE_DB_TYPE !== 'undefined' ? SOURCE_DB_TYPE : null;
     
     console.log('Step 2: Initializing...');
     console.log('Step 2: SOURCE_CONNECTION_ID =', typeof SOURCE_CONNECTION_ID !== 'undefined' ? SOURCE_CONNECTION_ID : 'UNDEFINED');
@@ -618,29 +619,31 @@ document.addEventListener('DOMContentLoaded', function() {
                 label.htmlFor = checkbox.id;
                 label.textContent = `${schemaName}.${tableName}`;
                 
-                // Add transformation button
-                const transformBtn = document.createElement('button');
-                transformBtn.type = 'button';
-                transformBtn.className = 'btn btn-sm btn-outline-info ms-2 transform-btn';
-                transformBtn.textContent = '⚙️ Transform';
-                transformBtn.dataset.tableKey = tableKey;
-                transformBtn.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    toggleTransformationPanel(tableKey, schemaName, tableName);
-                });
-                
                 const labelWrapper = document.createElement('span');
                 labelWrapper.className = 'd-flex align-items-center';
                 labelWrapper.appendChild(label);
-                labelWrapper.appendChild(transformBtn);
                 
                 tableItem.appendChild(checkbox);
                 tableItem.appendChild(labelWrapper);
                 
-                // Add transformation panel (hidden by default)
-                const transformPanel = createTransformationPanel(tableKey, schemaName, tableName);
-                tableItem.appendChild(transformPanel);
+                // Add transformation UI only for SQL sources (MongoDB is document-based; transforms are disabled).
+                const transformsEnabled = sourceDbType !== 'mongodb';
+                if (transformsEnabled) {
+                    const transformBtn = document.createElement('button');
+                    transformBtn.type = 'button';
+                    transformBtn.className = 'btn btn-sm btn-outline-info ms-2 transform-btn';
+                    transformBtn.textContent = '⚙️ Transform';
+                    transformBtn.dataset.tableKey = tableKey;
+                    transformBtn.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        toggleTransformationPanel(tableKey, schemaName, tableName);
+                    });
+                    labelWrapper.appendChild(transformBtn);
+
+                    const transformPanel = createTransformationPanel(tableKey, schemaName, tableName);
+                    tableItem.appendChild(transformPanel);
+                }
                 
                 tablesContainer.appendChild(tableItem);
                 

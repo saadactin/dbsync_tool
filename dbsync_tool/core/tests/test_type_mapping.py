@@ -262,11 +262,23 @@ class TestTypeMapping(unittest.TestCase):
     
     def test_postgres_to_clickhouse_timestamp(self):
         result = map_data_type('timestamp', 'postgres', 'clickhouse')
-        self.assertEqual(result, 'DateTime')
+        self.assertEqual(result, "DateTime64(6, 'UTC')")
+
+    def test_postgres_to_clickhouse_timestamptz(self):
+        self.assertEqual(
+            map_data_type('timestamp with time zone', 'postgres', 'clickhouse'),
+            "DateTime64(6, 'UTC')",
+        )
+
+    def test_postgres_to_clickhouse_interval_money_string(self):
+        self.assertEqual(map_data_type('interval', 'postgres', 'clickhouse'), 'String')
+        self.assertEqual(map_data_type('money', 'postgres', 'clickhouse'), 'String')
+        self.assertEqual(map_data_type('daterange', 'postgres', 'clickhouse'), 'String')
+        self.assertEqual(map_data_type('tstzrange', 'postgres', 'clickhouse'), 'String')
     
     def test_postgres_to_clickhouse_date(self):
         result = map_data_type('date', 'postgres', 'clickhouse')
-        self.assertEqual(result, 'Date')
+        self.assertEqual(result, 'Date32')
     
     def test_postgres_to_clickhouse_boolean(self):
         result = map_data_type('boolean', 'postgres', 'clickhouse')
@@ -349,6 +361,10 @@ class TestTypeMapping(unittest.TestCase):
     
     def test_clickhouse_to_postgres_date(self):
         result = map_data_type('Date', 'clickhouse', 'postgres')
+        self.assertEqual(result, 'DATE')
+
+    def test_clickhouse_to_postgres_date32(self):
+        result = map_data_type('Date32', 'clickhouse', 'postgres')
         self.assertEqual(result, 'DATE')
     
     def test_clickhouse_to_postgres_decimal(self):

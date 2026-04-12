@@ -133,8 +133,20 @@ class TimezoneHandler:
         """
         if not value_str:
             return None
+        if isinstance(value_str, str) and value_str.strip().lower() in {"none", "null", "nan"}:
+            return None
         
-        if column_type in ['timestamp', 'datetime', 'date', 'timestamptz']:
+        ct = (column_type or "").lower()
+        # Treat any "datetime-like" type token (including ClickHouse datetime64*) as datetime.
+        datetime_like_tokens = (
+            "timestamp",
+            "datetime",
+            "datetime64",
+            "date",
+            "timestamptz",
+            "time",
+        )
+        if any(tok in ct for tok in datetime_like_tokens):
             try:
                 # Try ISO format first
                 return datetime.fromisoformat(value_str.replace('Z', '+00:00'))

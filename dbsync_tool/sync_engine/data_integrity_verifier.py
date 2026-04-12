@@ -13,6 +13,11 @@ from connections.connectors.base import DBConnector
 from sync_engine.query_builder import QueryBuilder
 from sync_engine.transformation_engine import TransformationEngine
 from sync_jobs.models import SyncJobTable
+from sync_jobs.services.transform_plan_service import (
+    uses_transform_runtime,
+    prepare_runtime_transform_plan,
+    compile_select_from_plan,
+)
 import logging
 from decimal import Decimal
 from datetime import datetime, date, timezone
@@ -251,17 +256,49 @@ class DataIntegrityVerifier:
                     (target_column_names or column_names)[0]
                     if column_names else None
                 )
-            
-            # Build source query with transformations
-            source_query = self.query_builder.build_select_query(
-                connector=self.source_connector,
-                schema=source_schema,
-                table=table,
-                columns=column_names,
-                order_by=order_by_source,
-                where_clause=where_clause,
-                column_transformations=column_transformations
-            )
+
+            source_fetch_order_by = order_by_source
+            source_query = None
+            if uses_transform_runtime(job_table.transform_plan):
+                raw_ex = getattr(job_table, "excluded_columns", None) or []
+                raw_pr = getattr(job_table, "protected_columns", None) or []
+                ex_l = {(c or "").strip().lower() for c in raw_ex if c}
+                pr_l = {(c or "").strip().lower() for c in raw_pr if c}
+                try:
+                    # SyncJobTable historically used `sync_job` in some call sites/tests.
+                    # Prefer the actual FK attribute `job` when present.
+                    job = getattr(job_table, "job", None) or getattr(job_table, "sync_job", None)
+                    plan_rt = prepare_runtime_transform_plan(
+                        job_table,
+                        job,
+                        QueryBuilder.get_db_type(self.source_connector),
+                        excluded_cols_lower=ex_l,
+                        protected_cols_lower=pr_l,
+                    )
+                    if plan_rt is not None:
+                        source_query, _ = compile_select_from_plan(plan_rt, preview_limit=None)
+                        if source_query and "ORDER BY" in source_query.upper():
+                            source_fetch_order_by = None
+                        else:
+                            source_fetch_order_by = column_names[0] if column_names else None
+                except Exception as e:
+                    logger.warning(
+                        "Data integrity verifier: transform plan compile failed, using base table query: %s",
+                        e,
+                    )
+                    source_query = None
+
+            if source_query is None:
+                source_query = self.query_builder.build_select_query(
+                    connector=self.source_connector,
+                    schema=source_schema,
+                    table=table,
+                    columns=column_names,
+                    order_by=order_by_source,
+                    where_clause=where_clause,
+                    column_transformations=column_transformations,
+                )
+                source_fetch_order_by = order_by_source
             
             # Build target query (standard, no transformations - data is already transformed)
             target_query = self.query_builder.build_select_query(
@@ -283,7 +320,7 @@ class DataIntegrityVerifier:
                     query=source_query,
                     batch_size=1000,
                     offset=source_offset,
-                    order_by=order_by_source
+                    order_by=source_fetch_order_by,
                 )
                 if not batch:
                     break

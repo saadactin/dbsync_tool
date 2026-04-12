@@ -1,11 +1,14 @@
 """
 PostgreSQL database connector implementation
 """
+import re
 import psycopg2
 from psycopg2.extras import execute_values
 from psycopg2 import sql
-from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-from typing import List, Tuple, Optional, Dict, Any
+from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT, new_type, register_type
+from typing import List, Tuple, Optional, Dict, Any, Union
+from decimal import Decimal
+import json
 from .base import DBConnector, ColumnInfo
 from core.exceptions import DatabaseConnectionError, TableNotFoundError
 from core.type_mapping import map_data_type
@@ -14,6 +17,89 @@ import pandas as pd
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _pg_temporal_leading_iso_year(s: str) -> Optional[int]:
+    """
+    Leading calendar year for typical PostgreSQL text date/timestamp wire values.
+    Returns None if the prefix is not YYYY- or unparseable.
+    """
+    s = (s or "").strip()
+    if not s or len(s) < 4:
+        return None
+    if s[0:9].lower() in ("infinity", "-infinity"):
+        return None
+    neg = s[0] == "-"
+    body = s[1:] if neg else s
+    m = re.match(r"^(\d{4,})-", body)
+    if not m:
+        return None
+    y = int(m.group(1))
+    return -y if neg else y
+
+
+def _safe_pg_date_cast(value: object, cursor) -> Union[date, str, None]:
+    """Decode PostgreSQL date OID; return str if outside Python date/datetime year range."""
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        value = value.decode("utf-8")
+    v = str(value).strip()
+    if re.fullmatch(r"-?infinity", v, re.I):
+        return v
+    y = _pg_temporal_leading_iso_year(v)
+    if y is not None and (y < 1 or y > 9999):
+        return v
+    try:
+        return date.fromisoformat(v)
+    except (ValueError, OverflowError):
+        return v
+
+
+def _safe_pg_timestamp_cast(value: object, cursor) -> Union[datetime, str, None]:
+    """
+    Decode PostgreSQL timestamp / timestamptz OID.
+    Avoids ValueError('year ... is out of range') for edge instants near datetime.max
+    when session timezone shifts representation, or for years outside 1..9999.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        value = value.decode("utf-8")
+    v = str(value).strip()
+    if re.fullmatch(r"-?infinity", v, re.I):
+        return v
+    y = _pg_temporal_leading_iso_year(v)
+    if y is not None and (y < 1 or y > 9999):
+        return v
+    try:
+        if len(v) > 10 and v[10] == " " and "T" not in v:
+            v = v[:10] + "T" + v[11:]
+        return datetime.fromisoformat(v.replace("Z", "+00:00"))
+    except (ValueError, OverflowError, OSError):
+        return v
+
+
+def _register_safe_pg_temporal_types(conn) -> None:
+    """Per-connection typecasters so fetchall() never dies on Python datetime year limits."""
+    try:
+        with conn.cursor() as c:
+            c.execute(
+                """
+                SELECT typname, oid FROM pg_type
+                WHERE typname IN ('date', 'timestamp', 'timestamptz')
+                  AND typnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'pg_catalog')
+                """
+            )
+            rows = c.fetchall()
+        for typname, oid in rows:
+            if typname == "date":
+                t = new_type((oid,), f"pg_{typname}_py_safe", _safe_pg_date_cast)
+            else:
+                t = new_type((oid,), f"pg_{typname}_py_safe", _safe_pg_timestamp_cast)
+            register_type(t, conn)
+    except Exception as e:
+        logger.warning("Could not register safe PostgreSQL temporal typecasters: %s", e, exc_info=True)
 
 
 class PostgresConnector(DBConnector):
@@ -30,8 +116,12 @@ class PostgresConnector(DBConnector):
                 user=self.username,
                 password=self.password,
                 database=db_name,
-                connect_timeout=10  # 10 second timeout
+                connect_timeout=10,  # 10 second timeout
+                # Keep timestamptz decoding in UTC so instants near Python's datetime.max
+                # are not shifted into year 10000+ in local/session time zones.
+                options="-c timezone=UTC",
             )
+            _register_safe_pg_temporal_types(self._connection)
             return self._connection
         except psycopg2.OperationalError as e:
             error_msg = str(e).lower()
@@ -537,6 +627,26 @@ class PostgresConnector(DBConnector):
             return
         
         try:
+            def _normalize_pg_param(value: Any) -> Any:
+                if value is None:
+                    return None
+                if isinstance(value, str):
+                    return value.replace("\x00", "")
+                if hasattr(value, "to_decimal") and "decimal128" in value.__class__.__name__.lower():
+                    try:
+                        return value.to_decimal()
+                    except Exception:
+                        return str(value)
+                if isinstance(value, Decimal):
+                    return value
+                if isinstance(value, (dict, list, tuple, set)):
+                    try:
+                        return json.dumps(value, default=str, ensure_ascii=False).replace("\x00", "")
+                    except Exception:
+                        return str(value).replace("\x00", "")
+                return value
+
+            normalized_rows = [tuple(_normalize_pg_param(v) for v in row) for row in rows]
             with self._connection.cursor() as cursor:
                 # Build column identifiers
                 col_identifiers = sql.SQL(', ').join(
@@ -551,7 +661,7 @@ class PostgresConnector(DBConnector):
                 )
                 
                 # Use execute_values for efficient bulk insert
-                execute_values(cursor, insert_query, rows, page_size=1000)
+                execute_values(cursor, insert_query, normalized_rows, page_size=1000)
                 self._connection.commit()
         except Exception as e:
             self._connection.rollback()

@@ -79,3 +79,51 @@ class DatabaseConnectionFormOracleADWTests(TestCase):
         self.assertFalse(form.is_valid())
         self.assertIn("username", form.errors)
 
+
+class DatabaseConnectionFormMongoLocalTests(TestCase):
+    def test_mongodb_local_allows_empty_user_pass_autofills_root_root(self):
+        data = {
+            "name": "mongo",
+            "db_type": "mongodb",
+            "host": "localhost",
+            "port": DEFAULT_PORTS["mongodb"],
+            "username": "",
+            "password": "",
+            "database_name": "",
+            "is_active": True,
+        }
+        form = DatabaseConnectionForm(data=data)
+        self.assertTrue(form.is_valid(), msg=form.errors.as_json())
+        self.assertEqual(form.cleaned_data["username"], "root")
+        self.assertEqual(form.cleaned_data["password"], "root")
+
+    def test_mongodb_local_missing_password_only_is_invalid(self):
+        data = {
+            "name": "mongo",
+            "db_type": "mongodb",
+            "host": "localhost",
+            "port": DEFAULT_PORTS["mongodb"],
+            "username": "root",
+            "password": "",
+            "database_name": "",
+            "is_active": True,
+        }
+        form = DatabaseConnectionForm(data=data)
+        self.assertFalse(form.is_valid())
+        self.assertIn("__all__", form.errors)
+
+    def test_mongodb_non_local_requires_credentials(self):
+        data = {
+            "name": "mongo_remote",
+            "db_type": "mongodb",
+            "host": "192.168.1.10",
+            "port": DEFAULT_PORTS["mongodb"],
+            "username": "",
+            "password": "",
+            "database_name": "",
+            "is_active": True,
+        }
+        form = DatabaseConnectionForm(data=data)
+        self.assertFalse(form.is_valid())
+        self.assertIn("username", form.errors)
+

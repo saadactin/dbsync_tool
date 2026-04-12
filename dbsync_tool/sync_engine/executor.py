@@ -9,6 +9,8 @@ from connections.connectors.factory import get_connector
 from connections.connectors import get_api_connector
 from sync_engine.full_sync import FullSyncExecutor
 from sync_engine.incremental_sync import IncrementalSyncExecutor
+from sync_engine.mongo_cdc_runner import MongoCdcRunner
+from sync_engine.mongo_cdc_applier import apply_mongo_cdc_event_to_sql
 from sync_engine.api_sync import APISyncExecutor
 from sync_engine.sap_sync import SAPSyncExecutor
 from sync_engine.zoho_runner import run_zoho_sync
@@ -120,8 +122,6 @@ class SyncExecutor:
 
             elif self.job.is_flat_file_source():
                 logger.info(f"Job {self.job.id} has flat-file source, using flat-file executor")
-                if self.job.sync_type != 'full':
-                    raise SyncExecutionError("Flat-file sync currently supports full sync only.")
                 target_connector = self._get_connector_with_retry(self.job.target_connection)
                 executor = FlatFileSyncExecutor(
                     job=self.job,
@@ -147,13 +147,29 @@ class SyncExecutor:
                     )
                     executor.execute()
                 elif self.job.sync_type == 'incremental':
-                    executor = IncrementalSyncExecutor(
-                        job=self.job,
-                        execution=execution,
-                        source_connector=source_connector,
-                        target_connector=target_connector
-                    )
-                    executor.execute()
+                    # MongoDB source incremental uses Change Streams (resume token checkpoints).
+                    if "MongoDB" in source_connector.__class__.__name__:
+                        runner = MongoCdcRunner(job=self.job, source_connector=source_connector)
+                        # Day 4: process events until stream ends; production can run continuously.
+                        for evt in runner.iter_events():
+                            apply_mongo_cdc_event_to_sql(
+                                job=self.job,
+                                event=evt,
+                                source_connector=source_connector,
+                                target_connector=target_connector,
+                            )
+                        # Mark execution complete (no table logs yet for CDC path; added Day 6 hardening).
+                        execution.status = "completed"
+                        execution.completed_at = timezone.now()
+                        execution.save()
+                    else:
+                        executor = IncrementalSyncExecutor(
+                            job=self.job,
+                            execution=execution,
+                            source_connector=source_connector,
+                            target_connector=target_connector
+                        )
+                        executor.execute()
                 else:
                     raise SyncExecutionError(f"Unknown sync type: {self.job.sync_type}")
             

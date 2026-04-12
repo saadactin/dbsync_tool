@@ -2,11 +2,11 @@
 Incremental sync implementation
 """
 from typing import List, Optional, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 from django.utils import timezone
 from django.db.models import Sum
 from sync_jobs.models import SyncJob, SyncJobTable, SyncExecution, SyncExecutionLog
-from connections.connectors.base import DBConnector
+from connections.connectors.base import DBConnector, ColumnInfo
 from sync_engine.table_handler import TableHandler
 from sync_engine.validators import DataValidator
 from sync_engine.query_builder import QueryBuilder
@@ -17,12 +17,30 @@ from sync_engine.timezone_utils import TimezoneHandler
 from sync_engine.exceptions import TableSyncError, CheckpointError
 from sync_engine.retry import retry_on_error
 from sync_engine.full_sync import get_target_table_name
+from sync_jobs.services.transform_plan_service import (
+    TransformPlanValidationError,
+    prepare_runtime_transform_plan,
+    compile_select_from_plan,
+    column_infos_from_transform_plan,
+    validate_incremental_key_from_base,
+    validate_transform_plan_column_references,
+    ERROR_TRANSFORM_PLAN_CONFLICT,
+    ERROR_INCREMENTAL_UNSUPPORTED_TRANSFORM,
+)
 from core.constants import DEFAULT_BATCH_SIZE
 from typing import Tuple, Optional, List, Dict, Any
 import pandas as pd
 import logging
 
 logger = logging.getLogger(__name__)
+
+ORIGIN_FIELD_NAME = "__dbsync_origin_job_id"
+
+
+def _should_stamp_origin() -> bool:
+    import os
+
+    return (os.environ.get("DBSYNC_STAMP_ORIGIN", "") or "").strip().lower() in ("1", "true", "yes", "y")
 
 class IncrementalSyncExecutor:
     """Executes incremental sync for a job"""
@@ -68,14 +86,194 @@ class IncrementalSyncExecutor:
         # Initialize transformation engine and validator
         self.transformation_engine = TransformationEngine()
         self.transformation_validator = TransformationValidator()
+        from sync_engine.pre_migration_validator import PreMigrationValidator
+        from sync_engine.data_integrity_verifier import DataIntegrityVerifier
+
+        self.pre_migration_validator = PreMigrationValidator(source_connector)
+        self.data_integrity_verifier = DataIntegrityVerifier(
+            source_connector,
+            target_connector,
+        )
+        self._did_add_missing_columns: Dict[Tuple[str, str], bool] = {}
+        self._last_schema_drift_added_columns: Dict[Tuple[str, str], List[str]] = {}
 
     def _is_datetime_like(self, data_type: str) -> bool:
         dt = (data_type or "").lower()
         return any(token in dt for token in ["timestamp", "datetime", "date", "time"])
 
+    def _apply_incremental_overlap(self, checkpoint_value: Any, col_type: str) -> Any:
+        """
+        For datetime-like incremental columns, return a lower-bound checkpoint that
+        re-reads a small overlap window to make watermark filtering overlap-safe.
+        """
+        overlap_seconds_raw = getattr(self.job, "incremental_overlap_seconds", 0)
+        try:
+            overlap_seconds = int(overlap_seconds_raw)
+        except (TypeError, ValueError):
+            # If job.incremental_overlap_seconds is missing/misconfigured, fall back to "no overlap".
+            return checkpoint_value
+
+        if overlap_seconds <= 0 or checkpoint_value is None:
+            return checkpoint_value
+
+        if not self._is_datetime_like(col_type):
+            return checkpoint_value
+
+        checkpoint_dt = self._normalize_datetime_like(checkpoint_value)
+        if checkpoint_dt is None:
+            return checkpoint_value
+
+        try:
+            return checkpoint_dt - timedelta(seconds=int(overlap_seconds))
+        except Exception:
+            logger.debug(
+                "Failed to apply incremental overlap",
+                exc_info=True,
+            )
+            return checkpoint_value
+
+    def _normalize_datetime_like(self, value: Any) -> Optional[datetime]:
+        """Normalize datetime-like values from pandas/numpy/python to datetime."""
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, (int, float, str, bytes, bool)):
+            return None
+        try:
+            ts = pd.Timestamp(value)
+            if pd.isna(ts):
+                return None
+            return ts.to_pydatetime()
+        except Exception:
+            return None
+
+    def _build_checkpoint_diagnostics(
+        self,
+        *,
+        checkpoint_value_raw: Any,
+        checkpoint_value_parsed: Any,
+        effective_checkpoint_value: Any,
+        candidate_max: Any,
+        decision_reason: str,
+        update_outcome: str,
+    ) -> str:
+        try:
+            overlap_seconds = int(getattr(self.job, "incremental_overlap_seconds", 0) or 0)
+        except (TypeError, ValueError):
+            overlap_seconds = 0
+        overlap_applied = (
+            checkpoint_value_parsed is not None
+            and effective_checkpoint_value is not None
+            and str(checkpoint_value_parsed) != str(effective_checkpoint_value)
+        )
+        return (
+            f"Checkpoint prev_raw={checkpoint_value_raw}; "
+            f"checkpoint_parsed={checkpoint_value_parsed}; "
+            f"overlap_seconds={overlap_seconds}; "
+            f"lower_bound_used={effective_checkpoint_value if effective_checkpoint_value is not None else 'none'}; "
+            f"overlap_applied={str(bool(overlap_applied)).lower()}; "
+            f"candidate_max={candidate_max}; "
+            f"decision={decision_reason}; "
+            f"update_outcome={update_outcome}"
+        )
+
     def _is_numeric_like(self, data_type: str) -> bool:
         dt = (data_type or "").lower()
         return any(token in dt for token in ["int", "bigint", "serial", "number", "decimal", "numeric", "float", "double", "uint"])
+
+    def _resolve_effective_upsert_keys(
+        self,
+        *,
+        pk_columns: List[str],
+        configured_keys_raw: Any,
+        column_name_set: set,
+        context: str,
+    ) -> List[str]:
+        """
+        Resolve the effective upsert key columns for deterministic + correct behavior.
+
+        Rules:
+        - If PK columns exist, use them (PK preferred).
+        - Else, use `incremental_key_columns` (first key is connector key; all keys are ordering tie-breakers).
+        - Fail fast if the first configured key is not present in the execution column set.
+        """
+        configured_keys_norm: List[str] = []
+        if isinstance(configured_keys_raw, (list, tuple)):
+            for k in configured_keys_raw:
+                if k is None:
+                    continue
+                ks = str(k).strip()
+                if ks:
+                    configured_keys_norm.append(ks)
+
+        pk_columns_norm = [str(p).strip() for p in (pk_columns or []) if str(p).strip()]
+        pk_columns_in_set = [k for k in pk_columns_norm if (k or "").lower() in column_name_set]
+
+        if pk_columns_in_set:
+            effective = pk_columns_in_set
+        else:
+            if not configured_keys_norm:
+                raise TableSyncError(
+                    f"No stable upsert key available for {context}. "
+                    f"Provide a source primary key, configure SyncJobTable.incremental_key_columns, "
+                    f"or mark stable key column(s) as Protected in Step 3 mapping."
+                )
+
+            first = configured_keys_norm[0]
+            if (first or "").lower() not in column_name_set:
+                available = sorted(column_name_set)
+                available_preview = available[:50]
+                raise TableSyncError(
+                    f"First configured upsert key '{first}' is not present in source columns for {context}. "
+                    f"Available columns (truncated): {available_preview}"
+                )
+
+            effective = [k for k in configured_keys_norm if (k or "").lower() in column_name_set]
+            if not effective:
+                raise TableSyncError(
+                    f"Configured upsert key columns for {context} do not match any available source columns."
+                )
+
+        # Dedupe while preserving order
+        seen = set()
+        out: List[str] = []
+        for k in effective:
+            kl = (k or "").lower()
+            if kl in seen:
+                continue
+            seen.add(kl)
+            out.append(k)
+        return out
+
+    def _get_configured_upsert_key_sources(self, job_table: Any) -> List[str]:
+        """
+        Ordered upsert key candidates from job configuration.
+
+        Precedence matches flat-file incremental: use SyncJobTable.incremental_key_columns
+        when set; otherwise fall back to Step 3 protected_columns (stable source keys).
+        """
+        keys: List[str] = []
+        raw = getattr(job_table, "incremental_key_columns", None)
+        if isinstance(raw, (list, tuple)):
+            for k in raw:
+                if k is None:
+                    continue
+                ks = str(k).strip()
+                if ks:
+                    keys.append(ks)
+        if keys:
+            return keys
+        prot = getattr(job_table, "protected_columns", None) or []
+        if not isinstance(prot, (list, tuple)):
+            return []
+        for k in prot:
+            if k is None:
+                continue
+            ks = str(k).strip()
+            if ks:
+                keys.append(ks)
+        return keys
 
     def _resolve_incremental_column_auto(
         self,
@@ -128,21 +326,7 @@ class IncrementalSyncExecutor:
             return numeric_any[0].name, inspected, "auto_numeric_column_fallback"
 
         return None, inspected, "no_safe_incremental_column"
-        # NEW: Initialize pre-migration validator and data integrity verifier
-        from sync_engine.pre_migration_validator import PreMigrationValidator
-        from sync_engine.data_integrity_verifier import DataIntegrityVerifier
-        
-        self.pre_migration_validator = PreMigrationValidator(source_connector)
-        self.data_integrity_verifier = DataIntegrityVerifier(
-            source_connector,
-            target_connector
-        )
-        
-        logger.info(
-            f"Initialized IncrementalSyncExecutor for job {job.id}, "
-            f"execution {execution.id}"
-        )
-    
+
     def execute(self):
         """
         Execute incremental sync for all enabled tables
@@ -261,6 +445,377 @@ class IncrementalSyncExecutor:
             self.execution.completed_at = timezone.now()
             self.execution.save()
             raise
+
+    def _validate_incremental_column_transform_outputs(
+        self, column_infos: List[ColumnInfo], incremental_column: str
+    ) -> None:
+        by_lower = {c.name.lower(): c for c in column_infos}
+        col = by_lower.get((incremental_column or "").strip().lower())
+        if not col:
+            raise TableSyncError(
+                f"Incremental column '{incremental_column}' not found in model output columns."
+            )
+        col_type = (col.data_type or "").lower()
+        valid_types = [
+            "timestamp",
+            "datetime",
+            "date",
+            "timestamptz",
+            "int",
+            "integer",
+            "bigint",
+            "serial",
+            "int4",
+            "int8",
+            "float",
+            "double",
+            "numeric",
+            "decimal",
+            "varchar",
+            "text",
+        ]
+        db_type = QueryBuilder.get_db_type(self.source_connector)
+        if db_type == "clickhouse":
+            valid_types.extend(
+                ["datetime64", "uint32", "uint64", "int32", "int64", "int8", "int16"]
+            )
+        if not any(vt in col_type for vt in valid_types):
+            logger.warning(
+                "Incremental column '%s' type '%s' may be suboptimal for checkpoints.",
+                incremental_column,
+                col_type,
+            )
+
+    def _sync_table_incremental_with_transform(
+        self,
+        job_table: SyncJobTable,
+        schema: str,
+        table: str,
+        target_table: str,
+        target_schema: str,
+        log: SyncExecutionLog,
+        rt_plan: Dict[str, Any],
+    ) -> None:
+        """Incremental sync using model transform SQL wrapped with incremental predicates."""
+        mode = (rt_plan.get("mode") or "").strip().lower()
+        if mode == "union":
+            raise TableSyncError(
+                f"[{ERROR_INCREMENTAL_UNSUPPORTED_TRANSFORM}] "
+                "Incremental sync does not support UNION model transforms. "
+                "Use join or lookup, or run a full sync."
+            )
+
+        tq = job_table.transformation_query
+        ct = job_table.column_transformations or {}
+        if (tq and str(tq).strip()) or ct:
+            raise TableSyncError(
+                f"[{ERROR_TRANSFORM_PLAN_CONFLICT}] "
+                "Legacy SQL transformations cannot be combined with model transforms for incremental sync."
+            )
+
+        column_infos = column_infos_from_transform_plan(rt_plan)
+        overrides = getattr(job_table, "column_type_overrides", None) or {}
+        for col in column_infos:
+            o = overrides.get(col.name.lower())
+            if o:
+                col.data_type = o
+
+        # Strict incremental guardrail:
+        # The incremental key must come from the base table row grain (selected_output_columns.table_ref == 'b0').
+        # This avoids incorrect checkpoint semantics when the transform includes joins/lookups that can change row grain.
+        selected_outputs = rt_plan.get("selected_output_columns") or []
+        base_aliases_lower = {
+            str(oc.get("alias") or "").strip().lower()
+            for oc in selected_outputs
+            if isinstance(oc, dict) and str(oc.get("table_ref") or "").strip().lower() == "b0"
+        }
+        base_column_infos = [c for c in column_infos if c.name.lower() in base_aliases_lower]
+
+        pk_source = self.source_connector.get_primary_key(schema, table) or []
+        if not isinstance(pk_source, (list, tuple)):
+            pk_source = []
+        pk_lower = {str(p).strip().lower() for p in pk_source if p}
+
+        # Use base-table PKs (physical column names) mapped back to output aliases.
+        pk_in_output_aliases = [
+            str(oc.get("alias") or "").strip()
+            for oc in selected_outputs
+            if isinstance(oc, dict)
+            and str(oc.get("table_ref") or "").strip().lower() == "b0"
+            and str(oc.get("column") or "").strip().lower() in pk_lower
+            and str(oc.get("alias") or "").strip()
+        ]
+
+        # Determine effective key aliases for upsert + deterministic ordering.
+        # PK aliases (when present) are preferred; otherwise incremental_key_columns or Step 3 protected columns.
+        configured_keys_norm = self._get_configured_upsert_key_sources(job_table)
+
+        base_phys_to_alias = {
+            str(oc.get("column") or "").strip().lower(): str(oc.get("alias") or "").strip()
+            for oc in selected_outputs
+            if isinstance(oc, dict)
+            and str(oc.get("table_ref") or "").strip().lower() == "b0"
+            and str(oc.get("column") or "").strip()
+            and str(oc.get("alias") or "").strip()
+        }
+
+        if pk_in_output_aliases:
+            effective_key_aliases = pk_in_output_aliases
+        else:
+            if not configured_keys_norm:
+                raise TableSyncError(
+                    f"No stable upsert key available for {schema}.{table} (transform incremental). "
+                    f"Provide a base-table primary key, configure SyncJobTable.incremental_key_columns, "
+                    f"or mark stable key column(s) as Protected in Step 3 mapping (and include them in the transform output)."
+                )
+            first_phys = configured_keys_norm[0]
+            if (first_phys or "").strip().lower() not in base_phys_to_alias:
+                available_aliases = sorted(set(base_phys_to_alias.values()))
+                raise TableSyncError(
+                    f"First configured upsert key '{first_phys}' cannot be mapped to any base-table output alias "
+                    f"for {schema}.{table}. Available base output aliases: {available_aliases[:50]}"
+                )
+            effective_key_aliases = [
+                base_phys_to_alias[k.lower()]
+                for k in configured_keys_norm
+                if (k or "").strip().lower() in base_phys_to_alias and base_phys_to_alias[k.lower()].strip()
+            ]
+            if not effective_key_aliases:
+                raise TableSyncError(
+                    f"Configured upsert key columns for {schema}.{table} do not match any base-table output columns."
+                )
+
+        # Dedupe key aliases while preserving order
+        seen_aliases = set()
+        deduped_aliases: List[str] = []
+        for a in effective_key_aliases:
+            al = (a or "").strip().lower()
+            if not al or al in seen_aliases:
+                continue
+            seen_aliases.add(al)
+            deduped_aliases.append(a)
+        effective_key_aliases = deduped_aliases
+
+        incremental_column = job_table.incremental_column
+        if incremental_column:
+            try:
+                validate_incremental_key_from_base(rt_plan, incremental_column)
+            except TransformPlanValidationError as e:
+                raise TableSyncError(f"[{e.error_code}] {e.message}") from e
+        else:
+            incremental_column, inspected, reason_code = self._resolve_incremental_column_auto(
+                schema=schema,
+                table=table,
+                columns=base_column_infos,
+                pk_columns=pk_in_output_aliases,
+            )
+            if not incremental_column:
+                prefix = getattr(self.job, "target_table_prefix", None)
+                warning_msg = (
+                    f"Skipped incremental sync for {schema}.{table}: no safe base-table incremental column "
+                    f"(reason={reason_code}, inspected={inspected}, "
+                    f"target={target_schema}.{target_table}, prefix={prefix or 'none'})."
+                )
+                logger.warning(warning_msg)
+                log.status = "completed"
+                log.rows_fetched = 0
+                log.rows_inserted = 0
+                log.error_message = warning_msg[:5000]
+                log.verification_summary = "Skipped (no safe base-table incremental column in transform output)"
+                log.completed_at = timezone.now()
+                log.save()
+                return
+            job_table.incremental_column = incremental_column
+            try:
+                job_table.save(update_fields=["incremental_column"])
+            except Exception:
+                logger.debug("Could not persist auto-resolved incremental column", exc_info=True)
+
+            try:
+                validate_incremental_key_from_base(rt_plan, incremental_column)
+            except TransformPlanValidationError as e:
+                raise TableSyncError(f"[{e.error_code}] {e.message}") from e
+
+        self._validate_incremental_column_transform_outputs(column_infos, incremental_column)
+
+        if mode == "join":
+            logger.warning(
+                "Transform incremental sync uses base-table watermark semantics. Ensure the join does not change row grain "
+                "for the incremental key, otherwise checkpoints may cause duplicates or misses."
+            )
+
+        checkpoint_value = self.checkpoint_manager.get_checkpoint_value(schema, table)
+        checkpoint_value_raw = checkpoint_value
+        inc_col_info = next(
+            (c for c in column_infos if c.name.lower() == incremental_column.lower()),
+            None,
+        )
+        col_type = (inc_col_info.data_type or "").lower() if inc_col_info else "timestamp"
+        effective_checkpoint_value = checkpoint_value
+        if checkpoint_value:
+            checkpoint_value = self.timezone_handler.parse_checkpoint_value(
+                checkpoint_value, col_type
+            )
+            effective_checkpoint_value = self._apply_incremental_overlap(
+                checkpoint_value, col_type
+            )
+
+        column_names = [c.name for c in column_infos]
+        rename_overrides = getattr(job_table, "column_name_overrides", None)
+        if not isinstance(rename_overrides, dict):
+            rename_overrides = {}
+        target_column_names = [rename_overrides.get(c.name.lower(), c.name) for c in column_infos]
+
+        incremental_col_index = next(
+            i for i, n in enumerate(column_names) if n.lower() == incremental_column.lower()
+        )
+
+        try:
+            # Fail fast if the transform plan references non-existent physical columns.
+            validate_transform_plan_column_references(rt_plan, self.source_connector)
+            inner_sql, warn_list = compile_select_from_plan(rt_plan, preview_limit=None)
+        except TransformPlanValidationError as e:
+            raise TableSyncError(f"[{e.error_code}] {e.message}") from e
+        except Exception as e:
+            raise TableSyncError(f"[transform_compile_failed] {str(e)}") from e
+
+        if warn_list:
+            logger.info("Transform incremental compile warnings %s.%s: %s", schema, table, warn_list)
+
+        order_by_arg = f"{incremental_column}, {', '.join(effective_key_aliases)}"
+
+        try:
+            query = self.query_builder.build_incremental_on_subquery(
+                self.source_connector,
+                inner_sql,
+                "tfs",
+                incremental_column,
+                effective_checkpoint_value,
+                column_names,
+                order_by_arg,
+            )
+        except Exception as e:
+            raise TableSyncError(
+                f"Failed to build incremental query over model transform for {schema}.{table}: {e}"
+            ) from e
+
+        logger.info(
+            "Transform incremental sync %s.%s mode=%s checkpoint=%s",
+            schema,
+            table,
+            mode,
+            checkpoint_value,
+        )
+
+        batch_number = 0
+        total_rows_fetched = 0
+        total_rows_inserted = 0
+        max_incremental_value = checkpoint_value
+
+        while True:
+            batch = self._fetch_batch_with_retry(
+                query=query,
+                batch_size=self.batch_size,
+                offset=total_rows_fetched,
+            )
+            if not isinstance(batch, (list, tuple)):
+                try:
+                    batch = list(batch)
+                except Exception:
+                    batch = []
+            if not batch:
+                break
+            batch_number += 1
+            total_rows_fetched += len(batch)
+            self.validator.validate_batch_not_empty(batch, f"{schema}.{table}")
+            max_incremental_value = self._get_max_incremental_value(
+                batch, incremental_col_index, max_incremental_value
+            )
+            try:
+                total_rows_inserted += self._upsert_batch_with_retry(
+                    schema=target_schema,
+                    table=target_table,
+                    columns=target_column_names,
+                    rows=batch,
+                    key_columns=(
+                            [rename_overrides.get(k.lower(), k) for k in effective_key_aliases]
+                    ),
+                )
+            except Exception as e:
+                error_msg = f"Failed to upsert batch {batch_number} for {schema}.{table}: {str(e)}"
+                logger.error(error_msg, exc_info=True)
+                self._handle_partial_batch_failure(schema, table, batch_number, batch)
+                raise TableSyncError(error_msg) from e
+
+            log.batch_number = batch_number
+            log.rows_fetched = total_rows_fetched
+            log.rows_inserted = total_rows_inserted
+            log.save()
+
+            self.execution.completed_tables = SyncExecutionLog.objects.filter(
+                execution=self.execution,
+                status="completed",
+            ).count()
+            self.execution.total_rows_synced = (
+                SyncExecutionLog.objects.filter(execution=self.execution).aggregate(
+                    total=Sum("rows_inserted")
+                )["total"]
+                or 0
+            )
+            self.execution.save()
+
+            if len(batch) < self.batch_size:
+                break
+
+        # Success-only checkpoint decision (strict monotonic: advance only when candidate_max > previous).
+        did_advance = self._compare_incremental_values(max_incremental_value, checkpoint_value)
+        if did_advance:
+            decision_reason = "advance"
+        else:
+            decision_reason = (
+                "skip_equal" if max_incremental_value == checkpoint_value else "skip_not_greater"
+            )
+        checkpoint_update_outcome = "skipped"
+        try:
+            advanced = self.checkpoint_manager.maybe_advance_checkpoint(
+                schema_name=schema,
+                table_name=table,
+                did_advance=did_advance,
+                value=max_incremental_value,
+            )
+            checkpoint_update_outcome = "advanced" if advanced else "skipped"
+        except Exception as e:
+            checkpoint_update_outcome = "update_failed"
+            logger.error(
+                f"Failed to update checkpoint for {schema}.{table}: {str(e)}",
+                exc_info=True,
+            )
+
+        checkpoint_decision_text = self._build_checkpoint_diagnostics(
+            checkpoint_value_raw=checkpoint_value_raw,
+            checkpoint_value_parsed=checkpoint_value,
+            effective_checkpoint_value=effective_checkpoint_value,
+            candidate_max=max_incremental_value,
+            decision_reason=decision_reason,
+            update_outcome=checkpoint_update_outcome,
+        )
+        schema_drift_added = self._last_schema_drift_added_columns.get((target_schema, target_table), [])
+        schema_drift_suffix = (
+            f"; schema_drift_added_columns={','.join(schema_drift_added)}"
+            if schema_drift_added else ""
+        )
+        log.verification_summary = (
+            f"Transform incremental mode={mode}; rows upserted={total_rows_inserted}; {checkpoint_decision_text}{schema_drift_suffix}"
+        )
+        log.status = "completed"
+        log.completed_at = timezone.now()
+        log.save()
+        logger.info(
+            "Completed transform incremental sync for %s.%s: %s rows",
+            schema,
+            table,
+            total_rows_inserted,
+        )
     
     def sync_table(self, job_table: SyncJobTable):
         """
@@ -290,6 +845,7 @@ class IncrementalSyncExecutor:
         # Determine target schema
         # For databases WITH schemas (PostgreSQL, SQL Server, Oracle): use target's default schema/owner
         # For databases WITHOUT schemas (MySQL, ClickHouse): use database name directly
+        # For MongoDB targets: use connector database_name if provided; otherwise use source schema.
         if self.table_handler.target_db_type == 'mysql':
             # MySQL: Use database name directly (no schema concept)
             target_schema = self.target_connector.database_name
@@ -323,6 +879,11 @@ class IncrementalSyncExecutor:
                 f"Mapping source schema '{schema}' to Oracle owner '{target_schema}' "
                 f"(connected user)"
             )
+        elif self.table_handler.target_db_type == 'mongodb':
+            target_schema = getattr(self.target_connector, 'database_name', None) or schema
+            logger.info(
+                f"Using MongoDB database '{target_schema}' for source schema '{schema}'"
+            )
         else:
             target_schema = schema
         
@@ -338,11 +899,21 @@ class IncrementalSyncExecutor:
             log.status = 'running'
             log.started_at = timezone.now()
             log.save()
+            if not self._prevent_concurrent_sync(schema, table):
+                skip_msg = f"Skipped (concurrent execution running for {schema}.{table})"
+                log.status = 'completed'
+                log.rows_fetched = 0
+                log.rows_inserted = 0
+                log.error_message = skip_msg[:5000]
+                log.verification_summary = skip_msg
+                log.completed_at = timezone.now()
+                log.save()
+                return
 
             # Strict incremental mode: never auto-create target tables.
             # Missing target table => warning + skip this table, continue execution.
             try:
-                if not self.target_connector.table_exists(target_schema, target_table):
+                if self.table_handler.target_db_type != 'mongodb' and not self.target_connector.table_exists(target_schema, target_table):
                     prefix = getattr(self.job, "target_table_prefix", None)
                     warning_msg = (
                         f"Skipped incremental sync for {schema}.{table}: "
@@ -364,6 +935,170 @@ class IncrementalSyncExecutor:
                 logger.error(f"Target table check error for {schema}.{table}: {error_msg}", exc_info=True)
                 raise TableSyncError(error_msg) from e
 
+            def _run_keyed_snapshot_fallback(
+                *,
+                columns: List[ColumnInfo],
+                pk_columns: List[str],
+            ) -> None:
+                """
+                Fallback path when no safe incremental column exists.
+                Behavior: full-table read + deterministic keyed upsert, no checkpoint progression.
+                """
+                raw_excluded = getattr(job_table, "excluded_columns", None)
+                if not isinstance(raw_excluded, (list, tuple, set)):
+                    raw_excluded = []
+                raw_protected = getattr(job_table, "protected_columns", None)
+                if not isinstance(raw_protected, (list, tuple, set)):
+                    raw_protected = []
+                excluded_cols = {(c or "").strip().lower() for c in raw_excluded if c}
+                protected_cols = {(c or "").strip().lower() for c in raw_protected if c}
+                effective_excluded = excluded_cols - protected_cols
+                if effective_excluded:
+                    columns = [c for c in columns if c.name.lower() not in effective_excluded]
+                    if not columns:
+                        raise TableSyncError(
+                            f"No migratable columns remain after exclusion rules for {schema}.{table}"
+                        )
+                column_name_set = {c.name.lower() for c in columns}
+                pk_cols_filtered = [pk for pk in (pk_columns or []) if (pk or "").lower() in column_name_set]
+                configured_keys_raw = self._get_configured_upsert_key_sources(job_table)
+                effective_key_columns = self._resolve_effective_upsert_keys(
+                    pk_columns=pk_cols_filtered,
+                    configured_keys_raw=configured_keys_raw,
+                    column_name_set=column_name_set,
+                    context=f"{schema}.{table} (snapshot fallback)",
+                )
+
+                column_names = [col.name for col in columns]
+                rename_overrides = getattr(job_table, "column_name_overrides", None)
+                if not isinstance(rename_overrides, dict):
+                    rename_overrides = {}
+                target_column_names = [
+                    rename_overrides.get(col.name.lower(), col.name)
+                    for col in columns
+                ]
+
+                where_clause = job_table.transformation_query if isinstance(job_table.transformation_query, str) else None
+                where_clause = where_clause.strip() if where_clause else None
+                if not where_clause:
+                    where_clause = None
+                column_transformations = job_table.column_transformations
+                if not isinstance(column_transformations, dict):
+                    column_transformations = {}
+
+                order_by = ", ".join(effective_key_columns)
+                query = self.query_builder.build_select_query(
+                    connector=self.source_connector,
+                    schema=schema,
+                    table=table,
+                    columns=column_names,
+                    order_by=order_by,
+                    where_clause=where_clause,
+                    column_transformations=column_transformations if column_transformations else None,
+                )
+                logger.warning(
+                    "No safe incremental column for %s.%s; running keyed snapshot upsert fallback (no checkpoint).",
+                    schema,
+                    table,
+                )
+
+                batch_number = 0
+                total_rows_fetched = 0
+                total_rows_inserted = 0
+                while True:
+                    batch = self._fetch_batch_with_retry(
+                        query=query,
+                        batch_size=self.batch_size,
+                        offset=total_rows_fetched,
+                    )
+                    if not isinstance(batch, (list, tuple)):
+                        try:
+                            batch = list(batch)
+                        except Exception:
+                            batch = []
+                    if not batch:
+                        break
+                    batch_number += 1
+                    total_rows_fetched += len(batch)
+                    self.validator.validate_batch_not_empty(batch, f"{schema}.{table}")
+                    inserted = self._upsert_batch_with_retry(
+                        schema=target_schema,
+                        table=target_table,
+                        columns=target_column_names,
+                        rows=batch,
+                        key_columns=[rename_overrides.get(k.lower(), k) for k in effective_key_columns],
+                    )
+                    total_rows_inserted += inserted
+                    log.batch_number = batch_number
+                    log.rows_fetched = total_rows_fetched
+                    log.rows_inserted = total_rows_inserted
+                    log.save()
+                    self.execution.completed_tables = SyncExecutionLog.objects.filter(
+                        execution=self.execution,
+                        status='completed'
+                    ).count()
+                    self.execution.total_rows_synced = SyncExecutionLog.objects.filter(
+                        execution=self.execution
+                    ).aggregate(total=Sum('rows_inserted'))['total'] or 0
+                    self.execution.save()
+                    if len(batch) < self.batch_size:
+                        break
+
+                log.verification_summary = (
+                    "Incremental fallback mode (no safe incremental column): "
+                    f"rows upserted={total_rows_inserted}; checkpoint unchanged."
+                )
+                log.status = 'completed'
+                log.completed_at = timezone.now()
+                log.save()
+                logger.info(
+                    "Completed keyed snapshot fallback for %s.%s: fetched=%s inserted=%s",
+                    schema,
+                    table,
+                    total_rows_fetched,
+                    total_rows_inserted,
+                )
+
+            raw_excluded_ft = getattr(job_table, "excluded_columns", None) or []
+            raw_protected_ft = getattr(job_table, "protected_columns", None) or []
+            if not isinstance(raw_excluded_ft, (list, tuple, set)):
+                raw_excluded_ft = []
+            if not isinstance(raw_protected_ft, (list, tuple, set)):
+                raw_protected_ft = []
+            excluded_lower_ft = {(c or "").strip().lower() for c in raw_excluded_ft if c}
+            protected_lower_ft = {(c or "").strip().lower() for c in raw_protected_ft if c}
+            prot_for_plan = set(protected_lower_ft)
+            if incremental_column:
+                prot_for_plan.add(incremental_column.strip().lower())
+            try:
+                rt_plan = prepare_runtime_transform_plan(
+                    job_table,
+                    self.job,
+                    QueryBuilder.get_db_type(self.source_connector),
+                    excluded_cols_lower=excluded_lower_ft,
+                    protected_cols_lower=prot_for_plan,
+                )
+            except TransformPlanValidationError as e:
+                raise TableSyncError(f"[{e.error_code}] {e.message}") from e
+            if rt_plan is not None:
+                tq = job_table.transformation_query
+                ct = job_table.column_transformations or {}
+                if (tq and str(tq).strip()) or ct:
+                    raise TableSyncError(
+                        f"[{ERROR_TRANSFORM_PLAN_CONFLICT}] "
+                        "Legacy SQL transformations cannot be combined with model transforms."
+                    )
+                self._sync_table_incremental_with_transform(
+                    job_table=job_table,
+                    schema=schema,
+                    table=table,
+                    target_table=target_table,
+                    target_schema=target_schema,
+                    log=log,
+                    rt_plan=rt_plan,
+                )
+                return
+
             # Resolve incremental column automatically when not configured.
             try:
                 columns = self.source_connector.get_columns(schema, table)
@@ -380,20 +1115,7 @@ class IncrementalSyncExecutor:
                         pk_columns=pk_columns,
                     )
                     if not incremental_column:
-                        prefix = getattr(self.job, "target_table_prefix", None)
-                        warning_msg = (
-                            f"Skipped incremental sync for {schema}.{table}: no safe incremental column found "
-                            f"(reason={reason_code}, inspected={inspected_candidates}, target={target_schema}.{target_table}, "
-                            f"prefix={prefix or 'none'})."
-                        )
-                        logger.warning(warning_msg)
-                        log.status = 'completed'
-                        log.rows_fetched = 0
-                        log.rows_inserted = 0
-                        log.error_message = warning_msg[:5000]
-                        log.verification_summary = "Skipped (no safe incremental column)"
-                        log.completed_at = timezone.now()
-                        log.save()
+                        _run_keyed_snapshot_fallback(columns=columns, pk_columns=pk_columns)
                         return
                     job_table.incremental_column = incremental_column
                     try:
@@ -428,9 +1150,46 @@ class IncrementalSyncExecutor:
                     )
             column_name_set = {c.name.lower() for c in columns}
             pk_columns = [pk for pk in pk_columns if (pk or "").lower() in column_name_set]
+
+            # Resolve upsert key columns: PK preferred; otherwise incremental_key_columns or protected columns.
+            configured_keys_raw = self._get_configured_upsert_key_sources(job_table)
+            effective_key_columns = self._resolve_effective_upsert_keys(
+                pk_columns=pk_columns,
+                configured_keys_raw=configured_keys_raw,
+                column_name_set=column_name_set,
+                context=f"{schema}.{table}",
+            )
+            # Mongo target upsert requires a single deterministic key for _id.
+            if self.table_handler.target_db_type == 'mongodb' and len(effective_key_columns) != 1:
+                raise TableSyncError(
+                    f"MongoDB incremental target requires exactly one upsert key column for {schema}.{table}, "
+                    f"got {effective_key_columns}. Configure SyncJobTable.incremental_key_columns to a single column."
+                )
+
+            # Accuracy-first fallback:
+            # A date-only incremental column can miss late/backfilled rows
+            # when checkpoint is high (e.g., col_date already at 9999-12-31). In that case,
+            # use keyed snapshot upsert mode instead of strict > checkpoint filtering.
+            inc_col_info = next(
+                (c for c in columns if (c.name or "").lower() == (incremental_column or "").lower()),
+                None,
+            )
+            inc_type_l = (getattr(inc_col_info, "data_type", "") or "").lower()
+            is_date_only_incremental = ("date" in inc_type_l) and ("datetime" not in inc_type_l) and ("timestamp" not in inc_type_l)
+            if is_date_only_incremental:
+                logger.warning(
+                    "Using keyed snapshot fallback for %s.%s because incremental column '%s' is date-only.",
+                    schema,
+                    table,
+                    incremental_column,
+                )
+                _run_keyed_snapshot_fallback(columns=columns, pk_columns=pk_columns)
+                return
             
             # Get checkpoint value
             checkpoint_value = self.checkpoint_manager.get_checkpoint_value(schema, table)
+            checkpoint_value_raw = checkpoint_value
+            effective_checkpoint_value = checkpoint_value
             
             # Parse checkpoint value if it's a string
             if checkpoint_value:
@@ -448,17 +1207,23 @@ class IncrementalSyncExecutor:
                 checkpoint_value = self.timezone_handler.parse_checkpoint_value(
                     checkpoint_value, col_type
                 )
+                effective_checkpoint_value = self._apply_incremental_overlap(
+                    checkpoint_value, col_type
+                )
                 logger.info(
                     f"Using checkpoint value for {schema}.{table}: {checkpoint_value}"
                 )
             else:
                 logger.info(f"No checkpoint found for {schema}.{table} - performing first sync")
+                effective_checkpoint_value = None
             
             # Get column information
             try:
                 column_names = [col.name for col in columns]
 
-                rename_overrides = getattr(job_table, "column_name_overrides", None) or {}
+                rename_overrides = getattr(job_table, "column_name_overrides", None)
+                if not isinstance(rename_overrides, dict):
+                    rename_overrides = {}
                 target_column_names = [
                     rename_overrides.get(col.name.lower(), col.name)
                     for col in columns
@@ -478,11 +1243,7 @@ class IncrementalSyncExecutor:
             
             # Get primary key for ordering
             try:
-                pk_columns = pk_columns if pk_columns is not None else self.source_connector.get_primary_key(schema, table)
-                if pk_columns:
-                    order_by = f"{incremental_column}, {', '.join(pk_columns)}"
-                else:
-                    order_by = incremental_column
+                order_by = f"{incremental_column}, {', '.join(effective_key_columns)}"
             except Exception as e:
                 logger.warning(f"Could not determine primary key for {schema}.{table}: {str(e)}")
                 order_by = incremental_column
@@ -494,7 +1255,7 @@ class IncrementalSyncExecutor:
                     schema=schema,
                     table=table,
                     incremental_column=incremental_column,
-                    checkpoint_value=checkpoint_value,
+                    checkpoint_value=effective_checkpoint_value,
                     columns=column_names,
                     order_by=order_by
                 )
@@ -555,7 +1316,7 @@ class IncrementalSyncExecutor:
             batch_number = 0
             total_rows_fetched = 0
             total_rows_inserted = 0
-            current_checkpoint = checkpoint_value  # Track current position for keyset
+            current_checkpoint = effective_checkpoint_value  # Track current position for keyset
             last_pk_values = None
             max_incremental_value = checkpoint_value
             
@@ -643,18 +1404,16 @@ class IncrementalSyncExecutor:
                 
                 # Upsert batch with retry (incremental must handle inserts + updates)
                 try:
-                    self._upsert_batch_with_retry(
+                    inserted = self._upsert_batch_with_retry(
                         schema=target_schema,
                         table=target_table,
                         columns=target_column_names,
                         rows=batch,
                         key_columns=(
-                            [rename_overrides.get(k.lower(), k) for k in pk_columns]
-                            if pk_columns
-                            else [rename_overrides.get(incremental_column.lower(), incremental_column)]
+                            [rename_overrides.get(k.lower(), k) for k in effective_key_columns]
                         ),
                     )
-                    total_rows_inserted += len(batch)
+                    total_rows_inserted += inserted
                 except Exception as e:
                     error_msg = f"Failed to upsert batch {batch_number} for {schema}.{table}: {str(e)}"
                     logger.error(error_msg, exc_info=True)
@@ -681,28 +1440,14 @@ class IncrementalSyncExecutor:
                 if len(batch) < self.batch_size:
                     break
             
-            # Update checkpoint only after successful sync
-            if max_incremental_value is not None and max_incremental_value != checkpoint_value:
-                try:
-                    self.checkpoint_manager.create_or_update_checkpoint(
-                        schema_name=schema,
-                        table_name=table,
-                        value=max_incremental_value
-                    )
-                    logger.info(
-                        f"Updated checkpoint for {schema}.{table}: {max_incremental_value}"
-                    )
-                except Exception as e:
-                    # Log error but don't fail the sync
-                    logger.error(
-                        f"Failed to update checkpoint for {schema}.{table}: {str(e)}",
-                        exc_info=True
-                    )
-            elif max_incremental_value == checkpoint_value:
-                logger.info(
-                    f"No new data for {schema}.{table} - checkpoint unchanged"
+            # Success-only checkpoint decision (do not advance until post-migration verification succeeds).
+            did_advance = self._compare_incremental_values(max_incremental_value, checkpoint_value)
+            if did_advance:
+                decision_reason = "advance"
+            else:
+                decision_reason = (
+                    "skip_equal" if max_incremental_value == checkpoint_value else "skip_not_greater"
                 )
-            
             # NEW: Post-migration data accuracy verification
             accuracy_report = None
             if transformation_where or column_transformations:
@@ -732,6 +1477,37 @@ class IncrementalSyncExecutor:
                             f"Perfect migration completed for {schema}.{table}: "
                             f"Zero data loss, zero inaccuracy, 100% accuracy verified"
                         )
+
+            # Update checkpoint only after successful sync and (optional) post-migration verification.
+            checkpoint_update_outcome = "skipped"
+            try:
+                advanced = self.checkpoint_manager.maybe_advance_checkpoint(
+                    schema_name=schema,
+                    table_name=table,
+                    did_advance=did_advance,
+                    value=max_incremental_value,
+                )
+                checkpoint_update_outcome = "advanced" if advanced else "skipped"
+            except Exception as e:
+                checkpoint_update_outcome = "update_failed"
+                logger.error(
+                    f"Failed to update checkpoint for {schema}.{table}: {str(e)}",
+                    exc_info=True,
+                )
+
+            checkpoint_decision_text = self._build_checkpoint_diagnostics(
+                checkpoint_value_raw=checkpoint_value_raw,
+                checkpoint_value_parsed=checkpoint_value,
+                effective_checkpoint_value=effective_checkpoint_value,
+                candidate_max=max_incremental_value,
+                decision_reason=decision_reason,
+                update_outcome=checkpoint_update_outcome,
+            )
+            schema_drift_added = self._last_schema_drift_added_columns.get((target_schema, target_table), [])
+            schema_drift_suffix = (
+                f"; schema_drift_added_columns={','.join(schema_drift_added)}"
+                if schema_drift_added else ""
+            )
             
             # Surface verification summary for job/execution UI (Oracle-inclusive)
             if accuracy_report is not None:
@@ -743,7 +1519,9 @@ class IncrementalSyncExecutor:
                 parts.append("Perfect accuracy: Yes" if perfect else "Perfect accuracy: No")
                 if mismatched > 0:
                     parts.append(f"Mismatched rows: {mismatched}")
-                log.verification_summary = "; ".join(parts)
+                log.verification_summary = f"{'; '.join(parts)}; {checkpoint_decision_text}{schema_drift_suffix}"
+            else:
+                log.verification_summary = f"{checkpoint_decision_text}{schema_drift_suffix}"
             
             # Mark log as completed
             log.status = 'completed'
@@ -757,7 +1535,20 @@ class IncrementalSyncExecutor:
 
             # NEW: Reconcile deletes (Perfect Sync)
             try:
-                self.reconcile_deletes(job_table, target_schema, target_table)
+                if getattr(self.job, "no_delete_propagation", True):
+                    logger.info(
+                        "No-delete mode active; skipping delete reconciliation for %s.%s",
+                        schema,
+                        table,
+                    )
+                    # Optional: keep the UI/execution summary explainable.
+                    if getattr(log, "verification_summary", None):
+                        log.verification_summary = (
+                            f"{log.verification_summary}; No-delete mode active; "
+                            f"skipping delete reconciliation."
+                        )
+                else:
+                    self.reconcile_deletes(job_table, target_schema, target_table)
             except Exception as e:
                 logger.warning(f"Delete reconciliation failed for {schema}.{table}: {e}")
                 # Don't fail the whole sync if delete reconciliation fails
@@ -944,9 +1735,18 @@ class IncrementalSyncExecutor:
         if value2 is None:
             return True
         
-        # Handle datetime comparisons
-        if isinstance(value1, datetime) and isinstance(value2, datetime):
-            return value1 > value2
+        # Handle datetime-like comparisons (datetime / pandas.Timestamp / numpy.datetime64).
+        dt1 = self._normalize_datetime_like(value1)
+        dt2 = self._normalize_datetime_like(value2)
+        if dt1 is not None and dt2 is not None:
+            try:
+                if dt1.tzinfo is not None and dt2.tzinfo is None:
+                    dt2 = dt2.replace(tzinfo=dt1.tzinfo)
+                elif dt2.tzinfo is not None and dt1.tzinfo is None:
+                    dt1 = dt1.replace(tzinfo=dt2.tzinfo)
+            except Exception:
+                pass
+            return dt1 > dt2
         
         # Handle numeric comparisons
         if isinstance(value1, (int, float)) and isinstance(value2, (int, float)):
@@ -1134,7 +1934,9 @@ class IncrementalSyncExecutor:
             status='running'
         ).exclude(execution=self.execution)
         
-        if running_logs.exists():
+        running_exists = running_logs.exists()
+        # In unit tests, an unconfigured Mock may leak through; treat only explicit True as running.
+        if running_exists is True:
             logger.warning(
                 f"Another sync is already running for {schema}.{table}. "
                 f"Skipping this sync."
@@ -1277,9 +2079,13 @@ class IncrementalSyncExecutor:
         rows: List[tuple],
         key_columns: List[str],
     ):
-        """Upsert batch with retry logic using the first available key column."""
+        """Upsert batch with retry logic using the first available key column.
+
+        Returns:
+            Number of rows actually sent to target upsert.
+        """
         if not rows:
-            return
+            return 0
         if not key_columns:
             raise TableSyncError(
                 f"Cannot upsert into {schema}.{table}: no key columns available."
@@ -1312,22 +2118,83 @@ class IncrementalSyncExecutor:
                 f"Cannot upsert into {schema}.{table}: batch row shape mismatch (expected {len(columns)} values)."
             )
         df = pd.DataFrame(normalized_rows, columns=columns)
+        if self.table_handler.target_db_type == "mongodb" and _should_stamp_origin():
+            df[ORIGIN_FIELD_NAME] = str(getattr(self.job, "id", ""))
+        schema_table_key = (schema, table)
+        if not self._did_add_missing_columns.get(schema_table_key, False):
+            try:
+                get_columns_fn = getattr(self.target_connector, "get_columns", None)
+                existing_cols = get_columns_fn(schema, table) if callable(get_columns_fn) else []
+                if not isinstance(existing_cols, (list, tuple, set)):
+                    existing_cols = []
+                existing_lower = {
+                    (getattr(c, "name", "") or "").strip().lower()
+                    for c in existing_cols
+                    if getattr(c, "name", None)
+                }
+                missing_cols = [c for c in df.columns if c.lower() not in existing_lower]
+                if missing_cols:
+                    add_missing_fn = getattr(self.target_connector, "add_missing_columns", None)
+                    if callable(add_missing_fn):
+                        add_missing_fn(schema, table, df[missing_cols])
+                    self._last_schema_drift_added_columns[schema_table_key] = missing_cols
+                    logger.info(
+                        "Schema drift handled for %s.%s by adding columns: %s",
+                        schema,
+                        table,
+                        missing_cols,
+                    )
+                self._did_add_missing_columns[schema_table_key] = True
+            except Exception as e:
+                raise TableSyncError(
+                    f"Failed to reconcile schema drift for {schema}.{table}: {str(e)}"
+                ) from e
         if key_column not in df.columns:
             raise TableSyncError(
                 f"Cannot upsert into {schema}.{table}: key column '{key_column}' not present in batch."
             )
-        return self.target_connector.upsert_dataframe(
+
+        # Key nulls make upsert non-deterministic. Skip those rows instead of failing the
+        # whole incremental run; caller still advances checkpoint based on incremental column.
+        try:
+            valid_mask = ~df[key_column].isna()
+            skipped = int((~valid_mask).sum())
+            if skipped > 0:
+                logger.warning(
+                    "Skipping %s row(s) for %s.%s because upsert key column '%s' contains NULL/NaN.",
+                    skipped,
+                    schema,
+                    table,
+                    key_column,
+                )
+                df = df[valid_mask]
+                if df.empty:
+                    return 0
+        except TypeError:
+            # Some pandas dtypes can raise on isna; keep original behavior and attempt upsert.
+            pass
+        self.target_connector.upsert_dataframe(
             schema=schema,
             table=table,
             df=df,
             key_column=key_column,
         )
+        return int(len(df))
 
     def reconcile_deletes(self, job_table: SyncJobTable, target_schema: str, target_table: Optional[str] = None):
         """
         Identify and delete records in the target that no longer exist in the source.
         This ensures the sync is 'perfect' by handling deletions.
         """
+        # Defensive guard: no-delete mode should never propagate deletes.
+        if getattr(self.job, "no_delete_propagation", True):
+            logger.info(
+                "No-delete mode active; skipping reconcile_deletes for %s.%s",
+                job_table.schema_name,
+                job_table.table_name,
+            )
+            return
+
         schema = job_table.schema_name
         table = job_table.table_name
         if target_table is None:

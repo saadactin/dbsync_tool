@@ -12,6 +12,7 @@ DB_TYPES = [
     ('sqlserver', 'SQL Server'),
     ('clickhouse', 'ClickHouse'),
     ('oracle_adw', 'Oracle ADW'),
+    ('mongodb', 'MongoDB'),
 ]
 
 DB_TYPE_CHOICES = DB_TYPES
@@ -24,6 +25,7 @@ DEFAULT_PORTS = {
     'clickhouse': 9000,  # Native protocol port (HTTP is 8123)
     # Oracle Autonomous Data Warehouse typically uses TCPS on 1522
     'oracle_adw': 1522,
+    'mongodb': 27017,
 }
 
 # Connection string templates (for reference, not used directly)
@@ -36,6 +38,7 @@ CONNECTION_STRING_TEMPLATES = {
     # will use an oracledb DSN built from host/port/service name, but we keep
     # this here to clarify the expected pieces of the JDBC string.
     'oracle_adw': 'jdbc:oracle:thin:@//{host}:{port}/{database}',
+    'mongodb': 'mongodb://{username}:{password}@{host}:{port}/{database}',
 }
 
 # Sync job status choices

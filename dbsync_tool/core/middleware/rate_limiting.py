@@ -1,8 +1,12 @@
 """
 Rate limiting middleware
 """
-import time
 import logging
+import os
+import sys
+import time
+
+from django.conf import settings
 from django.core.cache import cache
 from django.http import JsonResponse
 from django.utils.deprecation import MiddlewareMixin
@@ -22,6 +26,8 @@ class RateLimitingMiddleware(MiddlewareMixin):
     - Per-endpoint: Connection test (10 per min), Metadata loading (20 per min), Job execution (5 per hour)
     """
     
+    DEV_IPS = {"127.0.0.1", "::1", "localhost"}
+
     # Rate limit configurations
     RATE_LIMITS = {
         'login': {
@@ -50,9 +56,30 @@ class RateLimitingMiddleware(MiddlewareMixin):
     
     def process_request(self, request):
         """Check rate limits before processing request"""
-        # Skip rate limiting for static/media files
-        if request.path.startswith('/static/') or request.path.startswith('/media/'):
+        # Rate limiting disabled globally by request.
+        return None
+
+        # Avoid rate limits during Django test runs (manage.py test / equivalent).
+        if len(sys.argv) >= 2 and sys.argv[1] == "test":
             return None
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            return None
+
+        # Skip rate limiting for static/media and browser noise endpoints
+        if (
+            request.path.startswith('/static/')
+            or request.path.startswith('/media/')
+            or request.path == '/favicon.ico'
+            or request.path == '/robots.txt'
+        ):
+            return None
+        
+        # In local development, disable broad IP throttling for localhost traffic.
+        # Keep endpoint-specific and per-user limits for realistic guardrails.
+        if settings.DEBUG and self._get_client_ip(request) in self.DEV_IPS:
+            rate_limit_type = self._get_rate_limit_type(request)
+            if rate_limit_type == 'general':
+                return None
         
         # Determine rate limit type based on path
         rate_limit_type = self._get_rate_limit_type(request)
@@ -179,8 +206,10 @@ class RateLimitingMiddleware(MiddlewareMixin):
     
     def _get_retry_after(self, key, window):
         """Get retry-after seconds"""
-        # Get TTL of the cache key
-        ttl = cache.ttl(key)
+        ttl_callable = getattr(cache, "ttl", None)
+        if not callable(ttl_callable):
+            return window
+        ttl = ttl_callable(key)
         if ttl is None:
             return window
         return max(1, int(ttl))

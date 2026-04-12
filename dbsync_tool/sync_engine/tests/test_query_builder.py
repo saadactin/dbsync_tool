@@ -276,6 +276,18 @@ class TestQueryBuilder(unittest.TestCase):
             order_by='updated_at, id'
         )
         self.assertIn('ORDER BY "updated_at", "id"', query)
+
+    def test_build_incremental_query_sqlserver_dedupes_order_by_columns(self):
+        query = QueryBuilder.build_incremental_query(
+            connector=self.sqlserver_connector,
+            schema='dbo',
+            table='users',
+            incremental_column='updated_at',
+            checkpoint_value='2024-01-01 00:00:00',
+            order_by='updated_at, id, updated_at'
+        )
+        self.assertIn('ORDER BY [updated_at], [id]', query)
+        self.assertNotIn('ORDER BY [updated_at], [id], [updated_at]', query)
     
     def test_build_max_value_query(self):
         """Test max value query building"""

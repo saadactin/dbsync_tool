@@ -55,6 +55,9 @@ class Step3ColumnRenameValidationTests(TestCase):
         session["sync_job_target_connection_id"] = str(self.target_connection.id)
         session["sync_job_selected_tables"] = [{"schema_name": "public", "table_name": "users"}]
         session.save()
+        from sync_jobs.tests.wizard_helpers import seed_transform_plans_in_session
+
+        seed_transform_plans_in_session(self.client, source_db_type="sqlserver")
 
     def _mock_columns(self):
         # updated_at is picked as the predicted incremental column (preferred_datetime_names).

@@ -6,45 +6,274 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/sync_jobs.css' %}">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://code.highcharts.com/highcharts.js"></script>
 <style>
-    .stats-card {
-        background: white;
-        border-radius: 8px;
-        padding: 20px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        margin-bottom: 20px;
-        transition: transform 0.2s;
+    .dashboard-shell {
+        padding-bottom: 0.5rem;
     }
-    .stats-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+
+    .dashboard-top {
+        background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
+        border-radius: 14px;
+        padding: 1.1rem 1.25rem;
+        color: #fff;
+        margin-bottom: 1rem;
+        box-shadow: 0 10px 22px rgba(15, 23, 42, 0.24);
     }
-    .stats-card h3 {
+
+    .dashboard-title {
         margin: 0;
-        font-size: 2.5rem;
-        font-weight: 600;
+        font-size: 1.55rem;
+        font-weight: 700;
     }
-    .stats-card p {
-        margin: 5px 0 0 0;
-        color: #666;
-        font-size: 0.9rem;
+
+    .dashboard-subtitle {
+        display: none;
     }
+
     .quick-actions {
         display: flex;
         gap: 10px;
         flex-wrap: wrap;
     }
-    .chart-container {
-        position: relative;
-        height: 300px;
-        margin-bottom: 20px;
+
+    .kpi-card {
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 0.9rem 1rem;
+        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
+        height: 100%;
+    }
+
+    .kpi-label {
+        font-size: 0.72rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #6b7280;
+        margin: 0 0 0.35rem 0;
+        line-height: 1.2;
+    }
+
+    .kpi-value {
+        font-size: 1.65rem;
+        font-weight: 700;
+        color: #111827;
+        line-height: 1.2;
+        margin: 0 0 0.15rem 0;
+    }
+
+    .kpi-sub {
+        font-size: 0.8rem;
+        color: #6b7280;
+        margin: 0;
+        line-height: 1.3;
+    }
+
+    .panel-card {
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
+        overflow: hidden;
+    }
+
+    .panel-head {
+        padding: 0.8rem 1rem;
+        border-bottom: 1px solid #eef0f3;
+        font-weight: 700;
+        color: #111827;
+        font-size: 0.95rem;
+        background: #fbfcfd;
+    }
+
+    .panel-body {
+        padding: 0.9rem;
+    }
+
+    .chart-box {
+        height: 320px;
+    }
+
+    .ssr-chart-wrap {
+        height: 100%;
+        width: 100%;
+        background: linear-gradient(180deg, #fcfdff 0%, #f8fafc 100%);
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 10px;
+    }
+
+    .ssr-legend {
+        display: none;
+    }
+
+    .ssr-dot {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        margin-right: 6px;
+    }
+
+    .donut-wrap {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        gap: 0.5rem;
+    }
+
+    .donut-stat {
+        font-size: 0.95rem;
+        font-weight: 700;
+        color: #0f172a;
+    }
+
+    .usage-bars {
+        display: flex;
+        flex-direction: column;
+        gap: 0.7rem;
+        margin-top: 0.4rem;
+    }
+
+    .usage-row {
+        display: grid;
+        grid-template-columns: 140px 1fr auto;
+        gap: 0.6rem;
+        align-items: center;
+    }
+
+    .usage-label {
+        font-size: 0.84rem;
+        font-weight: 600;
+        color: #334155;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .usage-track {
+        background: #e5e7eb;
+        border-radius: 999px;
+        height: 10px;
+        overflow: hidden;
+    }
+
+    .usage-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #0284c7 0%, #2563eb 100%);
+        border-radius: 999px;
+        min-width: 0;
+    }
+
+    .usage-value {
+        font-size: 0.82rem;
+        color: #475569;
+        font-weight: 600;
+        min-width: 115px;
+        text-align: right;
+    }
+
+    .chart-fallback {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
+        color: #6b7280;
+        padding: 1rem;
+        background: linear-gradient(180deg, #fcfdff 0%, #f8fafc 100%);
+        border: 1px dashed #dbe2ea;
+        border-radius: 10px;
+    }
+
+    .chart-fallback-title {
+        font-weight: 700;
+        color: #334155;
+        margin-bottom: 0.35rem;
+    }
+
+    .mini-bars {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        width: 100%;
+        margin-top: 0.9rem;
+        align-items: end;
+        max-width: 260px;
+        height: 88px;
+    }
+
+    .mini-bar {
+        background: linear-gradient(180deg, #60a5fa 0%, #2563eb 100%);
+        border-radius: 8px 8px 4px 4px;
+        min-height: 8px;
+    }
+
+    .mini-pie-legend {
+        margin-top: 0.8rem;
+        width: 100%;
+        max-width: 260px;
+    }
+
+    .mini-pie-item {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.84rem;
+        margin: 0.18rem 0;
+    }
+
+    .mini-dot {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        margin-right: 6px;
+    }
+
+    .recent-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.7rem 0;
+        border-bottom: 1px solid #f1f3f5;
+    }
+
+    .recent-item:last-child {
+        border-bottom: none;
+    }
+
+    .recent-name {
+        font-weight: 600;
+        margin: 0;
+        color: #1f2937;
+        font-size: 0.92rem;
+    }
+
+    .recent-meta {
+        margin: 0.15rem 0 0;
+        color: #6b7280;
+        font-size: 0.8rem;
+    }
+
+    @media (max-width: 768px) {
+        .dashboard-title {
+            font-size: 1.3rem;
+        }
+
+        .chart-box {
+            height: 270px;
+        }
     }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid">
+<div class="container-fluid dashboard-shell">
     {% if is_super_admin %}
         <div class="alert alert-info">
             <strong>Super Admin View:</strong> You are viewing aggregated statistics across all tenants.
@@ -54,9 +283,12 @@
             <strong>Admin View:</strong> You are viewing statistics for your tenant only.
         </div>
     {% endif %}
-    
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1>Dashboard</h1>
+
+    <div class="dashboard-top d-flex justify-content-between align-items-center flex-wrap gap-3">
+        <div>
+            <h1 class="dashboard-title">Dashboard</h1>
+            <p class="dashboard-subtitle"></p>
+        </div>
         <div class="quick-actions">
             <a href="{% url 'sync_jobs:create_step1' %}" class="btn btn-primary">
                 <i class="bi bi-plus-circle"></i> Create New Job
@@ -66,278 +298,192 @@
             </a>
         </div>
     </div>
-    
-    <!-- Statistics Cards -->
-    <div class="row mb-4">
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-primary">{{ stats.jobs.total }}</h3>
-                <p>Total Jobs</p>
+
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-lg-2">
+            <div class="kpi-card">
+                <div class="kpi-label">Total Jobs</div>
+                <p class="kpi-value text-primary">{{ stats.jobs.total }}</p>
+                <div class="kpi-sub">{{ stats.jobs.running }} running</div>
             </div>
         </div>
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-info">{{ stats.jobs.running }}</h3>
-                <p>Running</p>
+        <div class="col-6 col-lg-2">
+            <div class="kpi-card">
+                <div class="kpi-label">Success Rate (30d)</div>
+                <p class="kpi-value text-success">{{ stats.success_rates.last_30d }}%</p>
+                <div class="kpi-sub">{{ stats.executions.last_30d }} executions</div>
             </div>
         </div>
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-success">{{ stats.jobs.completed }}</h3>
-                <p>Completed</p>
+        <div class="col-6 col-lg-2">
+            <div class="kpi-card">
+                <div class="kpi-label">Executions (24h)</div>
+                <p class="kpi-value text-info">{{ stats.executions.last_24h }}</p>
+                <div class="kpi-sub">7d: {{ stats.executions.last_7d }}</div>
             </div>
         </div>
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-danger">{{ stats.jobs.failed }}</h3>
-                <p>Failed</p>
+        <div class="col-6 col-lg-2">
+            <div class="kpi-card">
+                <div class="kpi-label">Rows Synced (30d)</div>
+                <p class="kpi-value text-primary">{{ stats.rows_synced.last_30d|intcomma }}</p>
+                <div class="kpi-sub">24h: {{ stats.rows_synced.last_24h|intcomma }}</div>
             </div>
         </div>
-    </div>
-    
-    <!-- Additional Statistics -->
-    <div class="row mb-4">
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-warning">{{ stats.jobs.paused }}</h3>
-                <p>Paused</p>
+        <div class="col-6 col-lg-2">
+            <div class="kpi-card">
+                <div class="kpi-label">Avg Duration</div>
+                {% if stats.performance.avg_duration_30d %}
+                    <p class="kpi-value text-dark">{{ stats.performance.avg_duration_30d|floatformat:0 }}s</p>
+                {% else %}
+                    <p class="kpi-value text-muted">N/A</p>
+                {% endif %}
+                <div class="kpi-sub">Last 30 days</div>
             </div>
         </div>
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-secondary">{{ stats.jobs.scheduled }}</h3>
-                <p>Scheduled</p>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-primary">{{ stats.connections.total }}</h3>
-                <p>Database Connections</p>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-info">{{ stats.executions.last_24h }}</h3>
-                <p>Executions (24h)</p>
+        <div class="col-6 col-lg-2">
+            <div class="kpi-card">
+                <div class="kpi-label">Connections</div>
+                <p class="kpi-value text-secondary">{{ stats.connections.total }}</p>
+                <div class="kpi-sub">APIs: {{ stats.api_connections.total }}</div>
             </div>
         </div>
     </div>
-    
-    <!-- API Connection Statistics -->
-    <div class="row mb-4">
-        <div class="col-md-12">
-            <h3 class="mb-3">API Connections</h3>
-        </div>
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-primary">{{ stats.api_connections.total }}</h3>
-                <p>Total API Connections</p>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-success">{{ stats.api_connections.active }}</h3>
-                <p>Active API Connections</p>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-warning">{{ stats.api_connections.inactive }}</h3>
-                <p>Inactive API Connections</p>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-info">{{ stats.api_jobs.total }}</h3>
-                <p>API Source Jobs</p>
-            </div>
-        </div>
-    </div>
-    <div class="row mb-4">
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-primary">{{ stats.api_connections.zoho|default:0 }}</h3>
-                <p>Zoho API Connections</p>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-success">{{ stats.api_connections.sap|default:0 }}</h3>
-                <p>SAP API Connections</p>
-            </div>
-        </div>
-    </div>
-    
-    <!-- API Job Statistics -->
-    {% if stats.api_jobs.total > 0 %}
-    <div class="row mb-4">
-        <div class="col-md-12">
-            <h3 class="mb-3">API Sync Job Statistics</h3>
-        </div>
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-info">{{ stats.api_jobs.running }}</h3>
-                <p>Running</p>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-success">{{ stats.api_jobs.completed }}</h3>
-                <p>Completed</p>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-danger">{{ stats.api_jobs.failed }}</h3>
-                <p>Failed</p>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-secondary">{{ stats.api_jobs.pending }}</h3>
-                <p>Pending</p>
-            </div>
-        </div>
-    </div>
-    {% endif %}
-    
-    <!-- Source Type Breakdown -->
-    <div class="row mb-4">
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-header">
-                    <h5 class="mb-0">Source Type Breakdown</h5>
-                </div>
-                <div class="card-body">
-                    <canvas id="sourceTypeChart"></canvas>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Performance Metrics -->
-    <div class="row mb-4">
-        <div class="col-md-4">
-            <div class="card">
-                <div class="card-header">
-                    <h5 class="mb-0">Success Rate (Last 30 Days)</h5>
-                </div>
-                <div class="card-body">
-                    <h2 class="text-success">{{ stats.success_rates.last_30d }}%</h2>
-                    <p class="text-muted">Based on {{ stats.executions.last_30d }} executions</p>
-                    <small class="text-muted">
-                        24h: {{ stats.success_rates.last_24h }}% | 
-                        7d: {{ stats.success_rates.last_7d }}%
-                    </small>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-4">
-            <div class="card">
-                <div class="card-header">
-                    <h5 class="mb-0">Total Rows Synced (Last 30 Days)</h5>
-                </div>
-                <div class="card-body">
-                    <h2 class="text-info">{{ stats.rows_synced.last_30d|intcomma }}</h2>
-                    <p class="text-muted">Rows synchronized successfully</p>
-                    <small class="text-muted">
-                        24h: {{ stats.rows_synced.last_24h|intcomma }} | 
-                        7d: {{ stats.rows_synced.last_7d|intcomma }}
-                    </small>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-4">
-            <div class="card">
-                <div class="card-header">
-                    <h5 class="mb-0">Average Duration (Last 30 Days)</h5>
-                </div>
-                <div class="card-body">
-                    {% if stats.performance.avg_duration_30d %}
-                        <h2 class="text-primary">{{ stats.performance.avg_duration_30d|floatformat:0 }}s</h2>
-                        <p class="text-muted">Average execution time</p>
-                    {% else %}
-                        <h2 class="text-muted">N/A</h2>
-                        <p class="text-muted">No completed executions</p>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Charts Row -->
-    <div class="row mb-4">
-        <div class="col-md-8">
-            <div class="card">
-                <div class="card-header">
-                    <h5 class="mb-0">Execution Trends (Last 30 Days)</h5>
-                </div>
-                <div class="card-body">
-                    <div class="chart-container">
-                        <canvas id="executionTrendsChart"></canvas>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-4">
-            <div class="card">
-                <div class="card-header">
-                    <h5 class="mb-0">Success Rate Distribution</h5>
-                </div>
-                <div class="card-body">
-                    <div class="chart-container">
-                        <canvas id="successRateChart"></canvas>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Recent Activity -->
-    <div class="row mb-4">
-        <div class="col-md-12">
-            <div class="card">
-                <div class="card-header">
-                    <h5 class="mb-0">Recent Activity</h5>
-                </div>
-                <div class="card-body">
-                    {% if recent_activity %}
-                        <div class="list-group">
-                            {% for execution in recent_activity %}
-                            <div class="list-group-item">
-                                <div class="d-flex w-100 justify-content-between">
-                                    <h6 class="mb-1">
-                                        <a href="{% url 'sync_jobs:job_detail' job_id=execution.job.id %}">
-                                            {{ execution.job.name }}
-                                        </a>
-                                    </h6>
-                                    <small>{{ execution.started_at|timesince }} ago</small>
-                                </div>
-                                <div class="d-flex justify-content-between align-items-center mt-2">
-                                    <div>
-                                        {% if execution.status == 'completed' %}
-                                            <span class="badge bg-success">{{ execution.get_status_display }}</span>
-                                        {% elif execution.status == 'failed' %}
-                                            <span class="badge bg-danger">{{ execution.get_status_display }}</span>
-                                        {% elif execution.status == 'running' %}
-                                            <span class="badge bg-primary">{{ execution.get_status_display }}</span>
-                                        {% else %}
-                                            <span class="badge bg-secondary">{{ execution.get_status_display }}</span>
-                                        {% endif %}
-                                        <small class="text-muted ms-2">
-                                            {{ execution.total_rows_synced|default:0|intcomma }} rows
-                                        </small>
+
+    <div class="row g-3 mb-3">
+        <div class="col-lg-8">
+            <div class="panel-card">
+                <div class="panel-head">Most Used Databases (Tables Synced - 30d)</div>
+                <div class="panel-body">
+                    <div id="databaseUsageChart" class="chart-box">
+                        <div class="ssr-chart-wrap">
+                            {% with usage=stats.database_usage %}
+                                {% if usage %}
+                                    {% with max_tables=usage.0.tables_synced %}
+                                        <div class="usage-bars">
+                                            {% for item in usage|slice:":6" %}
+                                                <div class="usage-row">
+                                                    <div class="usage-label">{{ item.label }}</div>
+                                                    <div class="usage-track">
+                                                        <div class="usage-fill" style="width:{% if max_tables > 0 %}{% widthratio item.tables_synced max_tables 100 %}{% else %}0{% endif %}%;"></div>
+                                                    </div>
+                                                    <div class="usage-value">{{ item.tables_synced }} tables</div>
+                                                </div>
+                                            {% endfor %}
+                                        </div>
+                                    {% endwith %}
+                                {% else %}
+                                    <div class="chart-fallback">
+                                        <div class="chart-fallback-title">No database sync activity yet</div>
+                                        <div>Run at least one database source sync to populate this graph.</div>
                                     </div>
-                                    <a href="{% url 'sync_jobs:execution_detail' job_id=execution.job.id execution_id=execution.id %}" 
-                                       class="btn btn-sm btn-outline-primary">
-                                        View
-                                    </a>
-                                </div>
-                            </div>
-                            {% endfor %}
+                                {% endif %}
+                            {% endwith %}
                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="panel-card">
+                <div class="panel-head">Execution Outcome (30d)</div>
+                <div class="panel-body">
+                    <div id="successPieChart" class="chart-box">
+                        <div class="ssr-chart-wrap donut-wrap">
+                            {% with ok=stats.executions.successful_30d|default:0 fail=stats.executions.failed_30d|default:0 total=stats.executions.last_30d|default:0 %}
+                            <svg viewBox="0 0 220 220" width="220" height="220" role="img" aria-label="Execution outcome pie chart">
+                                <circle cx="110" cy="110" r="70" fill="none" stroke="#e5e7eb" stroke-width="24"></circle>
+                                {% if total > 0 %}
+                                    {% widthratio ok total 440 as ok_dash %}
+                                    {% widthratio fail total 440 as fail_dash %}
+                                    {% widthratio ok total 360 as ok_deg %}
+                                    <circle cx="110" cy="110" r="70" fill="none" stroke="#16a34a" stroke-width="24"
+                                            stroke-dasharray="{{ ok_dash }} 440"
+                                            transform="rotate(-90 110 110)"></circle>
+                                    <circle cx="110" cy="110" r="70" fill="none" stroke="#dc2626" stroke-width="24"
+                                            stroke-dasharray="{{ fail_dash }} 440"
+                                            transform="rotate({{ ok_deg|add:'-90' }} 110 110)"></circle>
+                                {% endif %}
+                                <circle cx="110" cy="110" r="48" fill="white"></circle>
+                                <text x="110" y="106" text-anchor="middle" fill="#0f172a" font-size="20" font-weight="700">{{ total }}</text>
+                                <text x="110" y="124" text-anchor="middle" fill="#64748b" font-size="11">Total</text>
+                            </svg>
+                            <div class="donut-stat">{{ total }} total executions</div>
+                            {% endwith %}
+                            <div class="ssr-legend">
+                                <span><span class="ssr-dot" style="background:#16a34a;"></span>Successful: {{ stats.executions.successful_30d|default:0 }}</span>
+                                <span><span class="ssr-dot" style="background:#dc2626;"></span>Failed: {{ stats.executions.failed_30d|default:0 }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-3">
+        <div class="col-lg-4">
+            <div class="panel-card">
+                <div class="panel-head">Source Type Breakdown</div>
+                <div class="panel-body">
+                    <div id="sourceTypeChart" class="chart-box">
+                        <div class="ssr-chart-wrap donut-wrap">
+                            {% with db=stats.source_breakdown.database|default:0 api=stats.source_breakdown.api|default:0 total_jobs=stats.jobs.total|default:0 mix_total=stats.source_breakdown.database|add:stats.source_breakdown.api %}
+                            <svg viewBox="0 0 220 220" width="220" height="220" role="img" aria-label="Source type pie chart">
+                                <circle cx="110" cy="110" r="70" fill="none" stroke="#e5e7eb" stroke-width="24"></circle>
+                                {% if mix_total > 0 %}
+                                    {% widthratio db mix_total 440 as db_dash %}
+                                    {% widthratio api mix_total 440 as api_dash %}
+                                    {% widthratio db mix_total 360 as db_deg %}
+                                    <circle cx="110" cy="110" r="70" fill="none" stroke="#2563eb" stroke-width="24"
+                                            stroke-dasharray="{{ db_dash }} 440"
+                                            transform="rotate(-90 110 110)"></circle>
+                                    <circle cx="110" cy="110" r="70" fill="none" stroke="#06b6d4" stroke-width="24"
+                                            stroke-dasharray="{{ api_dash }} 440"
+                                            transform="rotate({{ db_deg|add:'-90' }} 110 110)"></circle>
+                                {% endif %}
+                                <circle cx="110" cy="110" r="48" fill="white"></circle>
+                                <text x="110" y="106" text-anchor="middle" fill="#0f172a" font-size="20" font-weight="700">{{ total_jobs }}</text>
+                                <text x="110" y="124" text-anchor="middle" fill="#64748b" font-size="11">Jobs</text>
+                            </svg>
+                            <div class="donut-stat">{{ total_jobs }} total jobs</div>
+                            {% endwith %}
+                            <div class="ssr-legend">
+                                <span><span class="ssr-dot" style="background:#2563eb;"></span>Database: {{ stats.source_breakdown.database|default:0 }}</span>
+                                <span><span class="ssr-dot" style="background:#06b6d4;"></span>API: {{ stats.source_breakdown.api|default:0 }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-8">
+            <div class="panel-card">
+                <div class="panel-head">Recent Activity</div>
+                <div class="panel-body">
+                    {% if recent_activity %}
+                        {% for execution in recent_activity %}
+                        <div class="recent-item">
+                            <div>
+                                <p class="recent-name">
+                                    <a href="{% url 'sync_jobs:job_detail' job_id=execution.job.id %}" class="text-decoration-none">{{ execution.job.name }}</a>
+                                </p>
+                                <p class="recent-meta">{{ execution.started_at|timesince }} ago | {{ execution.total_rows_synced|default:0|intcomma }} rows</p>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                {% if execution.status == 'completed' %}
+                                    <span class="badge bg-success">{{ execution.get_status_display }}</span>
+                                {% elif execution.status == 'failed' %}
+                                    <span class="badge bg-danger">{{ execution.get_status_display }}</span>
+                                {% elif execution.status == 'running' %}
+                                    <span class="badge bg-primary">{{ execution.get_status_display }}</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{{ execution.get_status_display }}</span>
+                                {% endif %}
+                                <a href="{% url 'sync_jobs:execution_detail' job_id=execution.job.id execution_id=execution.id %}" class="btn btn-sm btn-outline-primary">View</a>
+                            </div>
+                        </div>
+                        {% endfor %}
                     {% else %}
-                        <p class="text-muted text-center py-4">No recent activity.</p>
+                        <p class="text-muted text-center py-4 mb-0">No recent activity.</p>
                     {% endif %}
                 </div>
             </div>
@@ -345,11 +491,22 @@
     </div>
 </div>
 
+<div
+    id="dashboard-data"
+    data-successful-30d="{{ stats.executions.successful_30d|default:0 }}"
+    data-failed-30d="{{ stats.executions.failed_30d|default:0 }}"
+    data-api-jobs="{{ stats.source_breakdown.api|default:0 }}"
+    data-database-jobs="{{ stats.source_breakdown.database|default:0 }}"
+></div>
+{{ trends_json|json_script:"trends-data-json" }}
+{{ stats.database_usage|json_script:"db-usage-json" }}
+
 <script>
-// Execution Trends Chart
+// Data bootstrapping for charts
 let trendsData = [];
 try {
-    trendsData = {{ trends_json|safe }};
+    const trendsDataRaw = document.getElementById('trends-data-json');
+    trendsData = trendsDataRaw ? JSON.parse(trendsDataRaw.textContent) : [];
 } catch (e) {
     console.error('Error parsing trends data:', e);
     trendsData = [];
@@ -357,7 +514,6 @@ try {
 
 // Ensure we have data, or create empty structure
 if (!trendsData || trendsData.length === 0) {
-    // Create empty data structure for last 30 days
     const today = new Date();
     trendsData = [];
     for (let i = 29; i >= 0; i--) {
@@ -373,174 +529,280 @@ if (!trendsData || trendsData.length === 0) {
     }
 }
 
-const trendsCtx = document.getElementById('executionTrendsChart');
-if (trendsCtx) {
-    const executionTrendsChart = new Chart(trendsCtx.getContext('2d'), {
-        type: 'line',
-        data: {
-            labels: trendsData.map(t => {
-                const date = new Date(t.day);
-                return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-            }),
-            datasets: [{
-                label: 'Total Executions',
-                data: trendsData.map(t => t.total || 0),
-                borderColor: 'rgb(75, 192, 192)',
-                backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                tension: 0.1,
-                fill: true
-            }, {
-                label: 'Successful',
-                data: trendsData.map(t => t.successful || 0),
-                borderColor: 'rgb(54, 162, 235)',
-                backgroundColor: 'rgba(54, 162, 235, 0.2)',
-                tension: 0.1,
-                fill: true
-            }, {
-                label: 'Failed',
-                data: trendsData.map(t => t.failed || 0),
-                borderColor: 'rgb(255, 99, 132)',
-                backgroundColor: 'rgba(255, 99, 132, 0.2)',
-                tension: 0.1,
-                fill: true
+const dateLabels = trendsData.map(t => {
+    const date = new Date(t.day);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+});
+
+function renderChartFallback(elId, title, subtitle, bars, pieItems) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const barsHtml = (bars || []).map(v => {
+        const safe = Math.max(8, Math.min(88, Number(v) || 8));
+        return `<div class="mini-bar" style="height:${safe}px;"></div>`;
+    }).join('');
+    const pieHtml = (pieItems || []).map(item => `
+        <div class="mini-pie-item">
+            <span><span class="mini-dot" style="background:${item.color}"></span>${item.label}</span>
+            <strong>${item.value}</strong>
+        </div>
+    `).join('');
+    el.innerHTML = `
+        <div class="chart-fallback">
+            <div class="chart-fallback-title">${title}</div>
+            <div>${subtitle}</div>
+            ${bars && bars.length ? `<div class="mini-bars">${barsHtml}</div>` : ''}
+            ${pieItems && pieItems.length ? `<div class="mini-pie-legend">${pieHtml}</div>` : ''}
+        </div>
+    `;
+}
+
+function renderSvgTrendChart(elId, labels, series) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const w = 760;
+    const h = 300;
+    const p = { top: 22, right: 18, bottom: 34, left: 34 };
+    const innerW = w - p.left - p.right;
+    const innerH = h - p.top - p.bottom;
+    const allValues = series.flatMap(s => s.data || []);
+    const maxY = Math.max(...allValues, 1);
+    const n = Math.max(labels.length, 2);
+    const xAt = i => p.left + (i * innerW) / (n - 1);
+    const yAt = v => p.top + innerH - (Math.max(0, v) / maxY) * innerH;
+
+    const grid = Array.from({ length: 4 }).map((_, i) => {
+        const yy = p.top + (i * innerH) / 3;
+        return `<line x1="${p.left}" y1="${yy}" x2="${w - p.right}" y2="${yy}" stroke="#e5e7eb" stroke-width="1" />`;
+    }).join('');
+
+    const xTicks = labels
+        .filter((_, i) => i % Math.ceil(labels.length / 6 || 1) === 0 || i === labels.length - 1)
+        .map((label, i, arr) => {
+            const idx = Math.round((i * (labels.length - 1)) / Math.max(arr.length - 1, 1));
+            const xx = xAt(idx);
+            return `<text x="${xx}" y="${h - 10}" text-anchor="middle" fill="#6b7280" font-size="10">${label}</text>`;
+        }).join('');
+
+    const paths = series.map(s => {
+        const pts = (s.data || []).map((v, i) => `${xAt(i)},${yAt(v)}`).join(' ');
+        return `<polyline fill="none" stroke="${s.color}" stroke-width="2.5" points="${pts}" />`;
+    }).join('');
+
+    const legend = series.map((s, i) => `
+        <g transform="translate(${p.left + i * 130}, 12)">
+            <rect x="0" y="-8" width="10" height="10" rx="2" fill="${s.color}" />
+            <text x="16" y="0" fill="#475569" font-size="11">${s.name}</text>
+        </g>
+    `).join('');
+
+    el.innerHTML = `
+        <svg viewBox="0 0 ${w} ${h}" width="100%" height="100%" role="img" aria-label="Execution trend chart">
+            <rect x="0" y="0" width="${w}" height="${h}" fill="#ffffff"/>
+            ${grid}
+            ${paths}
+            ${legend}
+            ${xTicks}
+        </svg>
+    `;
+}
+
+function renderSvgDonutChart(elId, title, items) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const total = items.reduce((a, b) => a + (Number(b.value) || 0), 0);
+    const safeTotal = total || 1;
+    let start = -90;
+    const cx = 110;
+    const cy = 115;
+    const r = 70;
+    const strokeW = 28;
+    const segs = items.map(item => {
+        const v = Number(item.value) || 0;
+        const angle = (v / safeTotal) * 360;
+        const dash = (angle / 360) * (2 * Math.PI * r);
+        const circ = 2 * Math.PI * r;
+        const seg = `
+            <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${item.color}" stroke-width="${strokeW}"
+                stroke-dasharray="${dash} ${circ - dash}" stroke-linecap="butt"
+                transform="rotate(${start} ${cx} ${cy})" />
+        `;
+        start += angle;
+        return seg;
+    }).join('');
+
+    const legend = items.map(item => `
+        <div class="mini-pie-item">
+            <span><span class="mini-dot" style="background:${item.color}"></span>${item.label}</span>
+            <strong>${item.value}</strong>
+        </div>
+    `).join('');
+
+    el.innerHTML = `
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;">
+            <svg viewBox="0 0 220 220" width="220" height="220" role="img" aria-label="${title}">
+                <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#e5e7eb" stroke-width="${strokeW}"></circle>
+                ${segs}
+                <text x="${cx}" y="${cy - 2}" text-anchor="middle" font-size="16" fill="#0f172a" font-weight="700">${total}</text>
+                <text x="${cx}" y="${cy + 16}" text-anchor="middle" font-size="11" fill="#64748b">Total</text>
+            </svg>
+            <div class="mini-pie-legend">${legend}</div>
+        </div>
+    `;
+}
+
+function renderSvgHorizontalBarChart(elId, items) {
+    const el = document.getElementById(elId);
+    if (!el || !items || !items.length) return;
+    const maxVal = Math.max(...items.map(i => Number(i.tables_synced || 0)), 1);
+    const w = 760;
+    const rowH = 40;
+    const h = Math.max(220, (items.length * rowH) + 36);
+    const xLabel = 16;
+    const xBar = 160;
+    const barMaxW = 520;
+    let y = 28;
+    const rows = items.map((it) => {
+        const v = Number(it.tables_synced || 0);
+        const barW = Math.max(10, (v / maxVal) * barMaxW);
+        const label = it.label || it.db_type || 'Unknown';
+        const row = `
+            <text x="${xLabel}" y="${y + 9}" fill="#334155" font-size="12" font-weight="600">${label}</text>
+            <rect x="${xBar}" y="${y}" width="${barMaxW}" height="12" rx="6" fill="#e5e7eb"></rect>
+            <rect x="${xBar}" y="${y}" width="${barW}" height="12" rx="6" fill="url(#usageGradient)"></rect>
+            <text x="${xBar + barMaxW + 10}" y="${y + 10}" fill="#475569" font-size="11">${v} tables</text>
+        `;
+        y += rowH;
+        return row;
+    }).join('');
+
+    el.innerHTML = `
+        <div class="ssr-chart-wrap">
+            <svg viewBox="0 0 ${w} ${h}" width="100%" height="100%" role="img" aria-label="Database usage chart">
+                <defs>
+                    <linearGradient id="usageGradient" x1="0" x2="1">
+                        <stop offset="0%" stop-color="#0284c7"></stop>
+                        <stop offset="100%" stop-color="#2563eb"></stop>
+                    </linearGradient>
+                </defs>
+                ${rows}
+            </svg>
+        </div>
+    `;
+}
+
+const hasHighcharts = typeof Highcharts !== 'undefined';
+let dbUsage = [];
+try {
+    const dbUsageRaw = document.getElementById('db-usage-json');
+    dbUsage = dbUsageRaw ? JSON.parse(dbUsageRaw.textContent) : [];
+} catch (e) {
+    dbUsage = [];
+}
+
+if (document.getElementById('databaseUsageChart') && dbUsage.length && hasHighcharts) {
+    try {
+        Highcharts.chart('databaseUsageChart', {
+            chart: { type: 'bar', backgroundColor: 'transparent' },
+            title: { text: '' },
+            credits: { enabled: false },
+            xAxis: { categories: dbUsage.map(d => d.label), title: { text: null } },
+            yAxis: { min: 0, allowDecimals: false, title: { text: 'Unique tables synced' } },
+            legend: { enabled: false },
+            tooltip: { pointFormat: '<b>{point.y}</b> tables synced' },
+            plotOptions: {
+                bar: {
+                    borderRadius: 6,
+                    colorByPoint: false,
+                    dataLabels: { enabled: true, format: '{y}' }
+                }
+            },
+            series: [{
+                name: 'Tables Synced',
+                color: '#0284c7',
+                data: dbUsage.map(d => d.tables_synced || 0)
             }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    display: true,
-                    position: 'top'
-                },
-                tooltip: {
-                    mode: 'index',
-                    intersect: false
-                }
-            },
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    ticks: {
-                        stepSize: 1
-                    }
-                },
-                x: {
-                    ticks: {
-                        maxRotation: 45,
-                        minRotation: 45
-                    }
-                }
-            }
-        }
-    });
-}
-
-// Success Rate Chart - Use last 30 days data
-const successRateCtx = document.getElementById('successRateChart');
-if (successRateCtx) {
-    // Use actual counts from stats
-    const successfulCount = {{ stats.executions.successful_30d|default:0 }};
-    const failedCount = {{ stats.executions.failed_30d|default:0 }};
-    const totalCount = successfulCount + failedCount;
-    
-    // Only show chart if there's data
-    if (totalCount > 0) {
-        const successRateChart = new Chart(successRateCtx.getContext('2d'), {
-            type: 'doughnut',
-            data: {
-                labels: ['Successful', 'Failed'],
-                datasets: [{
-                    data: [
-                        successfulCount,
-                        failedCount
-                    ],
-                    backgroundColor: [
-                        'rgb(54, 162, 235)',
-                        'rgb(255, 99, 132)'
-                    ],
-                    borderWidth: 2,
-                    borderColor: '#fff'
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        position: 'bottom',
-                        labels: {
-                            padding: 15,
-                            usePointStyle: true
-                        }
-                    },
-                    tooltip: {
-                        callbacks: {
-                            label: function(context) {
-                                const label = context.label || '';
-                                const value = context.parsed || 0;
-                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                                const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
-                                return `${label}: ${value} (${percentage}%)`;
-                            }
-                        }
-                    }
-                }
-            }
         });
-    } else {
-        // Show message if no data
-        successRateCtx.parentElement.innerHTML = '<p class="text-muted text-center mt-4">No execution data available for the last 30 days</p>';
+    } catch (e) {
+        renderSvgHorizontalBarChart('databaseUsageChart', dbUsage.slice(0, 6));
     }
+} else if (document.getElementById('databaseUsageChart') && dbUsage.length) {
+    renderSvgHorizontalBarChart('databaseUsageChart', dbUsage.slice(0, 6));
 }
 
-// Source Type Breakdown Chart
-const sourceTypeCtx = document.getElementById('sourceTypeChart');
-if (sourceTypeCtx) {
-    const apiJobs = {{ stats.source_breakdown.api|default:0 }};
-    const databaseJobs = {{ stats.source_breakdown.database|default:0 }};
-    
-    if (apiJobs > 0 || databaseJobs > 0) {
-        const sourceTypeChart = new Chart(sourceTypeCtx.getContext('2d'), {
-            type: 'doughnut',
-            data: {
-                labels: ['API Source', 'Database Source'],
-                datasets: [{
-                    data: [apiJobs, databaseJobs],
-                    backgroundColor: [
-                        'rgb(75, 192, 192)',
-                        'rgb(54, 162, 235)'
-                    ],
-                    borderWidth: 2,
-                    borderColor: '#fff'
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: true,
-                plugins: {
-                    legend: {
-                        display: true,
-                        position: 'bottom'
-                    },
-                    tooltip: {
-                        callbacks: {
-                            label: function(context) {
-                                const label = context.label || '';
-                                const value = context.parsed || 0;
-                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                                const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
-                                return `${label}: ${value} (${percentage}%)`;
-                            }
-                        }
-                    }
+const dashboardDataEl = document.getElementById('dashboard-data');
+const successfulCount = Number(dashboardDataEl?.dataset?.successful30d || 0);
+const failedCount = Number(dashboardDataEl?.dataset?.failed30d || 0);
+if (document.getElementById('successPieChart') && hasHighcharts) {
+    try {
+        Highcharts.chart('successPieChart', {
+            chart: { type: 'pie', backgroundColor: 'transparent' },
+            title: { text: '' },
+            credits: { enabled: false },
+            tooltip: { pointFormat: '<b>{point.y}</b> ({point.percentage:.1f}%)' },
+            plotOptions: {
+                pie: {
+                    innerSize: '58%',
+                    dataLabels: { enabled: true, format: '{point.name}: {point.percentage:.1f}%' }
                 }
-            }
+            },
+            series: [{
+                name: 'Executions',
+                data: [
+                    { name: 'Successful', y: successfulCount, color: '#16a34a' },
+                    { name: 'Failed', y: failedCount, color: '#dc2626' }
+                ]
+            }]
         });
+    } catch (e) {
+        renderSvgDonutChart('successPieChart', 'Execution outcomes', [
+            { label: 'Successful', value: successfulCount, color: '#16a34a' },
+            { label: 'Failed', value: failedCount, color: '#dc2626' }
+        ]);
     }
+} else {
+    renderSvgDonutChart('successPieChart', 'Execution outcomes', [
+        { label: 'Successful', value: successfulCount, color: '#16a34a' },
+        { label: 'Failed', value: failedCount, color: '#dc2626' }
+    ]);
 }
 
-// Auto-refresh dashboard every 30 seconds
+const apiJobs = Number(dashboardDataEl?.dataset?.apiJobs || 0);
+const databaseJobs = Number(dashboardDataEl?.dataset?.databaseJobs || 0);
+if (document.getElementById('sourceTypeChart') && hasHighcharts) {
+    try {
+        Highcharts.chart('sourceTypeChart', {
+            chart: { type: 'pie', backgroundColor: 'transparent' },
+            title: { text: '' },
+            credits: { enabled: false },
+            tooltip: { pointFormat: '<b>{point.y}</b> ({point.percentage:.1f}%)' },
+            plotOptions: {
+                pie: {
+                    innerSize: '58%',
+                    dataLabels: { enabled: true, format: '{point.name}: {point.percentage:.1f}%' }
+                }
+            },
+            series: [{
+                name: 'Jobs',
+                data: [
+                    { name: 'Database', y: databaseJobs, color: '#2563eb' },
+                    { name: 'API', y: apiJobs, color: '#06b6d4' }
+                ]
+            }]
+        });
+    } catch (e) {
+        renderSvgDonutChart('sourceTypeChart', 'Source type mix', [
+            { label: 'Database', value: databaseJobs, color: '#2563eb' },
+            { label: 'API', value: apiJobs, color: '#06b6d4' }
+        ]);
+    }
+} else {
+    renderSvgDonutChart('sourceTypeChart', 'Source type mix', [
+        { label: 'Database', value: databaseJobs, color: '#2563eb' },
+        { label: 'API', value: apiJobs, color: '#06b6d4' }
+    ]);
+}
+
 setInterval(function() {
     location.reload();
 }, 30000);

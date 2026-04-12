@@ -47,6 +47,9 @@ class Step3ColumnExclusionTests(TestCase):
         session["sync_job_target_connection_id"] = str(self.target.id)
         session["sync_job_selected_tables"] = [{"schema_name": "public", "table_name": "users"}]
         session.save()
+        from sync_jobs.tests.wizard_helpers import seed_transform_plans_in_session
+
+        seed_transform_plans_in_session(self.client, source_db_type="postgres")
 
     @staticmethod
     def _columns():

@@ -4,6 +4,7 @@ Tests for Day 6 connector methods: create_table_from_dataframe, add_missing_colu
 from django.test import TestCase
 from unittest.mock import Mock, patch, MagicMock
 from connections.connectors.clickhouse import ClickHouseConnector
+from connections.connectors.base import ColumnInfo
 from connections.connectors.postgres import PostgresConnector
 from connections.connectors.mysql import MySQLConnector
 from connections.connectors.sqlserver import SQLServerConnector
@@ -11,6 +12,7 @@ from core.exceptions import DatabaseConnectionError
 import pandas as pd
 import numpy as np
 from datetime import datetime, date
+from bson.decimal128 import Decimal128
 
 
 class BaseConnectorDataFrameTests:
@@ -123,6 +125,23 @@ class ClickHouseDataFrameTests(TestCase, BaseConnectorDataFrameTests):
         """Test upsert with missing key column"""
         with self.assertRaises(DatabaseConnectionError):
             self.connector.upsert_dataframe('test_schema', 'test_table', self.sample_df, 'nonexistent')
+
+    def test_bulk_insert_coerces_none_for_non_nullable_columns(self):
+        """ClickHouse bulk_insert should replace None for non-nullable columns."""
+        self.connector._connection = MagicMock()
+        self.connector.get_columns = Mock(
+            return_value=[
+                ColumnInfo(name='id', data_type='Int64', is_nullable=False),
+                ColumnInfo(name='name', data_type='String', is_nullable=False),
+            ]
+        )
+        self.connector.bulk_insert(
+            schema='test_schema',
+            table='test_table',
+            columns=['id', 'name'],
+            rows=[(None, None)],
+        )
+        self.connector._connection.insert.assert_called_once()
 
 
 class PostgresDataFrameTests(TestCase, BaseConnectorDataFrameTests):
@@ -332,3 +351,20 @@ class SQLServerDataFrameTests(TestCase, BaseConnectorDataFrameTests):
             self.assertTrue(mock_cursor.execute.called)
         except Exception as e:
             pass
+
+    def test_bulk_insert_normalizes_decimal128_params(self):
+        """SQL Server bulk_insert should convert Decimal128 to Decimal."""
+        mock_cursor = MagicMock()
+        self.connector._connection = MagicMock()
+        self.connector._connection.cursor.return_value = mock_cursor
+
+        self.connector.bulk_insert(
+            schema='dbo',
+            table='test_table',
+            columns=['id', 'price'],
+            rows=[(1, Decimal128('12.34'))],
+        )
+
+        self.assertTrue(mock_cursor.executemany.called)
+        _, call_rows = mock_cursor.executemany.call_args[0]
+        self.assertEqual(str(call_rows[0][1]), '12.34')

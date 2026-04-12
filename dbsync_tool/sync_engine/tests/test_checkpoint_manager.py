@@ -162,3 +162,64 @@ class CheckpointManagerTestCase(TestCase):
         with self.assertRaises(ValueError):
             CheckpointManager(None)
 
+    def test_maybe_advance_checkpoint_skips_when_did_advance_false(self):
+        """Checkpoint should not be created/updated when did_advance=False."""
+        did = self.manager.maybe_advance_checkpoint(
+            'public',
+            'test_table',
+            did_advance=False,
+            value='2024-01-01 00:00:00',
+        )
+        self.assertFalse(did)
+        self.assertEqual(
+            SyncCheckpoint.objects.filter(job=self.job, schema_name='public', table_name='test_table').count(),
+            0,
+        )
+
+    def test_maybe_advance_checkpoint_advances_when_did_advance_true(self):
+        """Checkpoint should be created/updated when did_advance=True."""
+        did = self.manager.maybe_advance_checkpoint(
+            'public',
+            'test_table',
+            did_advance=True,
+            value='2024-01-01 00:00:00',
+        )
+        self.assertTrue(did)
+        checkpoint = self.manager.get_checkpoint('public', 'test_table')
+        self.assertIsNotNone(checkpoint)
+        self.assertEqual(checkpoint.last_value, '2024-01-01 00:00:00')
+
+        # Second advance should update (not create a second row)
+        did2 = self.manager.maybe_advance_checkpoint(
+            'public',
+            'test_table',
+            did_advance=True,
+            value='2024-01-02 00:00:00',
+        )
+        self.assertTrue(did2)
+        checkpoint = self.manager.get_checkpoint('public', 'test_table')
+        self.assertEqual(checkpoint.last_value, '2024-01-02 00:00:00')
+        count = SyncCheckpoint.objects.filter(
+            job=self.job,
+            schema_name='public',
+            table_name='test_table',
+        ).count()
+        self.assertEqual(count, 1)
+
+    def test_maybe_advance_checkpoint_monotonic_skip_keeps_previous_value(self):
+        """If did_advance=False after an existing checkpoint, value must remain unchanged."""
+        self.manager.create_or_update_checkpoint(
+            'public',
+            'test_table',
+            '2024-01-02 00:00:00'
+        )
+        did = self.manager.maybe_advance_checkpoint(
+            'public',
+            'test_table',
+            did_advance=False,
+            value='2024-01-01 00:00:00',
+        )
+        self.assertFalse(did)
+        checkpoint = self.manager.get_checkpoint('public', 'test_table')
+        self.assertEqual(checkpoint.last_value, '2024-01-02 00:00:00')
+

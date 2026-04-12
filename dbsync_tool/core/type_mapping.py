@@ -21,6 +21,40 @@ class TargetDBType(Enum):
 
 # Comprehensive type mapping dictionary
 TYPE_MAPPING: Dict[str, Dict[str, Dict[str, str]]] = {
+    'mongodb': {
+        'postgres': {
+            'string': 'TEXT',
+            'int': 'BIGINT',
+            'float': 'DOUBLE PRECISION',
+            'bool': 'BOOLEAN',
+            'datetime': 'TIMESTAMP',
+            'json': 'JSONB',
+        },
+        'mysql': {
+            'string': 'TEXT',
+            'int': 'BIGINT',
+            'float': 'DOUBLE',
+            'bool': 'TINYINT(1)',
+            'datetime': 'DATETIME',
+            'json': 'JSON',
+        },
+        'sqlserver': {
+            'string': 'NVARCHAR(MAX)',
+            'int': 'BIGINT',
+            'float': 'FLOAT',
+            'bool': 'BIT',
+            'datetime': 'DATETIME2',
+            'json': 'NVARCHAR(MAX)',
+        },
+        'clickhouse': {
+            'string': 'String',
+            'int': 'Int64',
+            'float': 'Float64',
+            'bool': 'UInt8',
+            'datetime': 'DateTime',
+            'json': 'String',
+        },
+    },
     'postgres': {
         'mysql': {
             'int4': 'INT',
@@ -89,11 +123,19 @@ TYPE_MAPPING: Dict[str, Dict[str, Dict[str, str]]] = {
             'character varying': 'String',
             'text': 'String',
             'char': 'FixedString',
-            'timestamp without time zone': 'DateTime',
-            'timestamp with time zone': 'DateTime',
-            'timestamp': 'DateTime',
-            'date': 'Date',
+            'timestamp without time zone': "DateTime64(6, 'UTC')",
+            'timestamp with time zone': "DateTime64(6, 'UTC')",
+            'timestamp': "DateTime64(6, 'UTC')",
+            'date': 'Date32',
             'time': 'String',
+            'interval': 'String',
+            'money': 'String',
+            'int4range': 'String',
+            'int8range': 'String',
+            'numrange': 'String',
+            'tsrange': 'String',
+            'tstzrange': 'String',
+            'daterange': 'String',
             'boolean': 'UInt8',
             'bool': 'UInt8',
             'numeric': 'Decimal',
@@ -388,6 +430,7 @@ TYPE_MAPPING: Dict[str, Dict[str, Dict[str, str]]] = {
             'String': 'TEXT',
             'FixedString': 'CHAR',
             'Date': 'DATE',
+            'Date32': 'DATE',
             'DateTime': 'TIMESTAMP',
             'DateTime64': 'TIMESTAMP',
             'Decimal': 'NUMERIC',
@@ -407,6 +450,7 @@ TYPE_MAPPING: Dict[str, Dict[str, Dict[str, str]]] = {
             'String': 'TEXT',
             'FixedString': 'CHAR',
             'Date': 'DATE',
+            'Date32': 'DATE',
             'DateTime': 'DATETIME',
             'DateTime64': 'DATETIME',
             'Decimal': 'DECIMAL',
@@ -426,6 +470,7 @@ TYPE_MAPPING: Dict[str, Dict[str, Dict[str, str]]] = {
             'String': 'NVARCHAR(MAX)',
             'FixedString': 'NCHAR',
             'Date': 'DATE',
+            'Date32': 'DATE',
             'DateTime': 'DATETIME2',
             'DateTime64': 'DATETIME2',
             'Decimal': 'DECIMAL',
@@ -459,9 +504,9 @@ def map_data_type(
     Raises:
         ValueError: If source_db or target_db is invalid
     """
-    if source_db not in ['postgres', 'mysql', 'sqlserver', 'clickhouse']:
+    if source_db not in ['postgres', 'mysql', 'sqlserver', 'clickhouse', 'mongodb']:
         raise ValueError(f"Invalid source database type: {source_db}")
-    if target_db not in ['postgres', 'mysql', 'sqlserver', 'clickhouse']:
+    if target_db not in ['postgres', 'mysql', 'sqlserver', 'clickhouse', 'mongodb']:
         raise ValueError(f"Invalid target database type: {target_db}")
     
     if source_db == target_db:

@@ -238,3 +238,64 @@ class ConnectionTestAndListDatabasesViewTests(TestCase):
             self.assertTrue(body.get('success'))
             self.assertIn('ge3cf99f4b998df_ktestadw_high.adb.oraclecloud.com', body.get('databases', []))
 
+    def test_mongodb_test_and_list_databases_success(self):
+        """MongoDB test endpoint should return databases list via connector.list_databases()."""
+        with patch('connections.views.get_connector') as mock_get_connector:
+            mock_conn = MagicMock()
+            mock_conn.list_databases.return_value = ['appdb', 'analytics']
+            mock_get_connector.return_value = mock_conn
+
+            resp = self._post({
+                'db_type': 'mongodb',
+                'host': 'localhost',
+                'port': 27017,
+                'username': 'admin',
+                'password': 'secret',
+                # database_name is optional for the test-and-list endpoint
+                'database_name': '',
+            })
+            self.assertEqual(resp.status_code, 200)
+            body = json.loads(resp.content)
+            self.assertTrue(body.get('success'))
+            self.assertEqual(body.get('databases'), ['appdb', 'analytics'])
+            mock_get_connector.assert_called_once()
+            call_kw = mock_get_connector.call_args[1]
+            self.assertEqual(call_kw.get('username'), 'admin')
+            self.assertEqual(call_kw.get('password'), 'secret')
+
+    def test_mongodb_localhost_empty_credentials_defaults_root(self):
+        """Local MongoDB may omit credentials; server applies root/root default like the form."""
+        with patch('connections.views.get_connector') as mock_get_connector:
+            mock_conn = MagicMock()
+            mock_conn.list_databases.return_value = ['appdb']
+            mock_get_connector.return_value = mock_conn
+
+            resp = self._post({
+                'db_type': 'mongodb',
+                'host': 'localhost',
+                'port': 27017,
+                'username': '',
+                'password': '',
+            })
+            self.assertEqual(resp.status_code, 200)
+            body = json.loads(resp.content)
+            self.assertTrue(body.get('success'))
+            mock_get_connector.assert_called_once()
+            call_kw = mock_get_connector.call_args[1]
+            self.assertEqual(call_kw.get('username'), 'root')
+            self.assertEqual(call_kw.get('password'), 'root')
+
+    def test_mongodb_remote_requires_credentials(self):
+        """Non-local MongoDB still requires explicit credentials in the test endpoint."""
+        resp = self._post({
+            'db_type': 'mongodb',
+            'host': 'mongo.example.com',
+            'port': 27017,
+            'username': '',
+            'password': '',
+        })
+        self.assertEqual(resp.status_code, 400)
+        body = json.loads(resp.content)
+        self.assertFalse(body.get('success', True))
+        self.assertIn('Username', body.get('message', ''))
+

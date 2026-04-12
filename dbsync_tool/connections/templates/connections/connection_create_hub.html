@@ -1,0 +1,66 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Add Connection - DB Sync Tool{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/connection_list.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>Add Connection</h1>
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="window.history.back();">
+            <i class="bi bi-arrow-left"></i> Back
+        </button>
+    </div>
+
+    {% include 'connections/_connection_tabs.html' %}
+
+    <div class="card create-hub-card">
+        <div class="card-header">
+            <ul class="nav nav-tabs card-header-tabs" id="createConnectionTabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="db-create-tab" data-bs-toggle="tab" data-bs-target="#db-create-pane" type="button" role="tab">
+                        <i class="bi bi-database-add"></i> Database
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="api-create-tab" data-bs-toggle="tab" data-bs-target="#api-create-pane" type="button" role="tab">
+                        <i class="bi bi-cloud-plus"></i> API
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="file-create-tab" data-bs-toggle="tab" data-bs-target="#file-create-pane" type="button" role="tab">
+                        <i class="bi bi-file-earmark-plus"></i> Flat File
+                    </button>
+                </li>
+            </ul>
+        </div>
+        <div class="card-body tab-content p-4">
+            <div class="tab-pane fade show active" id="db-create-pane" role="tabpanel">
+                <h5 class="mb-2">Create Database Connection</h5>
+                <p class="text-muted mb-3">Use this for PostgreSQL, SQL Server, ClickHouse, MongoDB, and other database sources/targets.</p>
+                <a href="{% url 'connections:create' %}" class="btn btn-primary">
+                    <i class="bi bi-database-add"></i> Continue to Database Form
+                </a>
+            </div>
+            <div class="tab-pane fade" id="api-create-pane" role="tabpanel">
+                <h5 class="mb-2">Create API Connection</h5>
+                <p class="text-muted mb-3">Use this for API-based systems like Zoho CRM, SAP B1, and Azure DevOps.</p>
+                <a href="{% url 'connections:api_create' %}" class="btn btn-success">
+                    <i class="bi bi-cloud-plus"></i> Continue to API Form
+                </a>
+            </div>
+            <div class="tab-pane fade" id="file-create-pane" role="tabpanel">
+                <h5 class="mb-2">Create Flat File Source</h5>
+                <p class="text-muted mb-3">Use this for CSV and flat-file imports managed from your configured file source root.</p>
+                <a href="{% url 'connections:file_source_create' %}" class="btn btn-info text-white">
+                    <i class="bi bi-file-earmark-plus"></i> Continue to Flat File Form
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

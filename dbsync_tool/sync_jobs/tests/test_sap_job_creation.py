@@ -81,7 +81,7 @@ class SAPJobCreationTests(TestCase):
             follow=False
         )
         self.assertEqual(response.status_code, 302)
-        self.assertIn(reverse('sync_jobs:create_step3'), response.get('Location', ''))
+        self.assertIn(reverse('sync_jobs:create_step4'), response.get('Location', ''))
         tables = self.client.session.get('sync_job_selected_tables', [])
         self.assertEqual(len(tables), 2)
         schemas = {t['schema_name'] for t in tables}
@@ -121,7 +121,7 @@ class SAPJobCreationTests(TestCase):
         session.save()
 
         response = self.client.post(
-            reverse('sync_jobs:create_step3_submit'),
+            reverse('sync_jobs:create_step4_submit'),
             {
                 'sync_type': 'full',
                 'schedule_type': 'once',
@@ -154,7 +154,7 @@ class SAPJobCreationTests(TestCase):
         session.save()
 
         response = self.client.post(
-            reverse('sync_jobs:create_step3_submit'),
+            reverse('sync_jobs:create_step4_submit'),
             {
                 'sync_type': 'incremental',
                 'schedule_type': 'once',

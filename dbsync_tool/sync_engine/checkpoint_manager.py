@@ -135,6 +135,36 @@ class CheckpointManager:
                 exc_info=True
             )
             raise CheckpointError(f"Failed to update checkpoint: {str(e)}") from e
+
+    def maybe_advance_checkpoint(
+        self,
+        schema_name: str,
+        table_name: str,
+        *,
+        did_advance: bool,
+        value: Any,
+    ) -> bool:
+        """
+        Advance checkpoint only when the caller decides it is safe.
+
+        Returns:
+            bool: True if the checkpoint advanced (created/updated), else False.
+        """
+        if not did_advance:
+            logger.info(
+                "Skipping checkpoint advance for %s.%s (did_advance=False, value=%s)",
+                schema_name,
+                table_name,
+                value,
+            )
+            return False
+
+        self.create_or_update_checkpoint(
+            schema_name=schema_name,
+            table_name=table_name,
+            value=value,
+        )
+        return True
     
     def delete_checkpoint(
         self,

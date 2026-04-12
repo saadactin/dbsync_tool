@@ -18,8 +18,24 @@ document.addEventListener('DOMContentLoaded', function() {
         'mysql': '3306',
         'sqlserver': '1433',
         'clickhouse': '9000',
-        'oracle_adw': '1522'
+        'oracle_adw': '1522',
+        'mongodb': '27017',
     };
+
+    function isLocalMongoHost(host) {
+        const h = (host || '').trim().toLowerCase();
+        return h === 'localhost' || h === '127.0.0.1' || h === '::1';
+    }
+
+    function mongoLocalCredentialsOk(host, username, password) {
+        if (!isLocalMongoHost(host)) {
+            return !!(username && password);
+        }
+        const u = (username || '').trim();
+        const p = password || '';
+        if (!u && !p) return true;
+        return !!(u && p);
+    }
     
     function updateDbTypeUI() {
         if (!dbTypeSelect) return;
@@ -31,6 +47,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         const isOracle = selectedType === 'oracle_adw';
+        const isMongo = selectedType === 'mongodb';
 
         // Toggle Oracle-specific hint
         if (oracleAdwHint) {
@@ -53,14 +70,21 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Adjust database/service name label & help text
         if (databaseNameLabel) {
-            databaseNameLabel.textContent = isOracle
-                ? 'Service Name (Oracle ADW) *'
-                : 'Database Name *';
+            if (isOracle) {
+                databaseNameLabel.textContent = 'Service Name (Oracle ADW) *';
+            } else if (isMongo) {
+                databaseNameLabel.textContent = 'Database Name (optional for MongoDB)';
+            } else {
+                databaseNameLabel.textContent = 'Database Name *';
+            }
         }
         if (databaseNameHelp) {
             if (isOracle) {
                 databaseNameHelp.textContent =
                     'Use the Oracle ADW service name from your JDBC/connection string, e.g. mytpdb_high.';
+            } else if (isMongo) {
+                databaseNameHelp.textContent =
+                    'Leave empty for typical `root` users (auth defaults apply). Pick a database after testing.';
             } else {
                 databaseNameHelp.textContent =
                     'Select a database from the list below after testing connection';
@@ -93,18 +117,28 @@ document.addEventListener('DOMContentLoaded', function() {
             const port = document.getElementById('id_port').value.trim();
             const username = document.getElementById('id_username').value.trim();
             const password = document.getElementById('id_password').value;
-                const databaseName = databaseNameInput ? databaseNameInput.value.trim() : '';
+            const databaseName = databaseNameInput ? databaseNameInput.value.trim() : '';
             
             // Validate required fields
-                if (!name || !dbType || !host || !port || !username || !password ||
-                    (dbType === 'oracle_adw' && !databaseName)) {
-                    if (dbType === 'oracle_adw' && !databaseName) {
-                        showTestMessage('Service name is required for Oracle ADW before testing the connection.', 'danger');
-                    } else {
-                        showTestMessage('Please fill in all required fields (Name, Database Type, Host, Port, Username, Password)', 'danger');
-                    }
-                    return;
+            const credsOk =
+                dbType === 'mongodb'
+                    ? mongoLocalCredentialsOk(host, username, password)
+                    : !!(username && password);
+
+            if (!name || !dbType || !host || !port || !credsOk ||
+                (dbType === 'oracle_adw' && !databaseName)) {
+                if (dbType === 'oracle_adw' && !databaseName) {
+                    showTestMessage('Service name is required for Oracle ADW before testing the connection.', 'danger');
+                } else if (dbType === 'mongodb' && !credsOk) {
+                    showTestMessage(
+                        'For MongoDB, provide both Username and Password (or leave both empty for local root/root default).',
+                        'danger'
+                    );
+                } else {
+                    showTestMessage('Please fill in all required fields (Name, Database Type, Host, Port, Username, Password)', 'danger');
                 }
+                return;
+            }
             
             // Validate port
             const portNum = parseInt(port);
@@ -121,16 +155,16 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Prepare request data
             const requestData = {
-                    name: name,
+                name: name,
                 db_type: dbType,
                 host: host,
                 port: portNum,
                 username: username,
-                    password: password
+                password: password
             };
-                if (databaseName) {
-                    requestData.database_name = databaseName;
-                }
+            if (databaseName) {
+                requestData.database_name = databaseName;
+            }
             
             // Get CSRF token
             const csrfInput = document.querySelector('[name=csrfmiddlewaretoken]');

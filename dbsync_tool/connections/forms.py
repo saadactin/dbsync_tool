@@ -65,7 +65,20 @@ class DatabaseConnectionForm(forms.ModelForm):
         db_type_effective = db_type_from_data or (
             self.instance.db_type if getattr(self.instance, 'db_type', None) else None
         )
-        if db_type_effective == 'oracle_adw':
+        if db_type_effective == 'mongodb':
+            self.fields['database_name'].required = False
+            self.fields['username'].required = False
+            self.fields['password'].required = False
+            self.fields['database_name'].label = "Authentication database (authSource)"
+            self.fields['database_name'].help_text = (
+                "MongoDB verifies your user against this database. "
+                "Leave empty for local `root` users (defaults to admin). "
+                "If your user was created in another DB, enter that name (often `admin`)."
+            )
+            self.fields['database_name'].widget.attrs.setdefault(
+                "placeholder", "admin (default if empty)"
+            )
+        elif db_type_effective == 'oracle_adw':
             # For Oracle ADW we always expect an explicit service name entered by the user.
             self.fields['database_name'].required = True
             self.fields['database_name'].label = "Service Name (Oracle ADW)"
@@ -187,9 +200,15 @@ class DatabaseConnectionForm(forms.ModelForm):
     def clean_username(self):
         """Validate username"""
         username = self.cleaned_data.get('username')
+        db_type = self.cleaned_data.get('db_type') or self.data.get('db_type')
+        host = (self.cleaned_data.get('host') or self.data.get('host') or '').strip().lower()
+        is_mongo_local = db_type == 'mongodb' and host in {'localhost', '127.0.0.1', '::1'}
         
         # Required field check
         if not username:
+            if is_mongo_local:
+                # Allow local connections without credentials; we auto-default in clean().
+                return ""
             raise forms.ValidationError("Username is required.")
         
         # Strip and sanitize
@@ -208,11 +227,17 @@ class DatabaseConnectionForm(forms.ModelForm):
     def clean_password(self):
         """Validate password"""
         password = self.cleaned_data.get('password')
+        db_type = self.cleaned_data.get('db_type') or self.data.get('db_type')
+        host = (self.cleaned_data.get('host') or self.data.get('host') or '').strip().lower()
+        is_mongo_local = db_type == 'mongodb' and host in {'localhost', '127.0.0.1', '::1'}
         
         # Required on create, optional on update
         if not self.instance or not self.instance.pk:
             # Create mode
             if not password:
+                if is_mongo_local:
+                    # Allow local connections without credentials; we auto-default in clean().
+                    return ""
                 raise forms.ValidationError("Password is required.")
         else:
             # Update mode - password is optional
@@ -238,6 +263,11 @@ class DatabaseConnectionForm(forms.ModelForm):
         
         # For edit mode, use existing value if not provided
         if not database_name or not database_name.strip():
+            if db_type == 'mongodb':
+                # For MongoDB we treat empty as "default auth db" (handled in connector).
+                if self.instance and self.instance.pk:
+                    return self.instance.database_name or ''
+                return ''
             if self.instance and self.instance.pk:
                 # Edit mode: use existing database_name
                 return self.instance.database_name
@@ -274,6 +304,23 @@ class DatabaseConnectionForm(forms.ModelForm):
     def clean(self):
         """Cross-field validation"""
         cleaned_data = super().clean()
+
+        db_type = cleaned_data.get('db_type') or self.data.get('db_type')
+        host = (cleaned_data.get('host') or self.data.get('host') or '').strip().lower()
+        is_mongo_local = db_type == 'mongodb' and host in {'localhost', '127.0.0.1', '::1'}
+
+        # MongoDB convenience: for local dev, allow empty username/password and auto-default to root/root.
+        if db_type == 'mongodb' and is_mongo_local:
+            username = (cleaned_data.get('username') or '').strip()
+            password = cleaned_data.get('password') or ''
+
+            if not username and not password:
+                cleaned_data['username'] = 'root'
+                cleaned_data['password'] = 'root'
+            elif bool(username) != bool(password):
+                raise ValidationError(
+                    "For MongoDB, provide both Username and Password (or leave both empty for local root/root default)."
+                )
         
         # Business rule: Cannot create connection with same name in same tenant
         # This will be checked in the view with tenant context

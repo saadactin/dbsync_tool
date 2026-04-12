@@ -102,14 +102,17 @@ class ClickHouseIncrementalColumnDetectionTestCase(TestCase):
         session['sync_job_selected_tables'] = [
             {'schema_name': 'test_db', 'table_name': 'test_table'}
         ]
+        session['sync_job_source_connection_type'] = 'database'
         session.save()
-        
+        from sync_jobs.tests.wizard_helpers import seed_transform_plans_in_session
+
+        seed_transform_plans_in_session(self.client, source_db_type='clickhouse')
+
         # Patch load_table_columns where it's imported in views
         mock_load_table_columns = MagicMock(return_value=mock_columns)
-        
+
         with patch('sync_jobs.views.load_table_columns', mock_load_table_columns):
-            # Access Step 3 view (now data type mapping preview)
-            response = self.client.get(reverse('sync_jobs:create_step3'))
+            response = self.client.get(reverse('sync_jobs:create_step4'))
             
             # If redirect, the session might not be persisting - check redirect location
             if response.status_code == 302:
@@ -121,19 +124,19 @@ class ClickHouseIncrementalColumnDetectionTestCase(TestCase):
                     self.skipTest("Session persistence issue in test environment - logic verified in unit tests")
                 else:
                     self.fail(f"Unexpected redirect to {redirect_url}")
-            
+
             self.assertEqual(response.status_code, 200,
                              f"Expected 200, got {response.status_code}")
 
-            # Verify the mock was called (only if we got 200)
             self.assertTrue(mock_load_table_columns.called, "load_table_columns should have been called")
 
-            # Mapping view should expose table_mappings in context
-            table_mappings = response.context.get('table_mappings', {})
+            table_columns = response.context.get('table_columns', {})
             table_key = 'test_db.test_table'
-            self.assertIn(table_key, table_mappings,
-                          f"Table key {table_key} not found in {list(table_mappings.keys())}")
-            # String should not be detected
+            self.assertIn(table_key, table_columns,
+                          f"Table key {table_key} not found in {list(table_columns.keys())}")
+            incremental_candidates = table_columns[table_key]['incremental_candidates']
+            candidate_names = [col['name'] for col in incremental_candidates]
+            self.assertIn('created_at', candidate_names)
             self.assertNotIn('name', candidate_names)
     
     def test_clickhouse_uint32_detected(self):
@@ -165,10 +168,14 @@ class ClickHouseIncrementalColumnDetectionTestCase(TestCase):
         session['sync_job_selected_tables'] = [
             {'schema_name': 'test_db', 'table_name': 'test_table'}
         ]
+        session['sync_job_source_connection_type'] = 'database'
         session.save()
-        
+        from sync_jobs.tests.wizard_helpers import seed_transform_plans_in_session
+
+        seed_transform_plans_in_session(self.client, source_db_type='clickhouse')
+
         with patch('sync_jobs.views.load_table_columns', return_value=mock_columns):
-            response = self.client.get(reverse('sync_jobs:create_step3'))
+            response = self.client.get(reverse('sync_jobs:create_step4'))
             if response.status_code == 302:
                 redirect_url = response.url if hasattr(response, 'url') else str(response)
                 if 'create_step1' in redirect_url or 'step1' in redirect_url:
@@ -208,10 +215,14 @@ class ClickHouseIncrementalColumnDetectionTestCase(TestCase):
         session['sync_job_selected_tables'] = [
             {'schema_name': 'test_db', 'table_name': 'test_table'}
         ]
+        session['sync_job_source_connection_type'] = 'database'
         session.save()
-        
+        from sync_jobs.tests.wizard_helpers import seed_transform_plans_in_session
+
+        seed_transform_plans_in_session(self.client, source_db_type='clickhouse')
+
         with patch('sync_jobs.views.load_table_columns', return_value=mock_columns):
-            response = self.client.get(reverse('sync_jobs:create_step3'))
+            response = self.client.get(reverse('sync_jobs:create_step4'))
             if response.status_code == 302:
                 redirect_url = response.url if hasattr(response, 'url') else str(response)
                 if 'create_step1' in redirect_url or 'step1' in redirect_url:
@@ -257,10 +268,14 @@ class ClickHouseIncrementalColumnDetectionTestCase(TestCase):
         session['sync_job_selected_tables'] = [
             {'schema_name': 'test_db', 'table_name': 'test_table'}
         ]
+        session['sync_job_source_connection_type'] = 'database'
         session.save()
-        
+        from sync_jobs.tests.wizard_helpers import seed_transform_plans_in_session
+
+        seed_transform_plans_in_session(self.client, source_db_type='clickhouse')
+
         with patch('sync_jobs.views.load_table_columns', return_value=mock_columns):
-            response = self.client.get(reverse('sync_jobs:create_step3'))
+            response = self.client.get(reverse('sync_jobs:create_step4'))
             if response.status_code == 302:
                 redirect_url = response.url if hasattr(response, 'url') else str(response)
                 if 'create_step1' in redirect_url or 'step1' in redirect_url:
@@ -299,10 +314,14 @@ class ClickHouseIncrementalColumnDetectionTestCase(TestCase):
         session['sync_job_selected_tables'] = [
             {'schema_name': 'test_db', 'table_name': 'test_table'}
         ]
+        session['sync_job_source_connection_type'] = 'database'
         session.save()
-        
+        from sync_jobs.tests.wizard_helpers import seed_transform_plans_in_session
+
+        seed_transform_plans_in_session(self.client, source_db_type='clickhouse')
+
         with patch('sync_jobs.views.load_table_columns', return_value=mock_columns):
-            response = self.client.get(reverse('sync_jobs:create_step3'))
+            response = self.client.get(reverse('sync_jobs:create_step4'))
             if response.status_code == 302:
                 redirect_url = response.url if hasattr(response, 'url') else str(response)
                 if 'create_step1' in redirect_url or 'step1' in redirect_url:
@@ -340,10 +359,14 @@ class ClickHouseIncrementalColumnDetectionTestCase(TestCase):
         session['sync_job_selected_tables'] = [
             {'schema_name': 'test_db', 'table_name': 'test_table'}
         ]
+        session['sync_job_source_connection_type'] = 'database'
         session.save()
-        
+        from sync_jobs.tests.wizard_helpers import seed_transform_plans_in_session
+
+        seed_transform_plans_in_session(self.client, source_db_type='clickhouse')
+
         with patch('sync_jobs.views.load_table_columns', return_value=mock_columns):
-            response = self.client.get(reverse('sync_jobs:create_step3'))
+            response = self.client.get(reverse('sync_jobs:create_step4'))
             if response.status_code == 302:
                 redirect_url = response.url if hasattr(response, 'url') else str(response)
                 if 'create_step1' in redirect_url or 'step1' in redirect_url:
@@ -409,10 +432,14 @@ class ClickHouseIncrementalColumnDetectionTestCase(TestCase):
         session['sync_job_selected_tables'] = [
             {'schema_name': 'test_db', 'table_name': 'test_table'}
         ]
+        session['sync_job_source_connection_type'] = 'database'
         session.save()
-        
+        from sync_jobs.tests.wizard_helpers import seed_transform_plans_in_session
+
+        seed_transform_plans_in_session(self.client, source_db_type='clickhouse')
+
         with patch('sync_jobs.views.load_table_columns', return_value=mock_columns):
-            response = self.client.get(reverse('sync_jobs:create_step3'))
+            response = self.client.get(reverse('sync_jobs:create_step4'))
             if response.status_code == 302:
                 redirect_url = response.url if hasattr(response, 'url') else str(response)
                 if 'create_step1' in redirect_url or 'step1' in redirect_url:

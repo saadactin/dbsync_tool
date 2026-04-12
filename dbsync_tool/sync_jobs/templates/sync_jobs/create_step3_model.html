@@ -1,0 +1,552 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Model Data - Step 3 - DB Sync Tool{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/sync_jobs.css' %}">
+<style>
+    .model-plan-card { margin-bottom: 1.25rem; }
+    .model-plan-textarea {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.85rem;
+        min-height: 220px;
+    }
+    .preview-panel { background: #f8f9fa; border-radius: 6px; padding: 1rem; margin-top: 0.75rem; }
+    .preview-sql { white-space: pre-wrap; word-break: break-all; font-size: 0.8rem; }
+    .builder-panel { background: #f8f9fa; border: 1px solid #e3e6ea; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.75rem; }
+    .builder-subpanel { display: none; margin-top: 0.5rem; }
+    .builder-subpanel.active { display: block; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12 col-xl-10">
+            <h1 class="mb-4">Create Sync Job - Step 3: Model Data</h1>
+
+            <div class="progress mb-4" style="height: 30px;">
+                <div class="progress-bar" role="progressbar" style="width: 60%;" aria-valuenow="60" aria-valuemin="0" aria-valuemax="100">
+                    Step 3 of 5
+                </div>
+            </div>
+
+            <div class="card mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Job summary</h5>
+                    <p class="mb-1"><strong>Name:</strong> {{ job_name }}</p>
+                    <p class="mb-1"><strong>Source:</strong> {{ source_connection.name }} ({{ source_connection.get_db_type_display }})</p>
+                    <p class="mb-0"><strong>Target:</strong> {{ target_connection.name }} ({{ target_connection.get_db_type_display }})</p>
+                    <p class="text-muted small mt-2 mb-0">
+                        Use <strong>single_table</strong> to sync each table as-is. For join, union, or lookup, edit the JSON per table
+                        (only identifiers allowed; no raw SQL). Run Preview to validate against the source database.
+                    </p>
+                </div>
+            </div>
+
+            {{ transform_plans|json_script:"transform-plans-initial" }}
+
+            <form method="post" action="{% url 'sync_jobs:create_step3_model_submit' %}" id="model-step-form" class="mb-4">
+                {% csrf_token %}
+                <input type="hidden" name="transform_plans_json" id="transform_plans_json" value="">
+                <input type="hidden" name="transform_builder_json" id="transform_builder_json" value="">
+
+                {% for table_info in selected_tables %}
+                    {% with table_key=table_info.schema_name|add:"."|add:table_info.table_name %}
+                    <div class="card model-plan-card" data-table-key="{{ table_key }}">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <strong>{{ table_key }}</strong>
+                            <button type="button" class="btn btn-sm btn-outline-secondary js-preview-btn" data-table-key="{{ table_key }}">Preview</button>
+                        </div>
+                        <div class="card-body">
+                            <div class="builder-panel">
+                                <div class="row g-2 align-items-end">
+                                    <div class="col-md-4">
+                                        <label class="form-label mb-1">Mode</label>
+                                        <select class="form-select form-select-sm js-mode-select" data-table-key="{{ table_key }}">
+                                            <option value="single_table">Single table</option>
+                                            <option value="join">Join</option>
+                                            <option value="union">Union</option>
+                                            <option value="lookup">Lookup</option>
+                                            {% if allow_custom_sql %}
+                                            <option value="custom_sql">Write your own query (admin)</option>
+                                            {% endif %}
+                                        </select>
+                                    </div>
+                                    <div class="col-md-8 small text-muted">
+                                        Choose mode and configure below. You can still edit JSON in advanced mode.
+                                    </div>
+                                </div>
+                                <div class="builder-subpanel js-mode-panel-join" data-table-key="{{ table_key }}">
+                                    <div class="row g-2">
+                                        <div class="col-md-3">
+                                            <label class="form-label mb-1">Join type</label>
+                                            <select class="form-select form-select-sm js-join-type">
+                                                <option value="INNER">INNER</option>
+                                                <option value="LEFT">LEFT</option>
+                                                <option value="RIGHT">RIGHT</option>
+                                                <option value="FULL">FULL</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label mb-1">Join table</label>
+                                            <select class="form-select form-select-sm js-join-table"></select>
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label mb-1">Base key</label>
+                                            <select class="form-select form-select-sm js-join-left-col"></select>
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label mb-1">Join key</label>
+                                            <select class="form-select form-select-sm js-join-right-col"></select>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label mb-1">Output columns</label>
+                                            <select class="form-select form-select-sm js-join-output-mode">
+                                                <option value="all_base">All base columns</option>
+                                                <option value="all_selected">All columns (base + joined)</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="builder-subpanel js-mode-panel-union" data-table-key="{{ table_key }}">
+                                    <label class="form-label mb-1">Branch tables (comma-separated schema.table)</label>
+                                    <input class="form-control form-control-sm js-union-branches" placeholder="dbo.Laptop,dbo.Sales">
+                                    <label class="form-label mt-2 mb-1">Union columns (comma-separated)</label>
+                                    <input class="form-control form-control-sm js-union-columns" placeholder="id,name,updated_at">
+                                </div>
+                                <div class="builder-subpanel js-mode-panel-lookup" data-table-key="{{ table_key }}">
+                                    <div class="row g-2">
+                                        <div class="col-md-4">
+                                            <label class="form-label mb-1">Lookup table</label>
+                                            <select class="form-select form-select-sm js-lookup-table"></select>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label mb-1">Base key column</label>
+                                            <input class="form-control form-control-sm js-lookup-main-key" placeholder="id">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label mb-1">Lookup key column</label>
+                                            <input class="form-control form-control-sm js-lookup-foreign-key" placeholder="id">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label mb-1">Base pass-through columns (comma-separated)</label>
+                                            <input class="form-control form-control-sm js-lookup-main-cols" placeholder="id,name">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label mb-1">Lookup add columns (format: src:alias,src2:alias2)</label>
+                                            <input class="form-control form-control-sm js-lookup-add-cols" placeholder="customer_name:customer_name">
+                                        </div>
+                                    </div>
+                                </div>
+                                {% if allow_custom_sql %}
+                                <div class="builder-subpanel js-mode-panel-custom_sql" data-table-key="{{ table_key }}">
+                                    <label class="form-label mb-1">Custom SQL (admin-only, SELECT only)</label>
+                                    <textarea class="form-control form-control-sm js-custom-sql" rows="4" placeholder="SELECT ... FROM ..."></textarea>
+                                </div>
+                                {% endif %}
+                            </div>
+                            <label class="form-label" for="plan-text-{{ forloop.counter }}">Transform plan (JSON)</label>
+                            <textarea class="form-control model-plan-textarea js-plan-textarea" id="plan-text-{{ forloop.counter }}"
+                                      data-table-key="{{ table_key }}" rows="12"></textarea>
+                            <div class="preview-panel js-preview-result d-none" data-table-key="{{ table_key }}">
+                                <div class="small text-muted mb-1">Generated SQL</div>
+                                <div class="preview-sql js-preview-sql"></div>
+                                <div class="small text-muted mt-2 mb-1">Sample rows</div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-bordered mb-0 js-preview-table"><thead></thead><tbody></tbody></table>
+                                </div>
+                                <div class="small text-warning mt-2 js-preview-warnings d-none"></div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endwith %}
+                {% endfor %}
+
+                <div class="d-flex gap-2 flex-wrap">
+                    <a class="btn btn-outline-secondary" href="{% url 'sync_jobs:create_step2' %}">Back</a>
+                    <button type="submit" class="btn btn-primary">Save and continue to mapping</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    var initialEl = document.getElementById('transform-plans-initial');
+    var plans = {};
+    try {
+        plans = JSON.parse(initialEl ? initialEl.textContent : '{}');
+    } catch (e) {
+        plans = {};
+    }
+    var metadata = {};
+    var allowCustomSql = {{ allow_custom_sql|yesno:"true,false" }};
+
+    function syncTextareasFromPlans() {
+        document.querySelectorAll('.js-plan-textarea').forEach(function (ta) {
+            var key = ta.getAttribute('data-table-key');
+            var obj = plans[key] || {};
+            ta.value = JSON.stringify(obj, null, 2);
+        });
+    }
+
+    function readPlansFromDom() {
+        var out = {};
+        document.querySelectorAll('.js-plan-textarea').forEach(function (ta) {
+            var key = ta.getAttribute('data-table-key');
+            try {
+                out[key] = JSON.parse(ta.value || '{}');
+            } catch (e) {
+                throw new Error('Invalid JSON for ' + key + ': ' + e.message);
+            }
+        });
+        return out;
+    }
+
+    function parseCsv(v) {
+        return String(v || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+    }
+
+    function tableSuffix(tableKey) {
+        var parts = String(tableKey || '').split('.');
+        return (parts.length > 1 ? parts[1] : parts[0] || 't').toLowerCase();
+    }
+
+    function getColumns(tableKey) {
+        var x = metadata[tableKey] || {};
+        return Array.isArray(x.columns) ? x.columns : [];
+    }
+
+    function buildJoinOutputs(baseKey, joinKey, outputMode, joinTableKey) {
+        var outs = [];
+        var baseCols = getColumns(baseKey);
+        var joinCols = getColumns(joinTableKey);
+        if (outputMode === 'all_base' || outputMode === 'all_selected') {
+            baseCols.forEach(function (c) {
+                outs.push({ alias: c, table_ref: 'b0', column: c, data_type: 'varchar' });
+            });
+        }
+        if (outputMode === 'all_selected') {
+            var prefix = tableSuffix(joinTableKey);
+            joinCols.forEach(function (c) {
+                outs.push({ alias: prefix + '_' + c, table_ref: 'j1', column: c, data_type: 'varchar' });
+            });
+        }
+        if (!outs.length && baseCols.length) {
+            outs.push({ alias: baseCols[0], table_ref: 'b0', column: baseCols[0], data_type: 'varchar' });
+        }
+        return outs;
+    }
+
+    function buildBuilderPayload(card) {
+        var tableKey = card.getAttribute('data-table-key');
+        var mode = card.querySelector('.js-mode-select').value;
+        var parts = tableKey.split('.');
+        var schema = parts[0] || '';
+        var table = parts.slice(1).join('.') || '';
+
+        if (mode === 'single_table') {
+            return {
+                mode: 'single_table',
+                source_db_type: '{{ source_db_type }}',
+                base_table: { schema_name: schema, table_name: table },
+                join_nodes: [],
+                union_branches: [],
+                union_select_columns: [],
+                lookup: null,
+                selected_output_columns: [],
+                structured_filters: [],
+                order_by: [],
+                derived_columns: []
+            };
+        }
+        if (mode === 'join') {
+            var joinTableKey = card.querySelector('.js-join-table').value || '';
+            var joinParts = joinTableKey.split('.');
+            var leftCol = card.querySelector('.js-join-left-col').value || '';
+            var rightCol = card.querySelector('.js-join-right-col').value || '';
+            var joinType = card.querySelector('.js-join-type').value || 'INNER';
+            var outputMode = card.querySelector('.js-join-output-mode').value || 'all_base';
+            return {
+                mode: 'join',
+                source_db_type: '{{ source_db_type }}',
+                base_table: { schema_name: schema, table_name: table },
+                join_nodes: [{
+                    join_type: joinType,
+                    schema_name: joinParts[0] || '',
+                    table_name: joinParts.slice(1).join('.') || '',
+                    alias: 'j1',
+                    on: [{
+                        left_alias: 'b0',
+                        left_column: leftCol,
+                        right_alias: 'j1',
+                        right_column: rightCol
+                    }]
+                }],
+                union_branches: [],
+                union_select_columns: [],
+                lookup: null,
+                selected_output_columns: buildJoinOutputs(tableKey, leftCol, outputMode, joinTableKey),
+                structured_filters: [],
+                order_by: [],
+                derived_columns: []
+            };
+        }
+        if (mode === 'union') {
+            var branches = parseCsv(card.querySelector('.js-union-branches').value);
+            var cols = parseCsv(card.querySelector('.js-union-columns').value);
+            var normalizedBranches = branches.map(function (b) {
+                var p = b.split('.');
+                return { schema_name: p[0] || '', table_name: p.slice(1).join('.') || '' };
+            });
+            return {
+                mode: 'union',
+                source_db_type: '{{ source_db_type }}',
+                base_table: { schema_name: schema, table_name: table },
+                join_nodes: [],
+                union_branches: normalizedBranches,
+                union_select_columns: cols,
+                lookup: null,
+                selected_output_columns: cols.map(function (c) { return { alias: c, table_ref: null, column: c, data_type: 'varchar' }; }),
+                structured_filters: [],
+                order_by: [],
+                derived_columns: []
+            };
+        }
+        if (mode === 'lookup') {
+            var lkTable = card.querySelector('.js-lookup-table').value || '';
+            var lkp = lkTable.split('.');
+            var mainCols = parseCsv(card.querySelector('.js-lookup-main-cols').value);
+            var addColsRaw = parseCsv(card.querySelector('.js-lookup-add-cols').value);
+            var addCols = addColsRaw.map(function (x) {
+                var sp = x.split(':');
+                return { lookup_column: (sp[0] || '').trim(), as: (sp[1] || sp[0] || '').trim() };
+            }).filter(function (x) { return x.lookup_column && x.as; });
+            return {
+                mode: 'lookup',
+                source_db_type: '{{ source_db_type }}',
+                base_table: { schema_name: schema, table_name: table },
+                join_nodes: [],
+                union_branches: [],
+                union_select_columns: [],
+                lookup: {
+                    schema_name: lkp[0] || '',
+                    table_name: lkp.slice(1).join('.') || '',
+                    alias: 'lu',
+                    main_key_column: card.querySelector('.js-lookup-main-key').value || '',
+                    lookup_key_column: card.querySelector('.js-lookup-foreign-key').value || '',
+                    main_pass_through_columns: mainCols,
+                    add_columns: addCols
+                },
+                selected_output_columns: mainCols.map(function (c) { return { alias: c, table_ref: 'b0', column: c, data_type: 'varchar' }; }).concat(
+                    addCols.map(function (a) { return { alias: a.as, table_ref: 'lu', column: a.lookup_column, data_type: 'varchar' }; })
+                ),
+                structured_filters: [],
+                order_by: [],
+                derived_columns: []
+            };
+        }
+        if (mode === 'custom_sql' && allowCustomSql) {
+            return {
+                mode: 'custom_sql',
+                custom_sql: card.querySelector('.js-custom-sql').value || '',
+                base_table: { schema_name: schema, table_name: table }
+            };
+        }
+        return null;
+    }
+
+    function setPanelMode(card, mode) {
+        card.querySelectorAll('.builder-subpanel').forEach(function (p) { p.classList.remove('active'); });
+        var panel = card.querySelector('.js-mode-panel-' + mode);
+        if (panel) { panel.classList.add('active'); }
+    }
+
+    function populateJoinControls(card) {
+        var baseKey = card.getAttribute('data-table-key');
+        var joinTableSel = card.querySelector('.js-join-table');
+        var lookupTableSel = card.querySelector('.js-lookup-table');
+        var leftSel = card.querySelector('.js-join-left-col');
+        var rightSel = card.querySelector('.js-join-right-col');
+        if (!joinTableSel || !leftSel || !rightSel) { return; }
+        joinTableSel.innerHTML = '';
+        lookupTableSel.innerHTML = '';
+        Object.keys(metadata).forEach(function (k) {
+            if (k === baseKey) { return; }
+            var o1 = document.createElement('option');
+            o1.value = k;
+            o1.textContent = k;
+            joinTableSel.appendChild(o1);
+            var o2 = document.createElement('option');
+            o2.value = k;
+            o2.textContent = k;
+            lookupTableSel.appendChild(o2);
+        });
+        leftSel.innerHTML = '';
+        getColumns(baseKey).forEach(function (c) {
+            var o = document.createElement('option');
+            o.value = c;
+            o.textContent = c;
+            leftSel.appendChild(o);
+        });
+        function syncRightFromJoinTable() {
+            var jt = joinTableSel.value || '';
+            rightSel.innerHTML = '';
+            getColumns(jt).forEach(function (c) {
+                var o = document.createElement('option');
+                o.value = c;
+                o.textContent = c;
+                rightSel.appendChild(o);
+            });
+            var sugKey = baseKey + '__' + jt;
+            var sugg = (window.__joinSuggestions && window.__joinSuggestions[sugKey]) || [];
+            if (sugg.length) {
+                leftSel.value = sugg[0].left_column;
+                rightSel.value = sugg[0].right_column;
+            }
+        }
+        joinTableSel.addEventListener('change', syncRightFromJoinTable);
+        syncRightFromJoinTable();
+    }
+
+    syncTextareasFromPlans();
+
+    fetch('{% url "sync_jobs:create_step3_model_builder_metadata" %}', { method: 'GET' })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+            if (!res.ok) { return; }
+            metadata = res.tables || {};
+            window.__joinSuggestions = res.join_suggestions || {};
+            document.querySelectorAll('.model-plan-card').forEach(function (card) {
+                populateJoinControls(card);
+                var modeSel = card.querySelector('.js-mode-select');
+                if (modeSel) {
+                    setPanelMode(card, modeSel.value);
+                    modeSel.addEventListener('change', function () { setPanelMode(card, modeSel.value); });
+                }
+            });
+        })
+        .catch(function () {});
+
+    function getCookie(name) {
+        var cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            var cookies = document.cookie.split(';');
+            for (var i = 0; i < cookies.length; i++) {
+                var cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
+    document.querySelectorAll('.js-preview-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var tableKey = btn.getAttribute('data-table-key');
+            var ta = document.querySelector('.js-plan-textarea[data-table-key="' + tableKey + '"]');
+            var panel = document.querySelector('.js-preview-result[data-table-key="' + tableKey + '"]');
+            var plan;
+            try {
+                plan = JSON.parse(ta.value || '{}');
+            } catch (e) {
+                alert('Fix JSON before preview: ' + e.message);
+                return;
+            }
+            var card = btn.closest('.model-plan-card');
+            var builderPayload = null;
+            if (card) {
+                try {
+                    builderPayload = buildBuilderPayload(card);
+                    if (builderPayload) {
+                        ta.value = JSON.stringify(builderPayload, null, 2);
+                        plan = builderPayload;
+                    }
+                } catch (e) {
+                    alert('Fix builder inputs before preview: ' + e.message);
+                    return;
+                }
+            }
+            btn.disabled = true;
+            fetch('{% url "sync_jobs:create_step3_model_preview" %}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCookie('csrftoken') || ''
+                },
+                body: JSON.stringify({ table_key: tableKey, plan: plan, builder_payload: builderPayload })
+            }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); })
+            .then(function (res) {
+                btn.disabled = false;
+                if (!res.body.ok) {
+                    alert(res.body.message || 'Preview failed');
+                    return;
+                }
+                panel.classList.remove('d-none');
+                panel.querySelector('.js-preview-sql').textContent = res.body.generated_sql || '';
+                var thead = panel.querySelector('.js-preview-table thead');
+                var tbody = panel.querySelector('.js-preview-table tbody');
+                thead.innerHTML = '';
+                tbody.innerHTML = '';
+                var cols = res.body.columns || [];
+                var trh = document.createElement('tr');
+                cols.forEach(function (c) {
+                    var th = document.createElement('th');
+                    th.textContent = c;
+                    trh.appendChild(th);
+                });
+                thead.appendChild(trh);
+                (res.body.preview_rows || []).forEach(function (row) {
+                    var tr = document.createElement('tr');
+                    row.forEach(function (cell) {
+                        var td = document.createElement('td');
+                        td.textContent = cell === null ? '' : String(cell);
+                        tr.appendChild(td);
+                    });
+                    tbody.appendChild(tr);
+                });
+                var w = res.body.warnings || [];
+                var wEl = panel.querySelector('.js-preview-warnings');
+                if (w.length) {
+                    wEl.textContent = w.join(' ');
+                    wEl.classList.remove('d-none');
+                } else {
+                    wEl.classList.add('d-none');
+                }
+            }).catch(function () {
+                btn.disabled = false;
+                alert('Network error during preview.');
+            });
+        });
+    });
+
+    document.getElementById('model-step-form').addEventListener('submit', function (e) {
+        try {
+            var builderAll = {};
+            document.querySelectorAll('.model-plan-card').forEach(function (card) {
+                var key = card.getAttribute('data-table-key');
+                var payload = buildBuilderPayload(card);
+                if (payload) {
+                    builderAll[key] = payload;
+                    var ta = card.querySelector('.js-plan-textarea');
+                    if (ta) {
+                        ta.value = JSON.stringify(payload, null, 2);
+                    }
+                }
+            });
+            var all = readPlansFromDom();
+            document.getElementById('transform_plans_json').value = JSON.stringify(all);
+            document.getElementById('transform_builder_json').value = JSON.stringify(builderAll);
+        } catch (err) {
+            e.preventDefault();
+            alert(err.message);
+        }
+    });
+})();
+</script>
+{% endblock %}

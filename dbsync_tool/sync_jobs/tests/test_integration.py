@@ -83,13 +83,17 @@ class SyncJobWorkflowTestCase(TestCase):
                 '{"schema":"public","table":"orders"}'
             ]
         }, follow=True)
-        self.assertRedirects(response, reverse('sync_jobs:create_step3'))
+        self.assertRedirects(response, reverse('sync_jobs:create_step3_model'))
 
-        # Step 3: Mapping preview, then go to Step 4
+        from sync_jobs.tests.wizard_helpers import seed_transform_plans_in_session
+
+        seed_transform_plans_in_session(self.client, source_db_type="postgres")
+
+        # Step 4: Mapping preview, then go to Step 5 (schedule)
         response = self.client.post(reverse('sync_jobs:create_step3_submit'), follow=True)
         self.assertRedirects(response, reverse('sync_jobs:create_step4'))
 
-        # Step 4: Configure and create job
+        # Step 5: Configure and create job
         response = self.client.post(reverse('sync_jobs:create_step4_submit'), {
             'sync_type': 'full',
             'schedule_type': 'daily',

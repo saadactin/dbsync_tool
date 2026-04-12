@@ -3,6 +3,8 @@ Full sync implementation
 """
 import os
 from typing import List, Optional, Tuple, Dict, Any
+from decimal import Decimal
+import json
 from django.utils import timezone
 from django.db.models import Sum
 from sync_jobs.models import SyncJob, SyncJobTable, SyncExecution, SyncExecutionLog
@@ -12,12 +14,28 @@ from sync_engine.validators import DataValidator
 from sync_engine.query_builder import QueryBuilder
 from sync_engine.transformation_engine import TransformationEngine
 from sync_engine.transformation_validator import TransformationValidator
+from core.mongo_document_codec import build_document_from_sql_row
 from sync_engine.exceptions import TableSyncError
+from sync_jobs.services.transform_plan_service import (
+    TransformPlanValidationError,
+    prepare_runtime_transform_plan,
+    compile_select_from_plan,
+    column_infos_from_transform_plan,
+    runtime_output_aliases,
+    validate_transform_plan_column_references,
+    ERROR_TRANSFORM_PLAN_CONFLICT,
+)
 from core.constants import DEFAULT_BATCH_SIZE, MAX_BATCH_SIZE, MIN_BATCH_SIZE
 from core.type_mapping import map_source_to_oracle_type, normalize_data_type
 import logging
 
 logger = logging.getLogger(__name__)
+
+ORIGIN_FIELD_NAME = "__dbsync_origin_job_id"
+
+
+def _should_stamp_origin() -> bool:
+    return (os.environ.get("DBSYNC_STAMP_ORIGIN", "") or "").strip().lower() in ("1", "true", "yes", "y")
 
 
 def get_target_table_name(job, source_table_name: str) -> str:
@@ -71,6 +89,30 @@ class FullSyncExecutor:
         # Store transformed query and order_by for post-migration verification
         self._last_transformed_query = None
         self._last_order_by = None
+
+    @staticmethod
+    def _normalize_mongo_value_for_sql(value: Any) -> Any:
+        """Convert Mongo/BSON values to SQL-driver-safe Python values."""
+        if value is None:
+            return None
+        # psycopg2 rejects NUL bytes in text literals.
+        if isinstance(value, str):
+            return value.replace("\x00", "")
+        # Convert bson.decimal128.Decimal128 without hard dependency on bson types.
+        if hasattr(value, "to_decimal") and "decimal128" in value.__class__.__name__.lower():
+            try:
+                return value.to_decimal()
+            except Exception:
+                return str(value)
+        if isinstance(value, Decimal):
+            return value
+        # Convert complex nested documents to JSON text for SQL columns.
+        if isinstance(value, (dict, list, tuple, set)):
+            try:
+                return json.dumps(value, default=str, ensure_ascii=False).replace("\x00", "")
+            except Exception:
+                return str(value).replace("\x00", "")
+        return value
     
     def _optimize_batch_size(self):
         """
@@ -119,6 +161,62 @@ class FullSyncExecutor:
             return 'oracle'
         else:
             return 'unknown'
+
+    def _is_preflight_transform_validation_enabled(self) -> bool:
+        return (os.environ.get("DBSYNC_PREFLIGHT_TRANSFORM_COMPILE", "") or "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "y",
+        )
+
+    def _preflight_validate_transform_plans(self, tables) -> None:
+        """Optionally compile/validate model transform plans before table sync starts."""
+        issues: List[str] = []
+        source_db = QueryBuilder.get_db_type(self.source_connector)
+        for job_table in tables:
+            schema = job_table.schema_name
+            table = job_table.table_name
+            excluded = getattr(job_table, "excluded_columns", None) or []
+            protected = getattr(job_table, "protected_columns", None) or []
+            excluded_lower = {(c or "").strip().lower() for c in excluded if c}
+            protected_lower = {(c or "").strip().lower() for c in protected if c}
+            try:
+                rt_plan = prepare_runtime_transform_plan(
+                    job_table,
+                    self.job,
+                    source_db,
+                    excluded_cols_lower=excluded_lower,
+                    protected_cols_lower=protected_lower,
+                )
+            except TransformPlanValidationError as e:
+                issues.append(f"{schema}.{table}: [{e.error_code}] {e.message}")
+                continue
+
+            if rt_plan is None:
+                continue
+
+            tq = job_table.transformation_query
+            ct = job_table.column_transformations or {}
+            if (tq and str(tq).strip()) or ct:
+                issues.append(
+                    f"{schema}.{table}: [{ERROR_TRANSFORM_PLAN_CONFLICT}] Legacy SQL transformations cannot be combined with model transforms."
+                )
+                continue
+
+            try:
+                validate_transform_plan_column_references(rt_plan, self.source_connector)
+                compile_select_from_plan(rt_plan, preview_limit=None)
+            except TransformPlanValidationError as e:
+                issues.append(f"{schema}.{table}: [{e.error_code}] {e.message}")
+            except Exception as e:
+                issues.append(f"{schema}.{table}: [transform_compile_failed] {str(e)}")
+
+        if issues:
+            raise TableSyncError(
+                "Pre-flight transform validation failed for one or more tables:\n- "
+                + "\n- ".join(issues)
+            )
     
     def _validate_and_apply_transformations(
         self,
@@ -307,6 +405,9 @@ class FullSyncExecutor:
             if not hasattr(self.target_connector, '_connected') or not self.target_connector._connected:
                 self.target_connector.connect()
                 self.target_connector._connected = True
+
+            if self._is_preflight_transform_validation_enabled():
+                self._preflight_validate_transform_plans(tables)
             
             # Sync each table
             for job_table in tables:
@@ -374,6 +475,189 @@ class FullSyncExecutor:
             self.execution.completed_at = timezone.now()
             self.execution.save()
             raise
+
+    def _sync_table_with_transform(
+        self,
+        job_table: SyncJobTable,
+        schema: str,
+        table: str,
+        target_table: str,
+        target_schema: str,
+        log: SyncExecutionLog,
+        rt_plan: Dict[str, Any],
+    ) -> None:
+        """Full sync using persisted model transform (join/union/lookup)."""
+        column_infos = column_infos_from_transform_plan(rt_plan)
+        overrides = getattr(job_table, "column_type_overrides", None) or {}
+        for col in column_infos:
+            o = overrides.get(col.name.lower())
+            if o:
+                col.data_type = o
+
+        try:
+            self.table_handler.create_table_if_not_exists(
+                schema,
+                table,
+                column_type_overrides=overrides,
+                column_name_overrides=getattr(job_table, "column_name_overrides", None) or {},
+                excluded_columns=[],
+                protected_columns=[],
+                target_table=target_table,
+                source_columns_override=column_infos,
+            )
+        except Exception as e:
+            error_msg = f"Failed to create/verify target table: {str(e)}"
+            logger.error(f"Table creation error for {schema}.{table}: {error_msg}", exc_info=True)
+            raise TableSyncError(error_msg) from e
+
+        try:
+            try:
+                target_tables = self.target_connector.get_tables(target_schema)
+                target_db_type = self.table_handler.target_db_type
+                if target_db_type in ("sqlserver", "oracle"):
+                    table_exists = any(t.upper() == target_table.upper() for t in target_tables)
+                else:
+                    table_exists = target_table in target_tables
+                if table_exists:
+                    self.target_connector.truncate_table(target_schema, target_table)
+                else:
+                    logger.info(
+                        f"Target table {target_schema}.{target_table} does not exist yet, skipping truncate"
+                    )
+            except Exception as check_error:
+                logger.debug(f"Could not check table existence: {check_error}, trying truncate anyway")
+                self.target_connector.truncate_table(target_schema, target_table)
+        except Exception as e:
+            error_str = str(e)
+            if "does not exist" in error_str or "Cannot find the object" in error_str:
+                logger.warning(
+                    f"Target table {target_schema}.{target_table} may not exist yet, skipping truncate: {error_str}"
+                )
+            else:
+                raise TableSyncError(f"Failed to truncate target table: {error_str}") from e
+
+        try:
+            # Fail fast if the transform plan references non-existent physical columns.
+            validate_transform_plan_column_references(rt_plan, self.source_connector)
+            query, warn_list = compile_select_from_plan(rt_plan, preview_limit=None)
+        except TransformPlanValidationError as e:
+            raise TableSyncError(f"[{e.error_code}] {e.message}") from e
+        except Exception as e:
+            raise TableSyncError(f"[transform_compile_failed] {str(e)}") from e
+
+        if warn_list:
+            logger.info("Transform compile warnings for %s.%s: %s", schema, table, warn_list)
+
+        column_names = runtime_output_aliases(rt_plan)
+        if not column_names:
+            raise TableSyncError(f"[transform_plan_invalid] No output columns for {schema}.{table}")
+
+        mode = (rt_plan.get("mode") or "").strip().lower()
+        logger.info(
+            "Transform full sync %s.%s mode=%s output_columns=%d",
+            schema,
+            table,
+            mode,
+            len(column_names),
+        )
+
+        rename_overrides = getattr(job_table, "column_name_overrides", None) or {}
+        target_column_names = [rename_overrides.get(nm.lower(), nm) for nm in column_names]
+
+        self._last_transformed_query = query
+        self._last_order_by = None
+
+        order_by_fb = None
+        if "ORDER BY" not in query.upper():
+            order_by_fb = column_names[0]
+
+        batch_number = 0
+        total_rows_fetched = 0
+        total_rows_inserted = 0
+
+        while True:
+            batch = self.source_connector.fetch_batch(
+                query=query,
+                batch_size=self.batch_size,
+                offset=total_rows_fetched,
+                order_by=order_by_fb,
+            )
+            if not batch:
+                break
+            batch_number += 1
+            total_rows_fetched += len(batch)
+            self.validator.validate_batch_not_empty(batch, f"{schema}.{table}")
+
+            try:
+                bulk_kwargs = {
+                    "schema": target_schema,
+                    "table": target_table,
+                    "columns": target_column_names,
+                    "rows": batch,
+                }
+                if self.table_handler.target_db_type == "oracle":
+                    target_types = []
+                    for col in column_infos:
+                        override_type = overrides.get(col.name.lower())
+                        if override_type:
+                            target_types.append(override_type)
+                        else:
+                            _, max_len, prec, scale = normalize_data_type(
+                                col.data_type, self.table_handler.source_db_type
+                            )
+                            target_types.append(
+                                map_source_to_oracle_type(
+                                    col.data_type,
+                                    self.table_handler.source_db_type,
+                                    max_length=col.max_length or max_len,
+                                    precision=prec,
+                                    scale=scale,
+                                )
+                            )
+                    bulk_kwargs["target_column_types"] = target_types
+                self.target_connector.bulk_insert(**bulk_kwargs)
+                total_rows_inserted += len(batch)
+            except Exception as e:
+                raise TableSyncError(
+                    f"Failed to insert batch {batch_number} for {schema}.{table}: {str(e)}"
+                ) from e
+
+            log.batch_number = batch_number
+            log.rows_fetched = total_rows_fetched
+            log.rows_inserted = total_rows_inserted
+            log.save()
+
+            self.execution.completed_tables = SyncExecutionLog.objects.filter(
+                execution=self.execution,
+                status="completed",
+            ).count()
+            self.execution.total_rows_synced = (
+                SyncExecutionLog.objects.filter(execution=self.execution).aggregate(
+                    total=Sum("rows_inserted")
+                )["total"]
+                or 0
+            )
+            self.execution.save()
+
+            if len(batch) < self.batch_size:
+                break
+
+        log.rows_fetched = total_rows_fetched
+        log.rows_inserted = total_rows_inserted
+        log.batch_number = batch_number
+        log.verification_summary = (
+            f"Transform mode={mode}; rows inserted={total_rows_inserted} (model-based full sync)"
+        )
+        log.status = "completed"
+        log.completed_at = timezone.now()
+        log.save()
+        logger.info(
+            "Successfully synced table %s.%s with transform: %s rows in %s batches",
+            schema,
+            table,
+            total_rows_inserted,
+            batch_number,
+        )
     
     def sync_table(self, job_table: SyncJobTable):
         """
@@ -438,6 +722,65 @@ class FullSyncExecutor:
             log.status = 'running'
             log.started_at = timezone.now()
             log.save()
+
+            # MongoDB source collections cannot be queried via SQL QueryBuilder.
+            if getattr(self.table_handler, "source_db_type", None) == "mongodb":
+                self._sync_table_mongo_source(
+                    job_table=job_table,
+                    schema=schema,
+                    table=table,
+                    target_schema=target_schema,
+                    target_table=target_table,
+                    log=log,
+                )
+                return
+
+            # MongoDB target uses a document upsert path (no SQL bulk-insert semantics).
+            if getattr(self.table_handler, "target_db_type", None) == "mongodb":
+                self._sync_table_mongo_target(
+                    job_table=job_table,
+                    schema=schema,
+                    table=table,
+                    target_schema=target_schema,
+                    target_table=target_table,
+                    log=log,
+                )
+                return
+
+            raw_excluded = getattr(job_table, "excluded_columns", None) or []
+            raw_protected = getattr(job_table, "protected_columns", None) or []
+            excluded_lower = {(c or "").strip().lower() for c in raw_excluded if c}
+            protected_lower = {(c or "").strip().lower() for c in raw_protected if c}
+            source_db = QueryBuilder.get_db_type(self.source_connector)
+            try:
+                rt_plan = prepare_runtime_transform_plan(
+                    job_table,
+                    self.job,
+                    source_db,
+                    excluded_cols_lower=excluded_lower,
+                    protected_cols_lower=protected_lower,
+                )
+            except TransformPlanValidationError as e:
+                raise TableSyncError(f"[{e.error_code}] {e.message}") from e
+            if rt_plan is not None:
+                tq = job_table.transformation_query
+                ct = job_table.column_transformations or {}
+                if (tq and str(tq).strip()) or ct:
+                    raise TableSyncError(
+                        f"[{ERROR_TRANSFORM_PLAN_CONFLICT}] Legacy SQL transformations cannot be combined "
+                        "with model transforms (join/union/lookup). Clear transformation query and column "
+                        "transformations or use structured_filters in the model step."
+                    )
+                self._sync_table_with_transform(
+                    job_table=job_table,
+                    schema=schema,
+                    table=table,
+                    target_table=target_table,
+                    target_schema=target_schema,
+                    log=log,
+                    rt_plan=rt_plan,
+                )
+                return
             
             # Ensure target table exists (uses correct schema mapping internally)
             try:
@@ -821,6 +1164,327 @@ class FullSyncExecutor:
                 exc_info=True
             )
             raise TableSyncError(f"Table sync failed for {schema}.{table}: {str(e)}") from e
+
+    def _sync_table_mongo_source(
+        self,
+        job_table: SyncJobTable,
+        schema: str,
+        table: str,
+        target_schema: str,
+        target_table: str,
+        log: SyncExecutionLog,
+    ) -> None:
+        """Full sync path for MongoDB source collections into SQL targets."""
+        from django.db.models import Sum
+
+        # Ensure target table exists (Mongo connector provides inferred columns)
+        self.table_handler.create_table_if_not_exists(
+            schema,
+            table,
+            column_type_overrides=getattr(job_table, "column_type_overrides", None) or {},
+            column_name_overrides=getattr(job_table, "column_name_overrides", None) or {},
+            excluded_columns=getattr(job_table, "excluded_columns", None) or [],
+            protected_columns=getattr(job_table, "protected_columns", None) or [],
+            target_table=target_table,
+        )
+
+        # Full load semantics: replace. Truncate SQL target table first.
+        try:
+            target_tables = self.target_connector.get_tables(target_schema)
+            target_db_type = self.table_handler.target_db_type
+            if target_db_type in ("sqlserver", "oracle"):
+                table_exists = any(t.upper() == target_table.upper() for t in target_tables)
+            else:
+                table_exists = target_table in target_tables
+            if table_exists:
+                self.target_connector.truncate_table(target_schema, target_table)
+        except Exception as e:
+            error_str = str(e)
+            if "does not exist" not in error_str and "Cannot find the object" not in error_str:
+                raise TableSyncError(f"Failed to truncate target table: {error_str}") from e
+
+        # Determine migratable columns and target renames
+        columns = self.source_connector.get_columns(schema, table)
+        if not columns:
+            raise TableSyncError(f"No columns found for source table {schema}.{table}")
+
+        overrides = getattr(job_table, "column_type_overrides", None) or {}
+        if overrides:
+            for col in columns:
+                override_type = overrides.get(col.name.lower())
+                if override_type:
+                    col.data_type = override_type
+
+        raw_protected = getattr(job_table, "protected_columns", None)
+        if not isinstance(raw_protected, (list, tuple, set)):
+            raw_protected = []
+        raw_excluded = getattr(job_table, "excluded_columns", None)
+        if not isinstance(raw_excluded, (list, tuple, set)):
+            raw_excluded = []
+        protected_cols = {(c or "").strip().lower() for c in raw_protected if c}
+        excluded_cols = {(c or "").strip().lower() for c in raw_excluded if c}
+        effective_excluded = excluded_cols - protected_cols
+        if effective_excluded:
+            columns = [col for col in columns if col.name.lower() not in effective_excluded]
+            if not columns:
+                raise TableSyncError(
+                    f"No migratable columns remain after exclusion rules for {schema}.{table}"
+                )
+
+        column_names = [col.name for col in columns]
+        rename_overrides = getattr(job_table, "column_name_overrides", None) or {}
+        target_column_names = [rename_overrides.get(col.name.lower(), col.name) for col in columns]
+
+        # Schema drift reconciliation: if target table exists but new columns appear, add them.
+        try:
+            get_cols_fn = getattr(self.target_connector, "get_columns", None)
+            existing_cols = get_cols_fn(target_schema, target_table) if callable(get_cols_fn) else []
+            if not isinstance(existing_cols, (list, tuple, set)):
+                existing_cols = []
+            existing_lower = {
+                (getattr(c, "name", "") or "").strip().lower()
+                for c in existing_cols
+                if getattr(c, "name", None)
+            }
+            missing = [c for c in target_column_names if (c or "").strip().lower() not in existing_lower]
+            if missing:
+                add_missing_fn = getattr(self.target_connector, "add_missing_columns", None)
+                if callable(add_missing_fn):
+                    import pandas as pd
+
+                    df_missing = pd.DataFrame([{col: None for col in missing}])
+                    add_missing_fn(target_schema, target_table, df_missing)
+        except Exception as e:
+            raise TableSyncError(f"Failed to reconcile schema drift for {schema}.{table}: {str(e)}") from e
+
+        batch_number = 0
+        total_rows_fetched = 0
+        total_rows_inserted = 0
+        last_id = None
+
+        while True:
+            docs, last_id = self.source_connector.fetch_documents_batch(
+                schema=schema,
+                table=table,
+                batch_size=self.batch_size,
+                last_id=last_id,
+            )
+            if not docs:
+                break
+
+            batch_number += 1
+            total_rows_fetched += len(docs)
+
+            rows = []
+            for doc in docs:
+                flat = self.source_connector.flatten_document_for_sql(doc)
+                rows.append(
+                    tuple(
+                        self._normalize_mongo_value_for_sql(flat.get(col))
+                        for col in column_names
+                    )
+                )
+
+            try:
+                self.target_connector.bulk_insert(
+                    schema=target_schema,
+                    table=target_table,
+                    columns=target_column_names,
+                    rows=rows,
+                )
+            except Exception as e:
+                raise TableSyncError(
+                    f"Failed to insert batch {batch_number} for {schema}.{table}: {str(e)}"
+                ) from e
+
+            total_rows_inserted += len(rows)
+
+            log.batch_number = batch_number
+            log.rows_fetched = total_rows_fetched
+            log.rows_inserted = total_rows_inserted
+            log.save()
+
+            self.execution.completed_tables = SyncExecutionLog.objects.filter(
+                execution=self.execution, status="completed"
+            ).count()
+            self.execution.total_rows_synced = (
+                SyncExecutionLog.objects.filter(execution=self.execution).aggregate(total=Sum("rows_inserted"))[
+                    "total"
+                ]
+                or 0
+            )
+            self.execution.save()
+
+            if len(docs) < self.batch_size:
+                break
+
+        log.verification_summary = (
+            f"Mongo full sync source; rows inserted={total_rows_inserted} in {batch_number} batches"
+        )
+        log.status = "completed"
+        log.completed_at = timezone.now()
+        log.save()
+
+    def _sync_table_mongo_target(
+        self,
+        job_table: SyncJobTable,
+        schema: str,
+        table: str,
+        target_schema: str,
+        target_table: str,
+        log: SyncExecutionLog,
+    ) -> None:
+        """Full sync path for SQL sources into MongoDB target collections."""
+        from django.db.models import Sum
+
+        raw_excluded = getattr(job_table, "excluded_columns", None) or []
+        raw_protected = getattr(job_table, "protected_columns", None) or []
+        excluded_lower = {(c or "").strip().lower() for c in raw_excluded if c}
+        protected_lower = {(c or "").strip().lower() for c in raw_protected if c}
+        source_db = QueryBuilder.get_db_type(self.source_connector)
+
+        try:
+            rt_plan = prepare_runtime_transform_plan(
+                job_table,
+                self.job,
+                source_db,
+                excluded_cols_lower=excluded_lower,
+                protected_cols_lower=protected_lower,
+            )
+        except TransformPlanValidationError as e:
+            raise TableSyncError(f"[{e.error_code}] {e.message}") from e
+
+        tq = job_table.transformation_query
+        ct = job_table.column_transformations or {}
+        if rt_plan is not None and ((tq and str(tq).strip()) or ct):
+            raise TableSyncError(
+                f"[{ERROR_TRANSFORM_PLAN_CONFLICT}] Legacy SQL transformations cannot be combined "
+                "with model transforms (join/union/lookup). Clear transformation query and column "
+                "transformations or use structured_filters in the model step."
+            )
+
+        # Determine the Mongo database to write to.
+        # Prefer the target connection database_name when set; otherwise fall back to source schema.
+        mongo_db = getattr(self.target_connector, "database_name", None) or target_schema
+        mongo_coll = target_table
+
+        if rt_plan is not None:
+            try:
+                validate_transform_plan_column_references(rt_plan, self.source_connector)
+                query, warn_list = compile_select_from_plan(rt_plan, preview_limit=None)
+            except TransformPlanValidationError as e:
+                raise TableSyncError(f"[{e.error_code}] {e.message}") from e
+            except Exception as e:
+                raise TableSyncError(f"[transform_compile_failed] {str(e)}") from e
+            if warn_list:
+                logger.info("Transform compile warnings for %s.%s: %s", schema, table, warn_list)
+
+            column_names = runtime_output_aliases(rt_plan)
+            if not column_names:
+                raise TableSyncError(f"[transform_plan_invalid] No output columns for {schema}.{table}")
+            order_by = None if "ORDER BY" in query.upper() else column_names[0]
+            pk_cols = []
+        else:
+            # Fetch PK columns (single or composite) to derive stable _id.
+            try:
+                pk_cols = self.source_connector.get_primary_key(schema, table) or []
+            except Exception:
+                pk_cols = []
+            if not isinstance(pk_cols, (list, tuple)):
+                pk_cols = []
+
+            # Columns to migrate
+            columns = self.source_connector.get_columns(schema, table)
+            if not columns:
+                raise TableSyncError(f"No columns found for source table {schema}.{table}")
+
+            effective_excluded = excluded_lower - protected_lower
+            if effective_excluded:
+                columns = [col for col in columns if col.name.lower() not in effective_excluded]
+                if not columns:
+                    raise TableSyncError(
+                        f"No migratable columns remain after exclusion rules for {schema}.{table}"
+                    )
+            column_names = [col.name for col in columns]
+            order_by = ", ".join(pk_cols) if pk_cols else (column_names[0] if column_names else None)
+            query = self.query_builder.build_select_query(
+                connector=self.source_connector,
+                schema=schema,
+                table=table,
+                columns=column_names,
+                order_by=order_by,
+            )
+
+        rename_overrides = getattr(job_table, "column_name_overrides", None) or {}
+        target_field_names = [rename_overrides.get(col.lower(), col) for col in column_names]
+
+        # Ensure collection is empty for full replace semantics.
+        try:
+            self.target_connector.truncate_table(mongo_db, mongo_coll)
+        except Exception as e:
+            raise TableSyncError(f"Failed to clear Mongo target collection: {str(e)}") from e
+
+        batch_number = 0
+        total_rows_fetched = 0
+        total_rows_inserted = 0
+
+        while True:
+            batch = self.source_connector.fetch_batch(
+                query=query,
+                batch_size=self.batch_size,
+                offset=total_rows_fetched,
+                order_by=order_by,
+            )
+            if not batch:
+                break
+
+            batch_number += 1
+            total_rows_fetched += len(batch)
+
+            docs = []
+            for row in batch:
+                docs.append(
+                    build_document_from_sql_row(
+                        source_columns=column_names,
+                        target_fields=target_field_names,
+                        row=row,
+                        pk_columns=pk_cols,
+                        origin_job_id=str(getattr(self.job, "id", "")) if _should_stamp_origin() else None,
+                        origin_field_name=ORIGIN_FIELD_NAME,
+                    )
+                )
+
+            try:
+                self.target_connector.bulk_upsert_documents(mongo_db, mongo_coll, docs)
+            except Exception as e:
+                raise TableSyncError(
+                    f"Failed to upsert batch {batch_number} into Mongo: {str(e)}"
+                ) from e
+
+            total_rows_inserted += len(docs)
+
+            log.batch_number = batch_number
+            log.rows_fetched = total_rows_fetched
+            log.rows_inserted = total_rows_inserted
+            log.save()
+
+            self.execution.total_rows_synced = (
+                SyncExecutionLog.objects.filter(execution=self.execution).aggregate(total=Sum("rows_inserted"))[
+                    "total"
+                ]
+                or 0
+            )
+            self.execution.save()
+
+            if len(batch) < self.batch_size:
+                break
+
+        log.verification_summary = (
+            f"Mongo full sync target; docs upserted={total_rows_inserted} in {batch_number} batches"
+        )
+        log.status = "completed"
+        log.completed_at = timezone.now()
+        log.save()
     
     def _verify_post_migration_accuracy(
         self,

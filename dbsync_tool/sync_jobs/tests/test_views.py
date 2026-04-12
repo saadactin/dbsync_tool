@@ -35,6 +35,7 @@ class SyncJobCreationTestCase(TestCase):
             database_name='test_db',
             created_by=self.user,
             tenant=self.user,
+            last_tested_at=timezone.now(),
         )
         
         self.target_conn = DatabaseConnection.objects.create(
@@ -47,6 +48,7 @@ class SyncJobCreationTestCase(TestCase):
             database_name='test_db',
             created_by=self.user,
             tenant=self.user,
+            last_tested_at=timezone.now(),
         )
     
     def test_step1_access_requires_login(self):
@@ -78,10 +80,56 @@ class SyncJobCreationTestCase(TestCase):
         self.client.login(username='testuser', password='testpass123')
         response = self.client.post(reverse('sync_jobs:create_step1'), {
             'job_name': 'Test Job',
+            'source_connection_type': 'database',
             'source_connection': str(self.source_conn.id),
             'target_connection': str(self.target_conn.id),
         }, follow=True)
         self.assertRedirects(response, reverse('sync_jobs:create_step2'))
+
+    def test_step2_submit_mongodb_redirects_to_mapping_step3(self):
+        """MongoDB sources should skip Step 3 model and go directly to mapping Step 3."""
+        self.client.login(username='testuser', password='testpass123')
+
+        mongo_source = DatabaseConnection.objects.create(
+            name='Mongo Source',
+            db_type='mongodb',
+            host='localhost',
+            port=27017,
+            username='u',
+            password='p',
+            database_name='admin',
+            created_by=self.user,
+            tenant=self.user,
+            last_tested_at=timezone.now(),
+        )
+
+        session = self.client.session
+        session['sync_job_name'] = 'Mongo Job'
+        session['sync_job_source_connection_type'] = 'database'
+        session['sync_job_source_connection_id'] = str(mongo_source.id)
+        session['sync_job_target_connection_id'] = str(self.target_conn.id)
+        session.save()
+
+        resp = self.client.post(
+            reverse('sync_jobs:create_step2_submit'),
+            {
+                'selected_tables': [
+                    '{"schema":"appdb","table":"users"}',
+                ],
+                'table_transformations': '{}',
+            },
+            follow=False,
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.url, reverse('sync_jobs:create_step3'))
+
+        # Ensure Step 3 mapping page does not bounce back to Step 3 model.
+        step3_resp = self.client.get(reverse('sync_jobs:create_step3'), follow=False)
+        self.assertEqual(step3_resp.status_code, 200)
+
+        # And scheduling step should be accessible without model-validation flag for Mongo source.
+        step4_resp = self.client.get(reverse('sync_jobs:create_step4'), follow=False)
+        self.assertEqual(step4_resp.status_code, 200)
     
     def test_step3_creates_job_successfully(self):
         """Test Step 3 creates sync job in database"""
@@ -95,10 +143,19 @@ class SyncJobCreationTestCase(TestCase):
         session['sync_job_selected_tables'] = [
             {'schema_name': 'public', 'table_name': 'users'}
         ]
+        session['sync_job_source_connection_type'] = 'database'
         session.save()
-        
-        # Submit Step 3
-        response = self.client.post(reverse('sync_jobs:create_step3_submit'), {
+
+        from sync_jobs.tests.wizard_helpers import seed_transform_plans_in_session
+
+        seed_transform_plans_in_session(self.client, source_db_type='postgres')
+
+        # Mapping step (step 4)
+        response = self.client.post(reverse('sync_jobs:create_step3_submit'), {}, follow=True)
+        self.assertRedirects(response, reverse('sync_jobs:create_step4'))
+
+        # Schedule / create job (step 5)
+        response = self.client.post(reverse('sync_jobs:create_step4_submit'), {
             'sync_type': 'full',
             'schedule_type': 'once',
         }, follow=True)
@@ -141,6 +198,11 @@ class SyncJobCreationTestCase(TestCase):
         ]
         session.save()
 
+        from sync_jobs.tests.wizard_helpers import seed_transform_plans_in_session
+
+        seed_transform_plans_in_session(self.client, source_db_type='postgres')
+        self.client.post(reverse('sync_jobs:create_step3_submit'), {}, follow=True)
+
         response = self.client.post(reverse('sync_jobs:create_step4_submit'), {
             'sync_type': 'incremental',
             'schedule_type': 'once',
@@ -151,6 +213,201 @@ class SyncJobCreationTestCase(TestCase):
         self.assertEqual(job.sync_type, 'incremental')
         table = SyncJobTable.objects.get(job=job, schema_name='public', table_name='users')
         self.assertIsNone(table.incremental_column)
+        self.assertTrue(job.no_delete_propagation)
+        self.assertEqual(job.incremental_overlap_seconds, 120)
+
+    @patch('sync_jobs.views._load_columns_for_mapping_step')
+    def test_step4_incremental_db_persists_incremental_key_columns_from_protected(
+        self, mock_load_mapping
+    ):
+        """Step 3 protected columns must be stored as incremental_key_columns for DB incremental upsert."""
+        # PK-only metadata so mapping submit resolves exactly one protected key (no updated_at incremental).
+        mock_load_mapping.return_value = [
+            {'name': 'id', 'data_type': 'int', 'is_primary_key': True},
+            {'name': 'name', 'data_type': 'text'},
+        ]
+        self.client.login(username='testuser', password='testpass123')
+
+        session = self.client.session
+        session['sync_job_name'] = 'DB Incremental Keys Job'
+        session['sync_job_source_connection_type'] = 'database'
+        session['sync_job_source_connection_id'] = str(self.source_conn.id)
+        session['sync_job_target_connection_id'] = str(self.target_conn.id)
+        session['sync_job_selected_tables'] = [
+            {'schema_name': 'public', 'table_name': 'users'}
+        ]
+        session.save()
+
+        from sync_jobs.tests.wizard_helpers import seed_transform_plans_in_session
+
+        seed_transform_plans_in_session(self.client, source_db_type='postgres')
+        self.client.post(reverse('sync_jobs:create_step3_submit'), {}, follow=True)
+
+        response = self.client.post(
+            reverse('sync_jobs:create_step4_submit'),
+            {'sync_type': 'incremental', 'schedule_type': 'once'},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        job = SyncJob.objects.get(name='DB Incremental Keys Job')
+        table = SyncJobTable.objects.get(job=job, schema_name='public', table_name='users')
+        self.assertEqual(table.incremental_key_columns, ['id'])
+        self.assertEqual(table.protected_columns, ['id'])
+
+    def test_step4_incremental_db_rejects_invalid_overlap_seconds(self):
+        self.client.login(username='testuser', password='testpass123')
+        session = self.client.session
+        session['sync_job_name'] = 'Bad Overlap Job'
+        session['sync_job_source_connection_type'] = 'database'
+        session['sync_job_source_connection_id'] = str(self.source_conn.id)
+        session['sync_job_target_connection_id'] = str(self.target_conn.id)
+        session['sync_job_selected_tables'] = [{'schema_name': 'public', 'table_name': 'users'}]
+        session['sync_job_transform_validated'] = True
+        session['sync_job_transform_plan'] = {
+            'public.users': {
+                'mode': 'single_table',
+                'source_db_type': 'postgres',
+                'base_table': {'schema_name': 'public', 'table_name': 'users'},
+                'join_nodes': [],
+                'union_branches': [],
+                'union_select_columns': [],
+                'lookup': None,
+                'selected_output_columns': [],
+                'structured_filters': [],
+                'order_by': [],
+                'derived_columns': [],
+            }
+        }
+        session.save()
+
+        response = self.client.post(
+            reverse('sync_jobs:create_step4_submit'),
+            {
+                'sync_type': 'incremental',
+                'schedule_type': 'once',
+                'incremental_overlap_seconds': '-1',
+            },
+            follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Incremental overlap seconds must be between 0 and 86400.')
+        self.assertFalse(SyncJob.objects.filter(name='Bad Overlap Job').exists())
+
+    def test_step4_incremental_db_rejects_no_delete_policy_disabled(self):
+        self.client.login(username='testuser', password='testpass123')
+        session = self.client.session
+        session['sync_job_name'] = 'No Delete Disabled Job'
+        session['sync_job_source_connection_type'] = 'database'
+        session['sync_job_source_connection_id'] = str(self.source_conn.id)
+        session['sync_job_target_connection_id'] = str(self.target_conn.id)
+        session['sync_job_selected_tables'] = [{'schema_name': 'public', 'table_name': 'users'}]
+        session['sync_job_transform_validated'] = True
+        session['sync_job_transform_plan'] = {
+            'public.users': {
+                'mode': 'single_table',
+                'source_db_type': 'postgres',
+                'base_table': {'schema_name': 'public', 'table_name': 'users'},
+                'join_nodes': [],
+                'union_branches': [],
+                'union_select_columns': [],
+                'lookup': None,
+                'selected_output_columns': [],
+                'structured_filters': [],
+                'order_by': [],
+                'derived_columns': [],
+            }
+        }
+        session.save()
+
+        response = self.client.post(
+            reverse('sync_jobs:create_step4_submit'),
+            {
+                'sync_type': 'incremental',
+                'schedule_type': 'once',
+                'no_delete_propagation': 'false',
+            },
+            follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Incremental database sync requires no-delete propagation policy to be enabled.')
+        self.assertFalse(SyncJob.objects.filter(name='No Delete Disabled Job').exists())
+
+    def test_step4_incremental_db_rejects_union_transform_mode(self):
+        self.client.login(username='testuser', password='testpass123')
+        session = self.client.session
+        session['sync_job_name'] = 'Union Incremental Rejected'
+        session['sync_job_source_connection_type'] = 'database'
+        session['sync_job_source_connection_id'] = str(self.source_conn.id)
+        session['sync_job_target_connection_id'] = str(self.target_conn.id)
+        session['sync_job_selected_tables'] = [{'schema_name': 'public', 'table_name': 'users'}]
+        session['sync_job_transform_validated'] = True
+        session['sync_job_transform_plan'] = {
+            'public.users': {
+                'mode': 'union',
+                'source_db_type': 'postgres',
+                'base_table': {'schema_name': 'public', 'table_name': 'users'},
+                'union_branches': [
+                    {'schema_name': 'public', 'table_name': 'users'},
+                    {'schema_name': 'public', 'table_name': 'users_archive'},
+                ],
+                'union_select_columns': ['id'],
+                'order_by': [],
+            }
+        }
+        session.save()
+
+        response = self.client.post(
+            reverse('sync_jobs:create_step4_submit'),
+            {
+                'sync_type': 'incremental',
+                'schedule_type': 'once',
+            },
+            follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            'Incremental contract rejected for public.users: UNION model transforms are not supported in incremental mode.',
+        )
+        self.assertFalse(SyncJob.objects.filter(name='Union Incremental Rejected').exists())
+
+    def test_step3_model_view_dedupes_selected_tables_in_session(self):
+        """
+        Regression test:
+        If `sync_job_selected_tables` accidentally contains duplicate entries (same schema+table),
+        the Step 3 model page must render only one plan card for that table.
+        """
+        self.client.login(username='testuser', password='testpass123')
+
+        session = self.client.session
+        session['sync_job_name'] = 'Dedup Step3 Job'
+        session['sync_job_source_connection_type'] = 'database'
+        session['sync_job_source_connection_id'] = str(self.source_conn.id)
+        session['sync_job_target_connection_id'] = str(self.target_conn.id)
+
+        # Duplicate the same table entry multiple times.
+        session['sync_job_selected_tables'] = [
+            {'schema_name': 'dbo', 'table_name': 'helmet'},
+            {'schema_name': 'dbo', 'table_name': 'helmet'},
+            {'schema_name': 'dbo', 'table_name': 'helmet'},
+        ]
+        session.save()
+
+        # Step 3 model view should only render a single card per schema.table.
+        resp = self.client.get(reverse('sync_jobs:create_step3_model'))
+        self.assertEqual(resp.status_code, 200)
+
+        # Verify session dedupe persisted during the view.
+        selected_after = self.client.session.get('sync_job_selected_tables') or []
+        self.assertEqual(len(selected_after), 1)
+
+        # Verify only one plan card is rendered.
+        html = resp.content.decode('utf-8', errors='replace')
+        self.assertEqual(
+            html.count('<div class="card model-plan-card" data-table-key="dbo.helmet">'),
+            1,
+        )
 
 
 class SyncJobManagementTestCase(TestCase):

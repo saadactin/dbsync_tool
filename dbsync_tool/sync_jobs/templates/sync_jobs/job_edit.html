@@ -55,6 +55,15 @@
                     <p><strong>Source:</strong> {{ job.source_connection.name }} ({{ job.source_connection.get_db_type_display }})</p>
                     <p><strong>Target:</strong> {{ job.target_connection.name }} ({{ job.target_connection.get_db_type_display }})</p>
                     <p><strong>Tables:</strong> {{ job.tables.count }} table(s)</p>
+                    {% if transform_summary_rows %}
+                    <hr>
+                    <h6 class="mb-2">Model Data configuration</h6>
+                    <ul class="mb-0 ps-3">
+                        {% for row in transform_summary_rows %}
+                        <li><strong>{{ row.table_key }}</strong>: {{ row.mode|upper }}</li>
+                        {% endfor %}
+                    </ul>
+                    {% endif %}
                 </div>
             </div>
             

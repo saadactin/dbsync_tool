@@ -37,12 +37,12 @@
 <div class="container-fluid">
     <div class="row">
         <div class="col-12">
-            <h1 class="mb-4">Create Sync Job - Step 3: Review Data Type Mapping</h1>
+            <h1 class="mb-4">Create Sync Job - Step 4: Review Data Type Mapping</h1>
 
             <!-- Progress indicator -->
             <div class="progress mb-4" style="height: 30px;">
-                <div class="progress-bar" role="progressbar" style="width: 75%;" aria-valuenow="75" aria-valuemin="0" aria-valuemax="100">
-                    Step 3 of 4
+                <div class="progress-bar" role="progressbar" style="width: 80%;" aria-valuenow="80" aria-valuemin="0" aria-valuemax="100">
+                    Step 4 of 5
                 </div>
             </div>
 
@@ -116,18 +116,23 @@
                                                             <td>{{ col.name }}</td>
                                                             <td>{{ col.source_type }}</td>
                                                             <td>
-                                                                <select
-                                                                    name="override_type_{{ table_key }}.{{ col.name }}"
-                                                                    class="form-select form-select-sm d-inline w-auto"
-                                                                >
-                                                                    {% for opt in col.allowed_target_types %}
-                                                                        <option value="{{ opt }}" {% if opt == col.target_type %}selected{% endif %}>
-                                                                            {{ opt }}
-                                                                        </option>
-                                                                    {% endfor %}
-                                                                </select>
-                                                                {% if col.source_type != col.target_type %}
-                                                                    <span class="badge bg-info text-dark mapping-badge-changed">mapped</span>
+                                                                {% if is_mongo_source %}
+                                                                    <span class="badge bg-secondary">auto</span>
+                                                                    <span class="ms-1">{{ col.target_type }}</span>
+                                                                {% else %}
+                                                                    <select
+                                                                        name="override_type_{{ table_key }}.{{ col.name }}"
+                                                                        class="form-select form-select-sm d-inline w-auto"
+                                                                    >
+                                                                        {% for opt in col.allowed_target_types %}
+                                                                            <option value="{{ opt }}" {% if opt == col.target_type %}selected{% endif %}>
+                                                                                {{ opt }}
+                                                                            </option>
+                                                                        {% endfor %}
+                                                                    </select>
+                                                                    {% if col.source_type != col.target_type %}
+                                                                        <span class="badge bg-info text-dark mapping-badge-changed">mapped</span>
+                                                                    {% endif %}
                                                                 {% endif %}
                                                             </td>
                                                             <td class="align-middle">

@@ -46,12 +46,12 @@
 <div class="container-fluid">
     <div class="row">
         <div class="col-12">
-            <h1 class="mb-4">Create Sync Job - Step 4: Configure Sync</h1>
+            <h1 class="mb-4">Create Sync Job - Step 5: Configure Sync</h1>
             
             <!-- Progress indicator -->
             <div class="progress mb-4" style="height: 30px;">
                 <div class="progress-bar" role="progressbar" style="width: 100%;" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100">
-                    Step 4 of 4
+                    Step 5 of 5
                 </div>
             </div>
             
@@ -155,7 +155,10 @@
                                             {% endif %}
                                         </p>
                                     {% elif source_connection_type == 'flat_file' %}
-                                        <p class="text-muted mb-0">Flat-file source currently supports full sync only.</p>
+                                        <p class="text-muted mb-0">
+                                            Sync new/changed file rows incrementally using file-version watermarking (last modified time).
+                                            Mark at least one column as Protected in mapping to use as a stable upsert key.
+                                        </p>
                                     {% else %}
                                         <p class="text-muted mb-0">
                                             Sync only new or updated records based on a timestamp or ID column. Existing data is preserved.
@@ -176,6 +179,52 @@
                         {% endif %}
                     </div>
                 </div>
+
+                {% if source_connection_type == 'flat_file' %}
+                <div class="card mb-4" id="flat-file-hybrid-card">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Flat-File Incremental Strategy</h5>
+                        <p class="text-muted">Choose how incremental detects file and row changes.</p>
+                        {% for table_info in selected_tables %}
+                            {% with table_key=table_info.schema_name|add:"."|add:table_info.table_name %}
+                            <div class="border rounded p-3 mb-3">
+                                <h6 class="mb-2">{{ table_key }}</h6>
+                                <div class="mb-2">
+                                    <label class="form-label"><strong>Mode</strong></label>
+                                    <input type="hidden" name="flat_file_incremental_mode_{{ table_key }}" value="hybrid_hash_control">
+                                    <div class="form-control bg-light">Hybrid hash + control table</div>
+                                </div>
+                                <div class="mb-2">
+                                    <label class="form-label"><strong>Hash algorithm</strong></label>
+                                    {% with algo=flat_file_hash_algorithm_defaults|get_item:table_key|default:'sha256' %}
+                                    <select class="form-select" name="flat_file_hash_algorithm_{{ table_key }}">
+                                        <option value="sha256" {% if algo == 'sha256' %}selected{% endif %}>sha256 (recommended)</option>
+                                        <option value="sha512" {% if algo == 'sha512' %}selected{% endif %}>sha512</option>
+                                        <option value="sha1" {% if algo == 'sha1' %}selected{% endif %}>sha1</option>
+                                        <option value="md5" {% if algo == 'md5' %}selected{% endif %}>md5</option>
+                                    </select>
+                                    {% endwith %}
+                                </div>
+                                <div class="mb-2">
+                                    <label class="form-label"><strong>Hash columns (optional)</strong></label>
+                                    <input
+                                        type="text"
+                                        class="form-control"
+                                        name="flat_file_hash_columns_{{ table_key }}"
+                                        value="{{ flat_file_hash_columns_defaults|get_item:table_key|join:', ' }}"
+                                        placeholder="Leave blank for all columns, or comma-separated names"
+                                    >
+                                    <small class="form-text text-muted">
+                                        Available source headers:
+                                        {% if flat_file_headers %}{{ flat_file_headers|join:', ' }}{% else %}(loaded from Step 2 preview){% endif %}
+                                    </small>
+                                </div>
+                            </div>
+                            {% endwith %}
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
                 
                 <!-- Schedule Configuration -->
                 <div class="card mb-4 schedule-section">
@@ -316,12 +365,6 @@ document.addEventListener('DOMContentLoaded', function() {
             } else {
                 incrementalSection.classList.remove('active');
             }
-        }
-        if (sourceType === 'flat_file' && incrementalRadio) {
-            incrementalRadio.checked = false;
-            incrementalRadio.disabled = true;
-            const fullRadio = document.getElementById('sync_type_full');
-            if (fullRadio) fullRadio.checked = true;
         }
     }
     
