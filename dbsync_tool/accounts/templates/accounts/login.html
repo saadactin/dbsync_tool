@@ -10,55 +10,136 @@
         justify-content: center;
         align-items: center;
         min-height: 100vh;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: url("{% static 'img/login_bg.jpg' %}");
+        background-size: cover;
+        background-position: center;
+        position: relative;
+    }
+    .login-container::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(135deg, rgba(4, 27, 60, 0.8) 0%, rgba(15, 23, 42, 0.9) 100%);
+        z-index: 1;
     }
     .login-card {
-        background: white;
-        padding: 40px;
-        border-radius: 10px;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        background: rgba(255, 255, 255, 0.03);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        padding: 60px 48px;
+        border-radius: 32px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
         width: 100%;
-        max-width: 400px;
-    }
-    .login-card h2 {
-        margin-bottom: 30px;
+        max-width: 460px;
+        position: relative;
+        z-index: 2;
         text-align: center;
-        color: #333;
+    }
+    .brand-section {
+        margin-bottom: 40px;
+    }
+    .brand-section img {
+        width: 64px;
+        height: 64px;
+        margin-bottom: 20px;
+    }
+    .brand-section h1 {
+        font-size: 2.5rem;
+        font-weight: 900;
+        color: white;
+        letter-spacing: -0.05em;
+        line-height: 1;
+        margin: 0;
+    }
+    .brand-section span {
+        font-size: 0.75rem;
+        font-weight: 800;
+        color: #b4c5fb;
+        text-transform: uppercase;
+        letter-spacing: 0.4em;
+        display: block;
+        margin-top: 8px;
     }
     .form-group {
-        margin-bottom: 20px;
+        margin-bottom: 24px;
+        text-align: left;
     }
     .form-group label {
         display: block;
-        margin-bottom: 5px;
-        font-weight: 500;
-        color: #555;
+        margin-bottom: 8px;
+        font-size: 0.75rem;
+        font-weight: 800;
+        color: rgba(255, 255, 255, 0.5);
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
     }
     .form-group input {
         width: 100%;
-        padding: 12px;
-        border: 1px solid #ddd;
-        border-radius: 5px;
-        font-size: 14px;
+        padding: 16px 20px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 16px;
+        color: #ffffff !important;
+        caret-color: #ffffff;
+        font-size: 1rem;
+        font-weight: 500;
+        transition: all 0.3s ease;
+    }
+    .form-group input::placeholder {
+        color: rgba(255, 255, 255, 0.5);
+        font-weight: 500;
     }
     .form-group input:focus {
         outline: none;
-        border-color: #667eea;
+        background: rgba(255, 255, 255, 0.08);
+        border-color: #0c56d0;
+        box-shadow: 0 0 0 4px rgba(12, 86, 208, 0.2);
+    }
+    .form-group input:focus::placeholder {
+        color: rgba(255, 255, 255, 0.8);
     }
     .btn-login {
         width: 100%;
-        padding: 12px;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 18px;
+        background: #0c56d0;
         color: white;
         border: none;
-        border-radius: 5px;
-        font-size: 16px;
-        font-weight: 500;
+        border-radius: 16px;
+        font-size: 1rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
         cursor: pointer;
-        margin-top: 10px;
+        margin-top: 16px;
+        transition: all 0.3s ease;
+        box-shadow: 0 10px 15px -3px rgba(12, 86, 208, 0.4);
     }
     .btn-login:hover {
-        opacity: 0.9;
+        background: #0b4ebc;
+        transform: translateY(-2px);
+        box-shadow: 0 20px 25px -5px rgba(12, 86, 208, 0.5);
+    }
+    .btn-login:active {
+        transform: translateY(0);
+    }
+    .alert {
+        padding: 16px;
+        border-radius: 16px;
+        margin-bottom: 24px;
+        font-size: 0.875rem;
+        font-weight: 600;
+        text-align: center;
+    }
+    .alert-error, .alert-danger {
+        background: rgba(239, 68, 68, 0.1);
+        color: #f87171;
+        border: 1px solid rgba(239, 68, 68, 0.2);
+    }
+    .alert-success {
+        background: rgba(16, 185, 129, 0.1);
+        color: #34d399;
+        border: 1px solid rgba(16, 185, 129, 0.2);
     }
 </style>
 {% endblock %}
@@ -66,29 +147,26 @@
 {% block unauthenticated_content %}
 <div class="login-container">
     <div class="login-card">
-        <h2>DB Sync Tool</h2>
-        <h3 style="text-align: center; margin-bottom: 30px; color: #666;">Login</h3>
-        
-        {% if messages %}
-            {% for message in messages %}
-                <div class="alert alert-{{ message.tags }}">
-                    {{ message }}
-                </div>
-            {% endfor %}
-        {% endif %}
+        <div class="brand-section">
+            <h1 class="text-center">
+                DB Sync
+            </h1>
+        </div>
         
         <form method="post">
             {% csrf_token %}
             <div class="form-group">
-                <label for="id_username">Username</label>
+                <label for="id_username">Operator ID</label>
                 {{ form.username }}
             </div>
             <div class="form-group">
-                <label for="id_password">Password</label>
+                <label for="id_password">Access Token</label>
                 {{ form.password }}
             </div>
-            <button type="submit" class="btn-login">Login</button>
+            <button type="submit" class="btn-login">Initialize Session</button>
         </form>
+
+       
     </div>
 </div>
 {% endblock %}

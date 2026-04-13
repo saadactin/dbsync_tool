@@ -111,9 +111,14 @@ def login_view(request):
     
     return render(request, 'accounts/login.html', {'form': form})
 
+from django.views.decorators.cache import never_cache
+
+@never_cache
 @login_required
 def logout_view(request):
     from django.contrib.auth import logout
+    # Flush the session explicitly to kill all data and CSRF tokens
+    request.session.flush()
     logout(request)
     messages.success(request, 'You have been logged out successfully.')
     return redirect('accounts:login')

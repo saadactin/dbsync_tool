@@ -147,12 +147,7 @@ EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', 'saadpractice4@gmail.com')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', 'txludusmznqxoweo')
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'saadpractice4@gmail.com')
 ADMIN_EMAILS = [
-    email.strip()
-    for email in os.environ.get(
-        "ADMIN_EMAILS",
-        "saadpractice4@gmail.com,saad.sayyed@actin.co.in",
-    ).split(",")
-    if email.strip()
+    os.environ.get("ADMIN_EMAILS", "saad.sayyed@actin.co.in")
 ]
 
 # Site URL for email links

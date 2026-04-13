@@ -8,140 +8,177 @@
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid db-connections-page">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1>Database Connections</h1>
-        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="window.history.back();">
-            <i class="bi bi-arrow-left"></i> Back
-        </button>
+<div class="db-connections-page pb-24" x-data="{ activeGroup: null }">
+    <!-- Header Section -->
+    <div class="flex items-center justify-between mb-12 px-2">
+        <div>
+            <h1 class="text-4xl font-black text-slate-800 tracking-tight flex items-center gap-4">
+                <div class="w-14 h-14 bg-primary/10 rounded-2x flex items-center justify-center">
+                    <span class="material-symbols-outlined text-4xl text-primary filled">database</span>
+                </div>
+                Database Connections
+            </h1>
+            <p class="text-slate-500 font-bold mt-2 ml-18">Enterprise-grade infrastructure auditing and orchestration</p>
+        </div>
     </div>
 
-    {% include 'connections/_connection_tabs.html' %}
+    <div class="px-2">
+        {% include 'connections/_connection_tabs.html' with active_tab='databases' %}
+    </div>
 
-    {% if grouped_list %}
-        {% if total_connections > 0 %}
-            <div class="accordion connection-accordion" id="connectionsAccordion">
-                {% for group in grouped_list %}
-                    {% if group.connections %}
-                        <div class="accordion-item" data-db-type="{{ group.type }}">
-                            <h2 class="accordion-header" id="heading{{ group.type|capfirst }}">
-                                <button class="accordion-button {% if not forloop.first %}collapsed{% endif %}" type="button" 
-                                        data-bs-toggle="collapse" 
-                                        data-bs-target="#collapse{{ group.type|capfirst }}" 
-                                        aria-expanded="{% if forloop.first %}true{% else %}false{% endif %}" 
-                                        aria-controls="collapse{{ group.type|capfirst }}">
-                                    <div class="d-flex align-items-center w-100">
-                                        <span class="db-type-icon db-type-{{ group.type }} me-3"></span>
-                                        <span class="fw-bold me-2">{{ group.name }}</span>
-                                        <span class="badge bg-secondary rounded-pill ms-auto">{{ group.count }}</span>
-                                    </div>
-                                </button>
-                            </h2>
-                            <div id="collapse{{ group.type|capfirst }}" 
-                                 class="accordion-collapse collapse {% if forloop.first %}show{% endif %}" 
-                                 aria-labelledby="heading{{ group.type|capfirst }}" 
-                                 data-bs-parent="#connectionsAccordion">
-                                <div class="accordion-body p-0">
-                                    <div class="table-responsive">
-                                        <table class="table table-hover mb-0 table-modern">
-                                            <thead>
-                                                <tr>
-                                                    <th>Name</th>
-                                                    <th>Host</th>
-                                                    <th>Port</th>
-                                                    <th>Database</th>
-                                                    <th>Status</th>
-                                                    <th>Last Test</th>
-                                                    {% if not user.userprofile.is_viewer %}
-                                                        <th>Actions</th>
-                                                    {% endif %}
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {% for connection in group.connections %}
-                                                <tr>
-                                                    <td>
-                                                        <a href="{% url 'connections:detail' connection.id %}" class="text-decoration-none fw-semibold">
-                                                            {{ connection.name }}
-                                                        </a>
-                                                    </td>
-                                                    <td>{{ connection.host }}</td>
-                                                    <td>{{ connection.port }}</td>
-                                                    <td>{{ connection.database_name }}</td>
-                                                    <td>
-                                                        {% if connection.is_active %}
-                                                            <span class="badge bg-success">Active</span>
-                                                        {% else %}
-                                                            <span class="badge bg-secondary">Inactive</span>
-                                                        {% endif %}
-                                                    </td>
-                                                    <td>
-                                                        {% with last_test=connection.test_logs.first %}
-                                                            {% if last_test %}
-                                                                {% if last_test.status == 'success' %}
-                                                                    <span class="badge bg-success">{{ last_test.status|capfirst }}</span>
-                                                                {% else %}
-                                                                    <span class="badge bg-danger">{{ last_test.status|capfirst }}</span>
-                                                                {% endif %}
-                                                                <small class="text-muted d-block">{{ last_test.tested_at|timesince }} ago</small>
-                                                            {% else %}
-                                                                <span class="text-muted">Never tested</span>
-                                                            {% endif %}
-                                                        {% endwith %}
-                                                    </td>
-                                                    {% if not user.userprofile.is_viewer %}
-                                                        <td>
-                                                            <div class="btn-group action-btn-group" role="group">
-                                                                <a href="{% url 'connections:detail' connection.id %}" class="btn btn-sm btn-outline-primary action-btn" title="View">
-                                                                    <i class="bi bi-eye"></i>
-                                                                </a>
-                                                                <a href="{% url 'connections:update' connection.id %}" class="btn btn-sm btn-outline-secondary action-btn" title="Edit">
-                                                                    <i class="bi bi-pencil"></i>
-                                                                </a>
-                                                                <button type="button" class="btn btn-sm btn-outline-info test-connection action-btn" data-connection-id="{{ connection.id }}" title="Test">
-                                                                    <i class="bi bi-plug"></i>
-                                                                </button>
-                                                                <a href="{% url 'connections:delete' connection.id %}" class="btn btn-sm btn-outline-danger action-btn" title="Delete">
-                                                                    <i class="bi bi-trash3"></i>
-                                                                </a>
-                                                            </div>
-                                                        </td>
-                                                    {% endif %}
-                                                </tr>
-                                                {% endfor %}
-                                            </tbody>
-                                        </table>
-                                    </div>
+    {% if grouped_list and total_connections > 0 %}
+        <div class="grid gap-8 px-2">
+            {% for group in grouped_list %}
+                {% if group.connections %}
+                    <div class="bg-white rounded-[32px] border border-slate-200 shadow-2xl shadow-slate-200/50 overflow-hidden transition-all duration-500"
+                         :class="activeGroup === '{{ group.type }}' ? 'ring-4 ring-primary/5 border-primary/20 bg-slate-50/20' : ''">
+                        
+                        <!-- Premium Drawer Header -->
+                        <button @click="activeGroup = (activeGroup === '{{ group.type }}' ? null : '{{ group.type }}')"
+                                class="w-full flex items-center justify-between p-10 bg-white hover:bg-slate-50 transition-all border-none outline-none group text-left">
+                            <div class="flex items-center gap-6">
+                                <div class="w-18 h-18 rounded-[24px] bg-slate-100 flex items-center justify-center transition-all group-hover:bg-primary/10 group-hover:scale-105">
+                                    <span class="db-type-icon db-type-{{ group.type }} text-3xl"></span>
+                                </div>
+                                <div>
+                                    <h3 class="text-2xl font-black text-slate-800 tracking-tight">{{ group.name }}</h3>
+                                    <span class="text-xs font-black uppercase tracking-[0.2em] text-slate-400 mt-1 block">Active Data Nodes</span>
                                 </div>
                             </div>
+                            <div class="flex items-center gap-6">
+                                <div class="flex flex-col items-end">
+                                    <span class="px-4 py-1.5 bg-primary text-white rounded-full text-xs font-black tracking-wide shadow-lg shadow-primary/20">
+                                        {{ group.count }} Connection{{ group.count|pluralize }}
+                                    </span>
+                                </div>
+                                <div class="w-10 h-10 rounded-full bg-slate-50 flex items-center justify-center text-slate-400 group-hover:text-primary transition-all shadow-sm"
+                                     :class="activeGroup === '{{ group.type }}' ? 'rotate-180 bg-primary/10' : ''">
+                                    <span class="material-symbols-outlined">expand_more</span>
+                                </div>
+                            </div>
+                        </button>
+
+                        <!-- Drawer Body -->
+                        <div x-show="activeGroup === '{{ group.type }}'" 
+                             x-collapse
+                             x-cloak
+                             class="border-t border-slate-100 bg-white">
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-left border-collapse">
+                                    <thead>
+                                        <tr class="border-b border-slate-100 bg-slate-50/50">
+                                            <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500">Infrastructure Identity</th>
+                                            <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500">Host / IP Node</th>
+                                            <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500">Catalog Name</th>
+                                            <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500 text-center">Health Status</th>
+                                            <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500">Verification Audit</th>
+                                            {% if not user.userprofile.is_viewer %}
+                                                <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500 text-right">Actions</th>
+                                            {% endif %}
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-50">
+                                        {% for connection in group.connections %}
+                                        <tr class="hover:bg-slate-50/80 transition-all group/row">
+                                            <td class="px-10 py-10">
+                                                <a href="{% url 'connections:detail' connection.id %}" class="text-lg font-black text-primary hover:text-black hover:underline decoration-black decoration-2 underline-offset-4 transition-all no-underline block leading-tight">
+                                                    {{ connection.name }}
+                                                </a>
+                                                <div class="flex items-center gap-1.5 mt-1">
+                                                    <span class="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-black uppercase text-slate-500">Port {{ connection.port }}</span>
+                                                    <span class="w-1 h-1 rounded-full bg-slate-300"></span>
+                                                    <span class="text-[10px] font-black uppercase text-slate-400">Standard Relay</span>
+                                                </div>
+                                            </td>
+                                            <td class="px-10 py-10">
+                                                <div class="flex flex-col gap-1">
+                                                    <div class="flex items-center gap-2 text-slate-700">
+                                                        <span class="material-symbols-outlined text-[18px] text-slate-400">dns</span>
+                                                        <span class="text-sm font-bold truncate max-w-[180px]">{{ connection.host }}</span>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-10 py-10">
+                                                <span class="text-sm font-black text-slate-600 bg-slate-100/50 px-3 py-1 rounded-lg border border-slate-200/50">
+                                                    {{ connection.database_name }}
+                                                </span>
+                                            </td>
+                                            <td class="px-10 py-10 text-center">
+                                                {% if connection.is_active %}
+                                                    <div class="inline-flex flex-col items-center">
+                                                        <span class="px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-600 border border-emerald-100 shadow-sm shadow-emerald-500/5">Operational</span>
+                                                    </div>
+                                                {% else %}
+                                                    <span class="px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-slate-100 text-slate-500 border border-slate-200">Deactivated</span>
+                                                {% endif %}
+                                            </td>
+                                            <td class="px-10 py-10">
+                                                {% with last_test=connection.test_logs.first %}
+                                                    {% if last_test %}
+                                                        <div class="flex items-center gap-3">
+                                                            <div class="w-1.5 h-1.5 rounded-full {% if last_test.status == 'success' %}bg-emerald-500 animate-pulse{% else %}bg-rose-500{% endif %}"></div>
+                                                            <div class="flex flex-col">
+                                                                <span class="text-xs font-black {% if last_test.status == 'success' %}text-slate-800{% else %}text-rose-600{% endif %} uppercase tracking-wide">
+                                                                    {{ last_test.status|upper }}
+                                                                </span>
+                                                                <span class="text-[11px] font-bold text-slate-400">{{ last_test.tested_at|timesince }} ago</span>
+                                                            </div>
+                                                        </div>
+                                                    {% else %}
+                                                        <span class="text-[11px] font-black text-slate-300 uppercase tracking-widest italic">Never Verified</span>
+                                                    {% endif %}
+                                                {% endwith %}
+                                            </td>
+                                            {% if not user.userprofile.is_viewer %}
+                                                <td class="px-10 py-10 text-right">
+                                                    <div class="flex items-center justify-end gap-3 translate-x-4">
+                                                        <a href="{% url 'connections:detail' connection.id %}" 
+                                                           class="w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-sky-50 text-sky-600 border border-sky-100 hover:bg-sky-600 hover:text-white hover:shadow-lg hover:shadow-sky-600/20" 
+                                                           title="View Full Detail">
+                                                            <span class="material-symbols-outlined text-[20px] filled">visibility</span>
+                                                        </a>
+                                                        <a href="{% url 'connections:update' connection.id %}" 
+                                                           class="w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-600 hover:text-white hover:shadow-lg hover:shadow-indigo-600/20" 
+                                                           title="Edit Instance Configuration">
+                                                            <span class="material-symbols-outlined text-[20px] filled">settings</span>
+                                                        </a>
+                                                        <button type="button" 
+                                                                class="w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-emerald-50 text-emerald-600 border border-emerald-100 hover:bg-emerald-600 hover:text-white hover:shadow-lg hover:shadow-emerald-600/20 test-connection" 
+                                                                data-connection-id="{{ connection.id }}" 
+                                                                title="Verify Node Access">
+                                                            <span class="material-symbols-outlined text-[20px] filled">satellite_alt</span>
+                                                        </button>
+                                                        <a href="{% url 'connections:delete' connection.id %}" 
+                                                           class="w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-rose-50 text-rose-600 border border-rose-100 hover:bg-rose-600 hover:text-white hover:shadow-lg hover:shadow-rose-600/20" 
+                                                           title="Permanent Deletion">
+                                                            <span class="material-symbols-outlined text-[20px] filled">delete</span>
+                                                        </a>
+                                                    </div>
+                                                </td>
+                                            {% endif %}
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
-                    {% endif %}
-                {% endfor %}
-            </div>
-        {% else %}
-            <div class="card">
-                <div class="card-body text-center py-5">
-                    <h5 class="text-muted">No connections found</h5>
-                    <p class="text-muted">Get started by adding your first database connection.</p>
-                    {% if not user.userprofile.is_viewer %}
-                        <a href="{% url 'connections:create' %}" class="btn btn-primary">
-                            <span>➕</span> Add New Connection
-                        </a>
-                    {% endif %}
-                </div>
-            </div>
-        {% endif %}
-    {% else %}
-        <div class="card">
-            <div class="card-body text-center py-5">
-                <h5 class="text-muted">No connections found</h5>
-                <p class="text-muted">Get started by adding your first database connection.</p>
-                {% if not user.userprofile.is_viewer %}
-                    <a href="{% url 'connections:create' %}" class="btn btn-primary">
-                        <span>➕</span> Add New Connection
-                    </a>
+                    </div>
                 {% endif %}
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="bg-white rounded-[40px] border border-dashed border-slate-300 p-24 text-center mx-2 shadow-inner bg-slate-50/50">
+            <div class="w-28 h-28 bg-white rounded-full flex items-center justify-center mx-auto mb-8 text-slate-300 shadow-xl">
+                <span class="material-symbols-outlined text-7xl">cloud_off</span>
             </div>
+            <h3 class="text-3xl font-black text-slate-800 tracking-tight">Zero Infrastructure Nodes Found</h3>
+            <p class="text-slate-500 max-w-md mx-auto mt-4 text-lg font-medium leading-relaxed">Map your first database instance to the SyncArchitect grid to enable enterprise-grade data management and orchestration.</p>
+            {% if not user.userprofile.is_viewer %}
+                <a href="{% url 'connections:create' %}" class="inline-flex items-center gap-3 px-10 py-5 bg-primary text-white rounded-[24px] font-black uppercase tracking-widest text-sm shadow-2xl shadow-primary/30 hover:scale-105 active:scale-95 transition-all mt-10 no-underline">
+                    <span class="material-symbols-outlined text-xl">add_circle</span>
+                    Initialize Data Node
+                </a>
+            {% endif %}
         </div>
     {% endif %}
 </div>

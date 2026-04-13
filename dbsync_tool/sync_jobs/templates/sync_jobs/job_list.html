@@ -1,98 +1,86 @@
 {% extends 'base.html' %}
 {% load static %}
 
-{% block title %}Sync Jobs - DB Sync Tool{% endblock %}
-
-{% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/sync_jobs.css' %}">
-<style>
-    .stats-card {
-        background: white;
-        border-radius: 8px;
-        padding: 20px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        margin-bottom: 20px;
-    }
-    .stats-card h3 {
-        margin: 0;
-        font-size: 2rem;
-        font-weight: 600;
-    }
-    .stats-card p {
-        margin: 5px 0 0 0;
-        color: #666;
-        font-size: 0.9rem;
-    }
-    .filter-section {
-        background: white;
-        border-radius: 8px;
-        padding: 20px;
-        margin-bottom: 20px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    .table-actions {
-        display: flex;
-        gap: 5px;
-    }
-    .table-actions .btn {
-        padding: 4px 8px;
-        font-size: 0.85rem;
-    }
-</style>
-{% endblock %}
+{% block title %}Sync Jobs | SyncArchitect{% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1>Sync Jobs</h1>
-        <a href="{% url 'sync_jobs:create_step1' %}" class="btn btn-primary">Create New Sync Job</a>
+<div class="flex-1 overflow-y-auto p-8 space-y-12 no-scrollbar">
+    <!-- Page Header & Action -->
+    <div class="flex items-end justify-between">
+        <div>
+            <h1 class="text-4xl font-extrabold text-on-surface tracking-tight">Sync Jobs</h1>
+            <p class="text-on-surface-variant mt-2 font-semibold text-lg">Monitor and manage your data orchestration pipelines.</p>
+        </div>
+        <a href="{% url 'sync_jobs:create_step1' %}" class="flex items-center gap-3 px-6 py-3 bg-primary text-white rounded-2xl font-bold shadow-xl shadow-primary/20 hover:bg-primary-container active:scale-95 transition-all no-underline text-base">
+            <span class="material-symbols-outlined text-[24px]">add_task</span>
+            Create New Sync Job
+        </a>
     </div>
-    
-    <!-- Statistics Cards -->
-    <div class="row mb-4">
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-primary">{{ stats.total }}</h3>
-                <p>Total Jobs</p>
+
+    <!-- KPI Metrics -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+        <!-- Total Jobs -->
+        <div class="bg-surface-container-lowest p-8 rounded-3xl shadow-sm border border-slate-100 flex items-center gap-6 group hover:shadow-lg transition-all border-b-4 border-b-primary/50">
+            <div class="w-16 h-16 rounded-2xl bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary group-hover:text-white transition-colors">
+                <span class="material-symbols-outlined text-3xl">inventory</span>
+            </div>
+            <div>
+                <div class="text-4xl font-black text-on-surface leading-none">{{ stats.total }}</div>
+                <div class="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Total Jobs</div>
             </div>
         </div>
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-warning">{{ stats.pending }}</h3>
-                <p>Pending</p>
+
+        <!-- Pending -->
+        <div class="bg-surface-container-lowest p-8 rounded-3xl shadow-sm border border-slate-100 flex items-center gap-6 group hover:shadow-lg transition-all border-b-4 border-b-orange-400/50">
+            <div class="w-16 h-16 rounded-2xl bg-orange-100 text-orange-600 flex items-center justify-center group-hover:bg-orange-500 group-hover:text-white transition-colors">
+                <span class="material-symbols-outlined text-3xl">schedule</span>
+            </div>
+            <div>
+                <div class="text-4xl font-black text-on-surface leading-none">{{ stats.pending }}</div>
+                <div class="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Pending</div>
             </div>
         </div>
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-info">{{ stats.running }}</h3>
-                <p>Running</p>
+
+        <!-- Running -->
+        <div class="bg-surface-container-lowest p-8 rounded-3xl shadow-sm border border-slate-100 flex items-center gap-6 group hover:shadow-lg transition-all border-b-4 border-b-blue-400/50">
+            <div class="w-16 h-16 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center group-hover:bg-blue-500 group-hover:text-white transition-colors">
+                <span class="material-symbols-outlined text-3xl animate-spin-slow">sync</span>
+            </div>
+            <div>
+                <div class="text-4xl font-black text-on-surface leading-none">{{ stats.running }}</div>
+                <div class="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Running</div>
             </div>
         </div>
-        <div class="col-md-3">
-            <div class="stats-card">
-                <h3 class="text-danger">{{ stats.failed }}</h3>
-                <p>Failed</p>
+
+        <!-- Failed -->
+        <div class="bg-surface-container-lowest p-8 rounded-3xl shadow-sm border border-slate-100 flex items-center gap-6 group hover:shadow-lg transition-all border-b-4 border-b-red-400/50">
+            <div class="w-16 h-16 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center group-hover:bg-red-500 group-hover:text-white transition-colors">
+                <span class="material-symbols-outlined text-3xl">report_problem</span>
+            </div>
+            <div>
+                <div class="text-4xl font-black text-on-surface leading-none">{{ stats.failed }}</div>
+                <div class="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Failed</div>
             </div>
         </div>
     </div>
-    
-    <!-- Filters and Search -->
-    <div class="filter-section">
-        <form method="get" action="{% url 'sync_jobs:list' %}" class="row g-3">
-            <div class="col-md-3">
-                <label for="search" class="form-label">Search</label>
-                <input 
-                    type="text" 
-                    class="form-control" 
-                    id="search" 
-                    name="search" 
-                    placeholder="Search by job name..."
-                    value="{{ search_query }}"
-                >
+
+    <!-- Filters -->
+    <div class="bg-surface-container-lowest rounded-3xl shadow-sm border border-slate-100 p-8">
+        <form method="get" action="{% url 'sync_jobs:list' %}" class="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-6 gap-8 items-end">
+            <!-- Search -->
+            <div class="lg:col-span-2 space-y-2">
+                <label class="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Search Pipeline</label>
+                <div class="relative">
+                    <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-xl pointer-events-none">search</span>
+                    <input type="text" name="search" placeholder="Search by job name..." value="{{ search_query }}"
+                        class="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-base focus:bg-white focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all outline-none">
+                </div>
             </div>
-            <div class="col-md-2">
-                <label for="status" class="form-label">Status</label>
-                <select class="form-select" id="status" name="status">
+
+            <!-- Status -->
+            <div class="space-y-2">
+                <label class="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Status</label>
+                <select name="status" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-base font-medium outline-none focus:bg-white focus:border-primary transition-all appearance-none cursor-pointer">
                     <option value="">All Statuses</option>
                     <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
                     <option value="running" {% if status_filter == 'running' %}selected{% endif %}>Running</option>
@@ -101,17 +89,21 @@
                     <option value="paused" {% if status_filter == 'paused' %}selected{% endif %}>Paused</option>
                 </select>
             </div>
-            <div class="col-md-2">
-                <label for="sync_type" class="form-label">Sync Type</label>
-                <select class="form-select" id="sync_type" name="sync_type">
+
+            <!-- Sync Type -->
+            <div class="space-y-2">
+                <label class="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Sync Strategy</label>
+                <select name="sync_type" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-base font-medium outline-none focus:bg-white focus:border-primary transition-all appearance-none cursor-pointer">
                     <option value="">All Types</option>
                     <option value="full" {% if sync_type_filter == 'full' %}selected{% endif %}>Full Sync</option>
                     <option value="incremental" {% if sync_type_filter == 'incremental' %}selected{% endif %}>Incremental</option>
                 </select>
             </div>
-            <div class="col-md-2">
-                <label for="source_type" class="form-label">Source</label>
-                <select class="form-select" id="source_type" name="source_type">
+
+            <!-- Source -->
+            <div class="space-y-2">
+                <label class="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Source Interface</label>
+                <select name="source_type" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-base font-medium outline-none focus:bg-white focus:border-primary transition-all appearance-none cursor-pointer">
                     <option value="">All</option>
                     <option value="database" {% if source_type_filter == 'database' %}selected{% endif %}>Database</option>
                     <option value="api" {% if source_type_filter == 'api' %}selected{% endif %}>API (All)</option>
@@ -120,165 +112,163 @@
                     <option value="azure_devops" {% if source_type_filter == 'azure_devops' %}selected{% endif %}>API (Azure DevOps)</option>
                 </select>
             </div>
-            <div class="col-md-2">
-                <label for="sort" class="form-label">Sort By</label>
-                <select class="form-select" id="sort" name="sort">
-                    <option value="-created_at" {% if sort_by == '-created_at' %}selected{% endif %}>Newest First</option>
-                    <option value="created_at" {% if sort_by == 'created_at' %}selected{% endif %}>Oldest First</option>
-                    <option value="name" {% if sort_by == 'name' %}selected{% endif %}>Name (A-Z)</option>
-                    <option value="-name" {% if sort_by == '-name' %}selected{% endif %}>Name (Z-A)</option>
-                    <option value="-last_run_at" {% if sort_by == '-last_run_at' %}selected{% endif %}>Last Run (Recent)</option>
-                    <option value="last_run_at" {% if sort_by == 'last_run_at' %}selected{% endif %}>Last Run (Oldest)</option>
-                    <option value="status" {% if sort_by == 'status' %}selected{% endif %}>Status</option>
-                </select>
-            </div>
-            <div class="col-md-3 d-flex align-items-end">
-                <button type="submit" class="btn btn-primary me-2">Apply Filters</button>
-                <a href="{% url 'sync_jobs:list' %}" class="btn btn-secondary">Clear</a>
+
+            <!-- Action Buttons -->
+            <div class="flex gap-3">
+                <button type="submit" class="flex-1 px-6 py-3 bg-slate-900 text-white rounded-2xl font-bold hover:bg-slate-800 transition-all text-base shadow-lg shadow-slate-200">
+                    Apply
+                </button>
+                <a href="{% url 'sync_jobs:list' %}" class="px-4 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200 transition-all text-base no-underline flex items-center justify-center">
+                    <span class="material-symbols-outlined">close</span>
+                </a>
             </div>
         </form>
     </div>
-    
-    <!-- Jobs Table -->
-    {% if jobs %}
-        <div class="card">
-            <div class="card-body">
-                <div class="table-responsive">
-                    <table class="table table-hover">
-                        <thead>
-                            <tr>
-                                <th>Job Name</th>
-                                <th>Source → Target</th>
-                                <th>Type</th>
-                                <th>Status</th>
-                                <th>Tables</th>
-                                <th>Last Run</th>
-                                <th>Next Run</th>
-                                <th>Created</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for job in jobs %}
-                            <tr>
-                                <td>
-                                    <strong>{{ job.name }}</strong>
-                                </td>
-                                <td>
-                                    <small>
-                                        {% if job.source_connection_type == 'api' and job.source_api_connection %}
-                                            {{ job.source_api_connection.name }}
-                                        {% else %}
-                                            {{ job.source_connection.name }}
-                                        {% endif %}
-                                        → {{ job.target_connection.name }}
-                                    </small>
-                                    {% if job.source_connection_type == 'api' and job.source_api_connection and job.source_api_connection.api_type == 'azure_devops' %}
-                                        <br>
-                                        <small class="text-muted">
-                                            Azure DevOps: {{ job.source_api_connection.organization }}
-                                            → ClickHouse {{ job.target_connection.database_name }}
-                                        </small>
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    <span class="badge bg-info">{{ job.get_sync_type_display }}</span>
+
+    <!-- Jobs List -->
+    <div class="bg-surface-container-lowest rounded-[2rem] shadow-sm border border-slate-100 overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="text-xs font-black text-slate-400 uppercase tracking-[0.2em] bg-slate-50/50">
+                        <th class="px-8 py-5">Pipeline Name</th>
+                        <th class="px-8 py-5">Data Gateway</th>
+                        <th class="px-8 py-5 text-center">Config</th>
+                        <th class="px-8 py-5 text-center">Health</th>
+                        <th class="px-8 py-5">Last Activity</th>
+                        <th class="px-8 py-5 text-right">Operations</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    {% for job in jobs %}
+                    <tr class="group hover:bg-slate-50/60 transition-colors">
+                        <!-- Job Name & Created -->
+                        <td class="px-8 py-6">
+                            <div class="flex flex-col">
+                                <span class="text-lg font-bold text-on-surface group-hover:text-primary transition-colors">{{ job.name }}</span>
+                                <span class="text-xs font-bold text-slate-400 mt-1 uppercase tracking-wider">ID: {{ job.id|slice:":8"|default:"LEGACY" }}</span>
+                            </div>
+                        </td>
+
+                        <!-- Connections Pathway -->
+                        <td class="px-8 py-6">
+                            <div class="flex items-center gap-3">
+                                <span class="font-bold text-slate-700 text-base">
                                     {% if job.source_connection_type == 'api' and job.source_api_connection %}
-                                        {% if job.source_api_connection.api_type == 'zoho_crm' %}
-                                            <span class="badge bg-secondary ms-1">Zoho</span>
-                                        {% elif job.source_api_connection.api_type == 'sap_b1' %}
-                                            <span class="badge bg-success ms-1">SAP</span>
-                                        {% elif job.source_api_connection.api_type == 'azure_devops' %}
-                                            <span class="badge bg-primary ms-1">Azure DevOps</span>
-                                        {% endif %}
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    {% if job.status == 'pending' %}
-                                        <span class="badge bg-secondary">{{ job.get_status_display }}</span>
-                                    {% elif job.status == 'running' %}
-                                        <span class="badge bg-primary">{{ job.get_status_display }}</span>
-                                    {% elif job.status == 'completed' %}
-                                        <span class="badge bg-success">{{ job.get_status_display }}</span>
-                                    {% elif job.status == 'failed' %}
-                                        <span class="badge bg-danger">{{ job.get_status_display }}</span>
-                                    {% elif job.status == 'paused' %}
-                                        <span class="badge bg-warning text-dark">{{ job.get_status_display }}</span>
+                                        {{ job.source_api_connection.name }}
                                     {% else %}
-                                        <span class="badge bg-secondary">{{ job.get_status_display }}</span>
+                                        {{ job.source_connection.name }}
                                     {% endif %}
-                                </td>
-                                <td>
-                                    {% if job.source_connection_type == 'api' and job.source_api_connection %}
-                                        {% if job.source_api_connection.api_type == 'sap_b1' %}
-                                            <span class="badge bg-light text-dark">{{ job.tables.count }} endpoint(s)</span>
-                                        {% elif job.source_api_connection.api_type == 'azure_devops' %}
-                                            <span class="badge bg-light text-dark">{{ job.tables.count }} project(s)</span>
-                                        {% else %}
-                                            <span class="badge bg-light text-dark">{{ job.tables.count }} table(s)</span>
-                                        {% endif %}
-                                    {% else %}
-                                        <span class="badge bg-light text-dark">{{ job.tables.count }} table(s)</span>
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    {% if job.last_run_at %}
-                                        <small>{{ job.last_run_at|date:"Y-m-d H:i" }}</small>
-                                    {% else %}
-                                        <small class="text-muted">Never</small>
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    {% if job.next_run_at %}
-                                        <small>{{ job.next_run_at|date:"Y-m-d H:i" }}</small>
-                                    {% else %}
-                                        <small class="text-muted">-</small>
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    <small>{{ job.created_at|date:"Y-m-d H:i" }}</small>
-                                </td>
-                                <td>
-                                    <div class="table-actions">
-                                        <a href="{% url 'sync_jobs:job_detail' job.id %}" class="btn btn-sm btn-info" title="View Details">
-                                            <i class="bi bi-eye"></i> View
-                                        </a>
-                                        {% if job.status != 'running' %}
-                                        <form method="post" action="{% url 'sync_jobs:job_run_now' job.id %}" style="display: inline;" class="run-job-form">
-                                            {% csrf_token %}
-                                            <button type="submit" class="btn btn-sm btn-success" title="Run Now">
-                                                <i class="bi bi-play-fill"></i> Run
-                                            </button>
-                                        </form>
-                                        {% endif %}
-                                        {% if job.status == 'running' %}
-                                        <span class="badge bg-primary">
-                                            <span class="spinner-border spinner-border-sm" role="status"></span> Running
-                                        </span>
-                                        {% endif %}
-                                    </div>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+                                </span>
+                                <span class="material-symbols-outlined text-sm text-slate-300">arrow_forward</span>
+                                <span class="font-bold text-slate-700 text-base">{{ job.target_connection.name }}</span>
+                            </div>
+                            <div class="text-xs text-slate-400 font-medium mt-1">Created {{ job.created_at|date:"M d, Y" }}</div>
+                        </td>
+
+                        <!-- Config Badges -->
+                        <td class="px-8 py-6">
+                            <div class="flex flex-wrap justify-center gap-2">
+                                <span class="px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-widest bg-slate-100 text-slate-600 border border-slate-200">
+                                    {{ job.get_sync_type_display }}
+                                </span>
+                                {% if job.source_connection_type == 'api' and job.source_api_connection %}
+                                    <span class="px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-widest 
+                                        {% if job.source_api_connection.api_type == 'zoho_crm' %}bg-secondary/10 text-secondary border-secondary/20
+                                        {% elif job.source_api_connection.api_type == 'sap_b1' %}bg-success/10 text-success border-success/20
+                                        {% elif job.source_api_connection.api_type == 'azure_devops' %}bg-primary/10 text-primary border-primary/20
+                                        {% endif %} border">
+                                        {{ job.source_api_connection.get_api_type_display|default:job.source_api_connection.api_type }}
+                                    </span>
+                                {% endif %}
+                                <span class="px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-widest bg-emerald-50 text-emerald-600 border border-emerald-100">
+                                    {{ job.tables.count }} Tables
+                                </span>
+                            </div>
+                        </td>
+
+                        <!-- Status -->
+                        <td class="px-8 py-6 text-center">
+                            <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border
+                                {% if job.status == 'pending' %}bg-slate-50 text-slate-500 border-slate-200
+                                {% elif job.status == 'running' %}bg-blue-50 text-primary border-blue-200
+                                {% elif job.status == 'completed' %}bg-emerald-50 text-emerald-600 border-emerald-200
+                                {% elif job.status == 'failed' %}bg-red-50 text-red-600 border-red-200
+                                {% elif job.status == 'paused' %}bg-amber-50 text-amber-600 border-amber-200
+                                {% endif %}">
+                                <span class="w-2.5 h-2.5 rounded-full 
+                                    {% if job.status == 'pending' %}bg-slate-400
+                                    {% elif job.status == 'running' %}bg-primary animate-pulse
+                                    {% elif job.status == 'completed' %}bg-emerald-500
+                                    {% elif job.status == 'failed' %}bg-red-500
+                                    {% elif job.status == 'paused' %}bg-amber-400
+                                    {% endif %}">
+                                </span>
+                                <span class="text-xs font-black uppercase tracking-[0.1em]">{{ job.get_status_display }}</span>
+                            </div>
+                        </td>
+
+                        <!-- Run Timeline -->
+                        <td class="px-8 py-6">
+                            <div class="flex flex-col gap-2">
+                                <div class="flex items-center gap-2 text-sm font-bold text-slate-600">
+                                    <span class="material-symbols-outlined text-base">history</span>
+                                    <span>{% if job.last_run_at %}{{ job.last_run_at|date:"M d, H:i" }}{% else %}Never Synced{% endif %}</span>
+                                </div>
+                                <div class="flex items-center gap-2 text-xs font-bold text-slate-400">
+                                    <span class="material-symbols-outlined text-sm">event_repeat</span>
+                                    <span>{% if job.next_run_at %}{{ job.next_run_at|date:"M d, H:i" }}{% else %}Manual Refresh Only{% endif %}</span>
+                                </div>
+                            </div>
+                        </td>
+
+                        <!-- Actions -->
+                        <td class="px-8 py-6 text-right">
+                            <div class="flex items-center justify-end gap-3">
+                                <a href="{% url 'sync_jobs:job_detail' job.id %}" class="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-primary hover:text-white transition-all no-underline text-sm border border-slate-200" title="View Pipeline Details">
+                                    <span class="material-symbols-outlined text-[20px]">visibility</span>
+                                    View
+                                </a>
+                                {% if job.status != 'running' %}
+                                <form method="post" action="{% url 'sync_jobs:job_run_now' job.id %}" class="run-job-form">
+                                    {% csrf_token %}
+                                    <button type="submit" class="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all text-sm shadow-md shadow-emerald-100" title="Trigger Synchronization Now">
+                                        <span class="material-symbols-outlined text-[20px]">play_circle</span>
+                                        Run
+                                    </button>
+                                </form>
+                                {% endif %}
+                                {% if job.status == 'running' %}
+                                <div class="flex items-center gap-2 px-4 py-2 bg-blue-50 text-primary rounded-xl font-bold text-sm border border-blue-100 shadow-sm" title="Execution in progress">
+                                    <span class="material-symbols-outlined text-[20px] animate-spin">autorenew</span>
+                                    Syncing
+                                </div>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" class="px-8 py-24 text-center">
+                            <div class="flex flex-col items-center gap-6">
+                                <div class="w-24 h-24 rounded-full bg-slate-50 flex items-center justify-center border-4 border-white shadow-inner">
+                                    <span class="material-symbols-outlined text-5xl text-slate-200">cloud_sync</span>
+                                </div>
+                                <div class="max-w-md">
+                                    <h5 class="text-2xl font-black text-slate-900 mb-2">Workspace Is Quiet</h5>
+                                    <p class="text-slate-500 text-base font-medium">{% if search_query %}No pipelines match your search criteria. Try broadening your query.{% else %}You haven't established any sync pipelines yet. Let's build your first automation.{% endif %}</p>
+                                </div>
+                                <a href="{% url 'sync_jobs:create_step1' %}" class="px-8 py-3 bg-primary text-white rounded-2xl font-bold shadow-xl shadow-primary/20 no-underline text-lg active:scale-95 transition-all">
+                                    Begin Integration
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
-    {% else %}
-        <div class="card">
-            <div class="card-body text-center py-5">
-                <h5 class="text-muted">No sync jobs found</h5>
-                {% if search_query or status_filter or sync_type_filter or source_type_filter %}
-                    <p class="text-muted">Try adjusting your filters or search criteria.</p>
-                    <a href="{% url 'sync_jobs:list' %}" class="btn btn-secondary">Clear Filters</a>
-                {% else %}
-                    <p class="text-muted">Get started by creating your first sync job.</p>
-                    <a href="{% url 'sync_jobs:create_step1' %}" class="btn btn-primary">Create Your First Sync Job</a>
-                {% endif %}
-            </div>
-        </div>
-    {% endif %}
+    </div>
 </div>
 {% endblock %}
 
@@ -286,18 +276,17 @@
 <script src="{% static 'js/sync_jobs.js' %}"></script>
 <script src="{% static 'js/notifications.js' %}"></script>
 <script>
-    // Add loading states for actions
     document.addEventListener('DOMContentLoaded', function() {
         const runForms = document.querySelectorAll('.run-job-form');
         runForms.forEach(form => {
             form.addEventListener('submit', function(e) {
                 const button = form.querySelector('button[type="submit"]');
                 button.disabled = true;
-                button.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Running...';
+                button.classList.add('opacity-75', 'cursor-not-allowed');
+                button.innerHTML = '<span class="material-symbols-outlined animate-spin text-[20px]">autorenew</span> Syncing...';
                 
-                // Show notification
                 if (typeof showNotification === 'function') {
-                    showNotification('Starting sync job...', 'info');
+                    showNotification('Integration sequence initiated...', 'info');
                 }
             });
         });

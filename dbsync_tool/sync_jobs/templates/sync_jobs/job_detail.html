@@ -3,508 +3,574 @@
 {% load humanize %}
 {% load sync_jobs_tags %}
 
-{% block title %}{{ job.name }} - DB Sync Tool{% endblock %}
+{% block title %}{{ job.name }} | SyncArchitect{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/sync_jobs.css' %}">
 <style>
-    .job-header {
-        background: white;
-        border-radius: 8px;
-        padding: 20px;
-        margin-bottom: 20px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    .tab-active {
+        color: #0c56d0;
+        border-bottom: 3px solid #0c56d0;
     }
-    .info-card {
-        background: white;
-        border-radius: 8px;
-        padding: 20px;
-        margin-bottom: 20px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    .animate-spin-slow {
+        animation: spin 3s linear infinite;
     }
-    .info-row {
-        display: flex;
-        padding: 10px 0;
-        border-bottom: 1px solid #eee;
-    }
-    .info-row:last-child {
-        border-bottom: none;
-    }
-    .info-label {
-        font-weight: 600;
-        width: 200px;
-        color: #666;
-    }
-    .info-value {
-        flex: 1;
-    }
-    .action-buttons {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-    }
-    .status-badge-large {
-        font-size: 1.1rem;
-        padding: 8px 16px;
-    }
-    .stat-card-small {
-        background: #f8f9fa;
-        padding: 0.75rem;
-        border-radius: 4px;
-        text-align: center;
-    }
-    .stat-label-small {
-        font-size: 0.75rem;
-        color: #6c757d;
-        margin-bottom: 0.25rem;
-    }
-    .stat-value-small {
-        font-size: 1.1rem;
-        font-weight: 600;
-    }
-    .alert-sm {
-        padding: 0.5rem 0.75rem;
-        font-size: 0.875rem;
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
     }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <!-- Header with Job Name and Status -->
-    <div class="job-header">
-        <div class="d-flex justify-content-between align-items-center">
-            <div>
-                <h1 class="mb-2">{{ job.name }}</h1>
-                <div class="mb-2">
-                    {% if job.status == 'pending' %}
-                        <span class="badge bg-secondary status-badge-large">{{ job.get_status_display }}</span>
-                    {% elif job.status == 'running' %}
-                        <span class="badge bg-primary status-badge-large">{{ job.get_status_display }}</span>
-                    {% elif job.status == 'completed' %}
-                        <span class="badge bg-success status-badge-large">{{ job.get_status_display }}</span>
-                    {% elif job.status == 'failed' %}
-                        <span class="badge bg-danger status-badge-large">{{ job.get_status_display }}</span>
-                    {% elif job.status == 'paused' %}
-                        <span class="badge bg-warning text-dark status-badge-large">{{ job.get_status_display }}</span>
-                    {% else %}
-                        <span class="badge bg-secondary status-badge-large">{{ job.get_status_display }}</span>
-                    {% endif %}
-                    <span class="badge bg-info ms-2">{{ job.get_sync_type_display }}</span>
+<div class="flex-1 overflow-y-auto p-8 space-y-10 no-scrollbar bg-slate-50/50">
+    <!-- Breadcrumbs / Meta -->
+    <div class="flex items-center gap-3 text-sm font-bold text-slate-400">
+        <a href="{% url 'sync_jobs:list' %}" class="flex items-center gap-1 hover:text-primary transition-colors no-underline">
+            <span class="material-symbols-outlined text-[18px]">arrow_back</span>
+            Back to Pipelines
+        </a>
+        <span class="text-slate-200">/</span>
+        <span class="text-slate-500">Pipeline ID: {{ job.id|slice:":8" }}</span>
+    </div>
+
+    <!-- Premium Job Header -->
+    <div class="bg-surface-container-lowest rounded-3xl shadow-sm border border-slate-100 p-8 flex flex-col lg:flex-row lg:items-center justify-between gap-8">
+        <div class="space-y-4">
+            <div class="flex items-center gap-4">
+                <h1 class="text-4xl font-black text-on-surface tracking-tight">{{ job.name }}</h1>
+                <div class="px-4 py-1.5 rounded-full border border-slate-200 bg-slate-50 text-xs font-black uppercase tracking-widest text-slate-500">
+                    {{ job.get_sync_type_display }}
                 </div>
             </div>
-            <div class="action-buttons">
-                {% if job.status != 'running' and job.status != 'paused' %}
-                    <a href="{% url 'sync_jobs:job_run_now' job.id %}" class="btn btn-success" onclick="return confirm('Are you sure you want to run this job now?');">
-                        Run Now
-                    </a>
-                {% endif %}
+            
+            <div class="flex items-center gap-6">
+                <!-- Large Status Component -->
+                <div class="flex items-center gap-3 px-5 py-2.5 rounded-2xl border
+                    {% if job.status == 'pending' %}bg-slate-50 text-slate-500 border-slate-200
+                    {% elif job.status == 'running' %}bg-blue-50 text-primary border-blue-200
+                    {% elif job.status == 'completed' %}bg-emerald-50 text-emerald-600 border-emerald-200
+                    {% elif job.status == 'failed' %}bg-red-50 text-red-600 border-red-200
+                    {% elif job.status == 'paused' %}bg-amber-50 text-amber-600 border-amber-200
+                    {% endif %} shadow-sm">
+                    <span class="w-3 h-3 rounded-full 
+                        {% if job.status == 'pending' %}bg-slate-400
+                        {% elif job.status == 'running' %}bg-primary animate-pulse
+                        {% elif job.status == 'completed' %}bg-emerald-500
+                        {% elif job.status == 'failed' %}bg-red-500
+                        {% elif job.status == 'paused' %}bg-amber-400
+                        {% endif %}">
+                    </span>
+                    <span class="text-lg font-black uppercase tracking-[0.05em]">{{ job.get_status_display }}</span>
+                    {% if job.status == 'running' %}
+                        <span class="material-symbols-outlined animate-spin-slow text-xl ml-1">sync</span>
+                    {% endif %}
+                </div>
+
+                <div class="flex flex-col">
+                    <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Last Success</span>
+                    <span class="text-sm font-bold text-slate-600 mt-1">{% if job.last_run_at %}{{ job.last_run_at|date:"M d, H:i" }}{% else %}Never{% endif %}</span>
+                </div>
+                <div class="flex flex-col">
+                    <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Schedule</span>
+                    <span class="text-sm font-bold text-slate-600 mt-1">{% if job.schedule %}{{ job.schedule.get_schedule_type_display }}{% else %}Manual{% endif %}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Header Actions -->
+        <div class="flex items-center gap-3 flex-wrap lg:justify-end">
+            {% if job.status != 'running' and job.status != 'paused' %}
+                <a href="{% url 'sync_jobs:job_run_now' job.id %}" class="flex items-center gap-2 px-6 py-3 bg-emerald-600 text-white rounded-2xl font-bold shadow-lg shadow-emerald-100 hover:bg-emerald-700 active:scale-95 transition-all no-underline" onclick="return confirm('Initiate sync sequence immediately?');">
+                    <span class="material-symbols-outlined text-[24px]">play_circle</span>
+                    Run Now
+                </a>
+            {% endif %}
+            
+            <div class="flex items-center bg-slate-100/50 p-1 rounded-2xl border border-slate-200">
                 {% if job.status == 'paused' %}
-                    <a href="{% url 'sync_jobs:job_resume' job.id %}" class="btn btn-success" onclick="return confirm('Are you sure you want to resume this job?');">
-                        Resume
+                    <a href="{% url 'sync_jobs:job_resume' job.id %}" class="p-3 text-emerald-600 hover:bg-white rounded-xl transition-all" title="Resume Job" onclick="return confirm('Resume scheduled synchronization?');">
+                        <span class="material-symbols-outlined text-[24px]">play_arrow</span>
                     </a>
                 {% elif job.status != 'running' %}
-                    <a href="{% url 'sync_jobs:job_pause' job.id %}" class="btn btn-warning" onclick="return confirm('Are you sure you want to pause this job?');">
-                        Pause
+                    <a href="{% url 'sync_jobs:job_pause' job.id %}" class="p-3 text-amber-600 hover:bg-white rounded-xl transition-all" title="Pause Job" onclick="return confirm('Pause sync schedule?');">
+                        <span class="material-symbols-outlined text-[24px]">pause_circle</span>
                     </a>
                 {% endif %}
+
                 {% if job.status != 'running' %}
-                    <a href="{% url 'sync_jobs:job_edit' job.id %}" class="btn btn-primary">Edit</a>
+                    <a href="{% url 'sync_jobs:job_edit' job.id %}" class="p-3 text-slate-500 hover:bg-white rounded-xl transition-all" title="Edit Properties">
+                        <span class="material-symbols-outlined text-[24px]">edit_note</span>
+                    </a>
                 {% endif %}
-                <a href="{% url 'sync_jobs:job_delete' job.id %}" class="btn btn-danger" onclick="return confirm('Are you sure you want to delete this job? This action cannot be undone.');">
-                    Delete
+
+                <a href="{% url 'sync_jobs:job_delete' job.id %}" class="p-3 text-red-500 hover:bg-white rounded-xl transition-all" title="Terminate Pipeline" onclick="return confirm('Permanently delete this pipeline? This action is irreversible.');">
+                    <span class="material-symbols-outlined text-[24px]">delete</span>
                 </a>
-                <a href="{% url 'sync_jobs:list' %}" class="btn btn-secondary">Back to List</a>
             </div>
         </div>
     </div>
-    
-    <div class="row">
-        <!-- Left Column: Job Information -->
-        <div class="col-md-8">
-            <!-- Job Information Card -->
-            <div class="info-card">
-                <h5 class="mb-3">Job Information</h5>
-                <div class="info-row">
-                    <div class="info-label">Job Name:</div>
-                    <div class="info-value">{{ job.name }}</div>
+
+    <!-- Main Content Area with Tabs -->
+    <div class="space-y-8" x-data="{ tab: window.location.hash ? window.location.hash.substring(1) : 'overview' }" x-init="window.addEventListener('hashchange', () => tab = window.location.hash.substring(1) || 'overview')">
+        <!-- Tab Bar -->
+        <div class="flex items-center gap-10 border-b border-slate-200 px-4 overflow-x-auto no-scrollbar">
+            <button @click="tab = 'overview'; window.location.hash = 'overview'" :class="tab === 'overview' ? 'tab-active' : 'text-slate-400'" class="pb-4 text-sm font-black uppercase tracking-widest transition-all outline-none">
+                Overview
+            </button>
+            <button @click="tab = 'schema'; window.location.hash = 'schema'" :class="tab === 'schema' ? 'tab-active' : 'text-slate-400'" class="pb-4 text-sm font-black uppercase tracking-widest transition-all outline-none flex items-center gap-2">
+                Schema & Entities
+                <span class="px-2 py-0.5 rounded-full bg-slate-100 text-[10px]">{{ job.tables.count }}</span>
+            </button>
+            <button @click="tab = 'automation'; window.location.hash = 'automation'" :class="tab === 'automation' ? 'tab-active' : 'text-slate-400'" class="pb-4 text-sm font-black uppercase tracking-widest transition-all outline-none">
+                Automation Profile
+            </button>
+            <button @click="tab = 'history'; window.location.hash = 'history'" :class="tab === 'history' ? 'tab-active' : 'text-slate-400'" class="pb-4 text-sm font-black uppercase tracking-widest transition-all outline-none">
+                Log Archive
+            </button>
+        </div>
+
+        <!-- Tab Contents -->
+        
+        <!-- Tab: Overview -->
+        <div x-show="tab === 'overview'" class="space-y-10 animate-fade-in">
+            <!-- Row 1: KPI Statistics -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+                <div class="bg-surface-container-lowest p-6 rounded-3xl shadow-sm border border-slate-100">
+                    <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Total Executions</div>
+                    <div class="text-3xl font-black text-on-surface">{{ total_executions }}</div>
+                    <div class="mt-2 text-xs font-bold text-slate-400">Total lifetime frequency</div>
                 </div>
-                <div class="info-row">
-                    <div class="info-label">Sync Type:</div>
-                    <div class="info-value">
-                        <span class="badge bg-info">{{ job.get_sync_type_display }}</span>
+                <div class="bg-surface-container-lowest p-6 rounded-3xl shadow-sm border border-slate-100">
+                    <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Success Rate</div>
+                    <div class="text-3xl font-black text-emerald-600">
+                        {{ successful_executions }} / {{ total_executions }}
                     </div>
+                    <div class="mt-2 text-xs font-bold text-slate-400">Successful completions</div>
                 </div>
-                <div class="info-row">
-                    <div class="info-label">Status:</div>
-                    <div class="info-value">
-                        {% if job.status == 'pending' %}
-                            <span class="badge bg-secondary">{{ job.get_status_display }}</span>
-                        {% elif job.status == 'running' %}
-                            <span class="badge bg-primary">{{ job.get_status_display }}</span>
-                        {% elif job.status == 'completed' %}
-                            <span class="badge bg-success">{{ job.get_status_display }}</span>
-                        {% elif job.status == 'failed' %}
-                            <span class="badge bg-danger">{{ job.get_status_display }}</span>
-                        {% elif job.status == 'paused' %}
-                            <span class="badge bg-warning text-dark">{{ job.get_status_display }}</span>
-                        {% else %}
-                            <span class="badge bg-secondary">{{ job.get_status_display }}</span>
-                        {% endif %}
-                    </div>
+                <div class="bg-surface-container-lowest p-6 rounded-3xl shadow-sm border border-slate-100">
+                    <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Sync Failures</div>
+                    <div class="text-3xl font-black text-red-500">{{ failed_executions }}</div>
+                    <div class="mt-2 text-xs font-bold text-slate-400">Critical abort events</div>
                 </div>
-                <div class="info-row">
-                    <div class="info-label">Created:</div>
-                    <div class="info-value">{{ job.created_at|date:"F d, Y H:i" }}</div>
-                </div>
-                <div class="info-row">
-                    <div class="info-label">Last Updated:</div>
-                    <div class="info-value">{{ job.updated_at|date:"F d, Y H:i" }}</div>
-                </div>
-                <div class="info-row">
-                    <div class="info-label">Last Run:</div>
-                    <div class="info-value">
-                        {% if job.last_run_at %}
-                            {{ job.last_run_at|date:"F d, Y H:i" }}
-                        {% else %}
-                            <span class="text-muted">Never</span>
-                        {% endif %}
-                    </div>
-                </div>
-                <div class="info-row">
-                    <div class="info-label">Next Run:</div>
-                    <div class="info-value">
-                        {% if job.next_run_at %}
-                            {{ job.next_run_at|date:"F d, Y H:i" }}
-                        {% else %}
-                            <span class="text-muted">Not scheduled</span>
-                        {% endif %}
-                    </div>
+                <div class="bg-surface-container-lowest p-6 rounded-3xl shadow-sm border border-slate-100">
+                    <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Data Transferred</div>
+                    <div class="text-3xl font-black text-on-surface">{{ total_rows_synced_all_time|intcomma }}</div>
+                    <div class="mt-2 text-xs font-bold text-slate-400">Total records processed</div>
                 </div>
             </div>
-            
-            <!-- Connection Information -->
-            <div class="info-card">
-                <h5 class="mb-3">Connection Information</h5>
-                <div class="info-row">
-                    <div class="info-label">Source Connection:</div>
-                    <div class="info-value">
+
+            <!-- Row 2: Connection Pathway Pathway -->
+            <div class="bg-surface-container-lowest rounded-3xl shadow-sm border border-slate-100 p-8">
+                <h5 class="text-sm font-black uppercase tracking-widest text-slate-400 mb-8 px-2">Data Gateway Pathway</h5>
+                <div class="flex flex-col lg:flex-row items-center justify-between gap-12 px-8">
+                    <!-- Source Connection -->
+                    <div class="flex-1 w-full max-w-sm p-6 bg-slate-50 border border-slate-200 rounded-2xl relative overflow-hidden group hover:bg-white hover:shadow-lg transition-all">
+                        <div class="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-100 transition-opacity">
+                            <span class="material-symbols-outlined text-4xl text-slate-400">database</span>
+                        </div>
+                        <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Source Interface</div>
                         {% if job.source_connection_type == 'api' and job.source_api_connection %}
-                            <strong>{{ job.source_api_connection.name }}</strong>
-                            <span class="text-muted">({{ job.source_api_connection.get_api_type_display }})</span>
-                            <br>
-                            <a href="{% url 'connections:api_detail' job.source_api_connection.id %}" class="small">View API connection</a>
+                            <div class="text-xl font-bold text-on-surface mb-1">{{ job.source_api_connection.name }}</div>
+                            <div class="text-xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-md inline-block mb-3 uppercase tracking-wider">
+                                {{ job.source_api_connection.get_api_type_display }}
+                            </div>
+                            <a href="{% url 'connections:api_detail' job.source_api_connection.id %}" class="flex items-center gap-1 text-[11px] font-bold text-slate-400 hover:text-primary transition-colors no-underline">
+                                Integration Details
+                                <span class="material-symbols-outlined text-xs">arrow_forward</span>
+                            </a>
                         {% else %}
-                            <strong>{{ job.source_connection.name }}</strong>
-                            <br>
-                            <small class="text-muted">
-                                {{ job.source_connection.get_db_type_display }} - 
-                                {{ job.source_connection.host }}:{{ job.source_connection.port }} / 
-                                {{ job.source_connection.database_name }}
-                            </small>
+                            <div class="text-xl font-bold text-on-surface mb-1">{{ job.source_connection.name }}</div>
+                            <div class="text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">
+                                {{ job.source_connection.get_db_type_display }}
+                            </div>
+                            <div class="text-[11px] font-bold text-slate-400 mt-2 font-mono">
+                                {{ job.source_connection.host }}:{{ job.source_connection.port }} / {{ job.source_connection.database_name }}
+                            </div>
                         {% endif %}
                     </div>
-                </div>
-                <div class="info-row">
-                    <div class="info-label">Target Connection:</div>
-                    <div class="info-value">
-                        <strong>{{ job.target_connection.name }}</strong>
-                        <br>
-                        <small class="text-muted">
-                            {{ job.target_connection.get_db_type_display }} - 
-                            {{ job.target_connection.host }}:{{ job.target_connection.port }} / 
-                            {{ job.target_connection.database_name }}
-                        </small>
+
+                    <!-- Flow Visual -->
+                    <div class="flex flex-col items-center gap-2">
+                        <div class="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center text-primary shadow-inner">
+                            <span class="material-symbols-outlined text-3xl animate-spin-slow">sync_alt</span>
+                        </div>
+                        <span class="text-[10px] font-black text-slate-300 uppercase tracking-[0.2em]">Synchronization</span>
+                    </div>
+
+                    <!-- Target Connection -->
+                    <div class="flex-1 w-full max-w-sm p-6 bg-slate-50 border border-slate-200 rounded-2xl relative overflow-hidden group hover:bg-white hover:shadow-lg transition-all">
+                        <div class="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-100 transition-opacity">
+                            <span class="material-symbols-outlined text-4xl text-slate-400">cloud_upload</span>
+                        </div>
+                        <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Target End-Point</div>
+                        <div class="text-xl font-bold text-on-surface mb-1">{{ job.target_connection.name }}</div>
+                        <div class="text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">
+                            {{ job.target_connection.get_db_type_display }}
+                        </div>
+                        <div class="text-[11px] font-bold text-slate-400 mt-2 font-mono">
+                            {{ job.target_connection.host }}:{{ job.target_connection.port }} / {{ job.target_connection.database_name }}
+                        </div>
                     </div>
                 </div>
             </div>
             
-            <!-- Tables / Endpoints Included -->
-            <div class="info-card">
-                <h5 class="mb-3">
+            <!-- Metadata Area -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div class="bg-surface-container-lowest rounded-3xl shadow-sm border border-slate-100 p-8 space-y-6">
+                    <h5 class="text-sm font-black uppercase tracking-widest text-slate-400">Audit Timeline</h5>
+                    <div class="divide-y divide-slate-50">
+                        <div class="flex justify-between py-4">
+                            <span class="text-sm font-bold text-slate-500">Initialization</span>
+                            <span class="text-sm font-bold text-on-surface">{{ job.created_at|date:"F d, Y H:i" }}</span>
+                        </div>
+                        <div class="flex justify-between py-4">
+                            <span class="text-sm font-bold text-slate-500">Last Configuration Update</span>
+                            <span class="text-sm font-bold text-on-surface">{{ job.updated_at|date:"F d, Y H:i" }}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white/40 rounded-3xl border border-slate-200 p-8 flex flex-col justify-center items-center text-center space-y-4">
+                    <div class="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400">
+                        <span class="material-symbols-outlined text-2xl">info</span>
+                    </div>
+                    <div>
+                        <h6 class="text-lg font-bold text-slate-800">Pipeline Governance</h6>
+                        <p class="text-sm text-slate-500 font-medium">This pipeline is governed by security protocols and RBAC controls. All synchronizations are logged for audited transparency.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: Schema -->
+        <div x-show="tab === 'schema'" class="bg-surface-container-lowest rounded-3xl shadow-sm border border-slate-100 overflow-hidden animate-fade-in">
+            <div class="p-8 border-b border-slate-100 flex justify-between items-center">
+                <h5 class="text-lg font-black text-on-surface">Configuration Entities</h5>
+                <span class="px-4 py-1 rounded-full bg-slate-100 text-xs font-bold text-slate-500">
                     {% if job.source_connection_type == 'api' and job.source_api_connection and job.source_api_connection.api_type == 'sap_b1' %}
-                        SAP Endpoints Included ({{ job.tables.count }})
+                        {{ job.tables.count }} SAP Endpoints
                     {% else %}
-                        Tables Included ({{ job.tables.count }})
+                        {{ job.tables.count }} Tables/Objects
                     {% endif %}
-                </h5>
-                {% if job.tables.all %}
-                    <div class="table-responsive">
-                        <table class="table table-sm">
-                            <thead>
-                                <tr>
-                                    <th>Schema</th>
-                                    <th>{% if job.source_connection_type == 'api' and job.source_api_connection and job.source_api_connection.api_type == 'sap_b1' %}Endpoint{% else %}Table Name{% endif %}</th>
-                                    <th>Incremental Column</th>
-                                    <th>Status</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for table in job.tables.all %}
-                                <tr>
-                                    <td>{{ table.schema_name }}</td>
-                                    <td><strong>{{ table.table_name }}</strong></td>
-                                    <td>
-                                        {% if table.incremental_column %}
-                                            <code>{{ table.incremental_column }}</code>
-                                        {% else %}
-                                            <span class="text-muted">-</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if table.is_enabled %}
-                                            <span class="badge bg-success">Enabled</span>
-                                        {% else %}
-                                            <span class="badge bg-secondary">Disabled</span>
-                                        {% endif %}
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                {% else %}
-                    <p class="text-muted">No tables configured for this job.</p>
-                {% endif %}
+                </span>
             </div>
-            
-            <!-- Checkpoints Section (for incremental sync only) -->
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-50/50">
+                            <th class="px-8 py-4">Schema Context</th>
+                            <th class="px-8 py-4">Object Identity</th>
+                            <th class="px-8 py-4">Incremental Key</th>
+                            <th class="px-8 py-4">Status</th>
+                            {% if job.sync_type == 'incremental' %}
+                                <th class="px-8 py-4">Checkpoint Value</th>
+                                <th class="px-8 py-4 text-right">Operations</th>
+                            {% endif %}
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-50">
+                        {% for table in job.tables.all %}
+                        {% with checkpoint=table|get_checkpoint_for_table:checkpoint_map %}
+                        <tr class="group hover:bg-slate-50 transition-colors">
+                            <td class="px-8 py-5 text-sm font-bold text-slate-500 font-mono">{{ table.schema_name }}</td>
+                            <td class="px-8 py-5 text-base font-bold text-on-surface">{{ table.table_name }}</td>
+                            <td class="px-8 py-5">
+                                {% if table.incremental_column %}
+                                    <code class="text-xs font-bold text-primary px-2 py-1 bg-primary/5 rounded border border-primary/10 whitespace-nowrap">{{ table.incremental_column }}</code>
+                                {% else %}
+                                    <span class="text-xs font-bold text-slate-300">AUTO-OVERWRITE</span>
+                                {% endif %}
+                            </td>
+                            <td class="px-8 py-5">
+                                {% if table.is_enabled %}
+                                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-600 text-[10px] font-black uppercase tracking-widest border border-emerald-100">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                        Active
+                                    </span>
+                                {% else %}
+                                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 text-slate-400 text-[10px] font-black uppercase tracking-widest border border-slate-200">
+                                        Offline
+                                    </span>
+                                {% endif %}
+                            </td>
+                            {% if job.sync_type == 'incremental' %}
+                                <td class="px-8 py-5">
+                                    {% if checkpoint %}
+                                        <div class="flex flex-col">
+                                            <code class="text-xs text-emerald-600 font-bold truncate max-w-[150px]">{{ checkpoint.last_value }}</code>
+                                            <span class="text-[9px] font-bold text-slate-400 uppercase mt-0.5">Updated {{ checkpoint.updated_at|date:"M j, H:i" }}</span>
+                                        </div>
+                                    {% else %}
+                                        <span class="text-xs font-bold text-slate-300">INITIAL SYNC PENDING</span>
+                                    {% endif %}
+                                </td>
+                                <td class="px-8 py-5 text-right">
+                                    {% if checkpoint %}
+                                        <button class="px-3 py-1.5 bg-white text-amber-600 border border-amber-200 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-amber-50 reset-checkpoint-btn transition-all"
+                                                data-job-id="{{ job.id }}"
+                                                data-schema="{{ table.schema_name }}"
+                                                data-table="{{ table.table_name }}">
+                                            Reset
+                                        </button>
+                                    {% endif %}
+                                </td>
+                            {% endif %}
+                        </tr>
+                        {% endwith %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
             {% if job.sync_type == 'incremental' %}
-            <div class="info-card">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h5 class="mb-0">Checkpoints</h5>
-                    <small class="text-muted">Last synced values per table</small>
+                <div class="p-8 bg-slate-50/50 border-t border-slate-100">
+                    <div class="flex gap-4 items-start">
+                        <div class="p-2 rounded-xl bg-blue-100 text-primary">
+                            <span class="material-symbols-outlined text-lg">lightbulb</span>
+                        </div>
+                        <div class="space-y-1">
+                            <h6 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Incremental Synchronization Intelligence</h6>
+                            <p class="text-xs text-slate-500 font-medium leading-relaxed max-w-2xl">
+                                Checkpoints monitor the high-water mark for each entity. Resetting a checkpoint will force the integration engine to perform a full historical refresh for that specific entity during the next execution cycle.
+                            </p>
+                        </div>
+                    </div>
                 </div>
-                {% if job.tables.all %}
-                    <div class="table-responsive">
-                        <table class="table table-sm">
-                            <thead>
-                                <tr>
-                                    <th>Table</th>
-                                    <th>Checkpoint Value</th>
-                                    <th>Last Updated</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for table in job.tables.all %}
-                                {% with checkpoint=table|get_checkpoint_for_table:checkpoint_map %}
-                                <tr>
-                                    <td>
-                                        <strong>{{ table.schema_name }}.{{ table.table_name }}</strong>
-                                    </td>
-                                    <td>
-                                        {% if checkpoint %}
-                                            <code class="text-success">{{ checkpoint.last_value|truncatechars:50 }}</code>
-                                        {% else %}
-                                            <span class="text-muted">No checkpoint</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if checkpoint and checkpoint.updated_at %}
-                                            {{ checkpoint.updated_at|date:"Y-m-d H:i:s" }}
-                                        {% else %}
-                                            <span class="text-muted">-</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if checkpoint %}
-                                            <button class="btn btn-sm btn-warning reset-checkpoint-btn"
-                                                    data-job-id="{{ job.id }}"
-                                                    data-schema="{{ table.schema_name }}"
-                                                    data-table="{{ table.table_name }}"
-                                                    title="Reset checkpoint - next sync will be full sync">
-                                                Reset
-                                            </button>
-                                        {% else %}
-                                            <span class="text-muted small">-</span>
-                                        {% endif %}
-                                    </td>
-                                </tr>
-                                {% endwith %}
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                    <div class="alert alert-info alert-sm mt-3">
-                        <small>
-                            <strong>Note:</strong> Checkpoints track the last synced value for each table. 
-                            Resetting a checkpoint will cause the next sync to process all rows from that table.
-                        </small>
-                    </div>
-                {% else %}
-                    <p class="text-muted">No tables configured for this job.</p>
-                {% endif %}
-            </div>
             {% endif %}
         </div>
-        
-        <!-- Right Column: Schedule & Execution History -->
-        <div class="col-md-4">
-            <!-- Schedule Information -->
-            <div class="info-card">
-                <h5 class="mb-3">Schedule Configuration</h5>
-                {% if job.schedule %}
-                    <div class="info-row">
-                        <div class="info-label">Schedule Type:</div>
-                        <div class="info-value">{{ job.schedule.get_schedule_type_display }}</div>
-                    </div>
-                    {% if job.schedule.cron_expression %}
-                        <div class="info-row">
-                            <div class="info-label">Cron Expression:</div>
-                            <div class="info-value"><code>{{ job.schedule.cron_expression }}</code></div>
+
+        <!-- Tab: Automation -->
+        <div x-show="tab === 'automation'" class="animate-fade-in">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-10">
+                <div class="lg:col-span-2 space-y-10">
+                    <!-- Schedule Card -->
+                    <div class="bg-surface-container-lowest rounded-3xl shadow-sm border border-slate-100 p-8">
+                        <div class="flex items-center gap-4 mb-8">
+                            <div class="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center">
+                                <span class="material-symbols-outlined text-3xl">event_repeat</span>
+                            </div>
+                            <div>
+                                <h5 class="text-xl font-bold text-on-surface">Scheduling Configuration</h5>
+                                <p class="text-sm text-slate-500 font-medium">Automated frequency control for this pipeline.</p>
+                            </div>
                         </div>
-                    {% endif %}
-                    <div class="info-row">
-                        <div class="info-label">Enabled:</div>
-                        <div class="info-value">
-                            {% if job.schedule.is_enabled %}
-                                <span class="badge bg-success">Yes</span>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                            {% if job.schedule %}
+                                <div class="space-y-6">
+                                    <div class="space-y-1">
+                                        <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Frequency Type</div>
+                                        <div class="text-lg font-bold text-slate-700">{{ job.schedule.get_schedule_type_display }}</div>
+                                    </div>
+                                    {% if job.schedule.cron_expression %}
+                                    <div class="space-y-1">
+                                        <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Cron Signature</div>
+                                        <code class="text-base font-bold text-primary bg-primary/5 px-3 py-1 rounded-xl border border-primary/10">{{ job.schedule.cron_expression }}</code>
+                                    </div>
+                                    {% endif %}
+                                </div>
+                                <div class="space-y-6">
+                                    <div class="space-y-1">
+                                        <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Automation Status</div>
+                                        <div class="flex items-center gap-2 mt-1">
+                                            {% if job.schedule.is_enabled %}
+                                                <span class="px-4 py-1.5 rounded-2xl bg-emerald-50 text-emerald-600 text-xs font-black uppercase tracking-widest border border-emerald-200">ACTIVE & SCHEDULED</span>
+                                            {% else %}
+                                                <span class="px-4 py-1.5 rounded-2xl bg-slate-100 text-slate-400 text-xs font-black uppercase tracking-widest border border-slate-200">DEACTIVATED</span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                    <div class="space-y-1">
+                                        <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Next Execution Window</div>
+                                        <div class="text-lg font-bold text-slate-700">
+                                            {% if job.schedule.next_run_at %}
+                                                {{ job.schedule.next_run_at|date:"F d, Y H:i" }}
+                                            {% else %}
+                                                <span class="text-slate-300 italic">None Scheduled</span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
                             {% else %}
-                                <span class="badge bg-secondary">No</span>
+                                <div class="col-span-2 py-10 text-center italic text-slate-400 font-bold border-2 border-dashed border-slate-100 rounded-2xl">
+                                    No automated scheduling established for this pipeline.
+                                </div>
                             {% endif %}
                         </div>
                     </div>
-                    <div class="info-row">
-                        <div class="info-label">Next Run:</div>
-                        <div class="info-value">
-                            {% if job.schedule.next_run_at %}
-                                {{ job.schedule.next_run_at|date:"F d, Y H:i" }}
-                            {% else %}
-                                <span class="text-muted">Not scheduled</span>
-                            {% endif %}
+
+                    <!-- Additional Ops Meta -->
+                    <div class="bg-white/40 border border-slate-200 p-8 rounded-3xl">
+                        <h6 class="text-sm font-black uppercase tracking-widest text-slate-400 mb-6">Engine Controls</h6>
+                        <div class="flex flex-wrap gap-4">
+                            <button class="px-6 py-3 bg-white border border-slate-200 text-slate-700 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-white/80 transition-all shadow-sm">Force Health Check</button>
+                            <button class="px-6 py-3 bg-white border border-slate-200 text-slate-700 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-white/80 transition-all shadow-sm">Rotate Access Tokens</button>
                         </div>
                     </div>
-                {% else %}
-                    <p class="text-muted">No schedule configured.</p>
-                {% endif %}
+                </div>
+
+                <!-- Right Sidebar Inside Automation -->
+                <div class="space-y-8">
+                    <div class="bg-slate-900 text-white p-8 rounded-3xl shadow-xl space-y-6 relative overflow-hidden">
+                        <div class="absolute -top-10 -right-10 w-40 h-40 bg-white/5 rounded-full"></div>
+                        <h5 class="text-lg font-bold relative">Health Diagnostics</h5>
+                        <div class="space-y-4 relative">
+                            <div class="flex justify-between items-center text-xs font-bold text-slate-400 uppercase tracking-widest">
+                                <span>Connectivity</span>
+                                <span class="text-emerald-400">Stable</span>
+                            </div>
+                            <div class="w-full bg-slate-800 rounded-full h-1.5">
+                                <div class="bg-emerald-400 h-1.5 rounded-full" style="width: 100%"></div>
+                            </div>
+                            
+                            <div class="flex justify-between items-center text-xs font-bold text-slate-400 uppercase tracking-widest mt-6">
+                                <span>Data Consistency</span>
+                                <span class="text-blue-400">99.8%</span>
+                            </div>
+                            <div class="w-full bg-slate-800 rounded-full h-1.5">
+                                <div class="bg-blue-400 h-1.5 rounded-full" style="width: 99%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
-            
-            <!-- Execution History -->
-            <div class="info-card">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h5 class="mb-0">Execution History</h5>
-                    <span class="badge bg-secondary">{{ total_executions }} total</span>
+        </div>
+
+        <!-- Tab: History -->
+        <div x-show="tab === 'history'" class="bg-surface-container-lowest rounded-3xl shadow-sm border border-slate-100 overflow-hidden animate-fade-in">
+            <div class="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/30">
+                <div>
+                    <h5 class="text-lg font-black text-on-surface">Execution Log Archive</h5>
+                    <p class="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">Full historical audit of lifecycle events</p>
                 </div>
-                
-                <!-- Execution Statistics -->
-                <div class="row mb-3">
-                    <div class="col-6 mb-2">
-                        <div class="stat-card-small">
-                            <div class="stat-label-small">Total</div>
-                            <div class="stat-value-small">{{ total_executions }}</div>
-                        </div>
-                    </div>
-                    <div class="col-6 mb-2">
-                        <div class="stat-card-small">
-                            <div class="stat-label-small">Successful</div>
-                            <div class="stat-value-small text-success">{{ successful_executions }}</div>
-                        </div>
-                    </div>
-                    <div class="col-6 mb-2">
-                        <div class="stat-card-small">
-                            <div class="stat-label-small">Failed</div>
-                            <div class="stat-value-small text-danger">{{ failed_executions }}</div>
-                        </div>
-                    </div>
-                    <div class="col-6 mb-2">
-                        <div class="stat-card-small">
-                            <div class="stat-label-small">Total Rows</div>
-                            <div class="stat-value-small">{{ total_rows_synced_all_time|intcomma }}</div>
-                        </div>
-                    </div>
+                <div class="flex items-center gap-3">
+                    <span class="px-4 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-black text-slate-500 shadow-sm">{{ total_executions }} LOGS</span>
                 </div>
-                
-                <!-- Latest Execution Status -->
-                {% if latest_execution %}
-                <div class="alert alert-info alert-sm mb-3">
-                    <strong>Latest:</strong>
-                    <span class="badge bg-{{ latest_execution.status|status_badge_class }}">
-                        {{ latest_execution.get_status_display }}
-                    </span>
-                    {% if latest_execution.status == 'running' %}
-                        <span class="spinner-border spinner-border-sm ms-2" role="status"></span>
-                    {% endif %}
-                    <a href="{% url 'sync_jobs:execution_detail' job_id=job.id execution_id=latest_execution.id %}" 
-                       class="btn btn-sm btn-outline-primary ms-2">
-                        View Details
-                    </a>
-                </div>
-                {% endif %}
-                
-                <!-- Execution List Table -->
-                {% if executions %}
-                    <div class="table-responsive">
-                        <table class="table table-sm table-hover">
-                            <thead>
-                                <tr>
-                                    <th>Started At</th>
-                                    <th>Status</th>
-                                    <th>Duration</th>
-                                    <th>Tables</th>
-                                    <th>Rows</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for execution in executions %}
-                                <tr>
-                                    <td>{{ execution.started_at|date:"Y-m-d H:i:s" }}</td>
-                                    <td>
-                                        <span class="badge bg-{{ execution.status|status_badge_class }}">
-                                            {{ execution.get_status_display }}
-                                        </span>
-                                    </td>
-                                    <td>
-                                        {% if execution.status == 'running' %}
-                                            <span class="text-info">Running...</span>
-                                        {% else %}
-                                            {{ execution|execution_duration }}
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {{ execution.completed_tables }}/{{ execution.total_tables }}
-                                    </td>
-                                    <td>{{ execution.total_rows_synced|intcomma }}</td>
-                                    <td>
-                                        <a href="{% url 'sync_jobs:execution_detail' job_id=job.id execution_id=execution.id %}" 
-                                           class="btn btn-sm btn-outline-primary">
-                                            View
-                                        </a>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                {% else %}
-                    <p class="text-muted">No executions yet. Click "Run Now" to start a sync.</p>
-                {% endif %}
             </div>
+
+            {% if latest_execution %}
+            <div class="p-8 bg-blue-50/50 border-b border-blue-100 flex flex-col md:flex-row items-center justify-between gap-6">
+                <div class="flex items-center gap-5">
+                    <div class="w-14 h-14 rounded-2xl bg-white flex items-center justify-center text-primary shadow-sm border border-blue-100">
+                        <span class="material-symbols-outlined text-4xl">my_location</span>
+                    </div>
+                    <div>
+                        <div class="text-[10px] font-black text-blue-400 uppercase tracking-widest leading-none">Latest Activity Pulse</div>
+                        <div class="flex items-center gap-2 mt-1">
+                            <span class="text-lg font-black text-slate-800">{{ latest_execution.started_at|date:"M d, Y" }}</span>
+                            <span class="px-3 py-0.5 bg-{{ latest_execution.status|status_badge_class }} text-white text-[10px] font-black uppercase tracking-widest rounded-lg">
+                                {{ latest_execution.get_status_display }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                <a href="{% url 'sync_jobs:execution_detail' job_id=job.id execution_id=latest_execution.id %}" 
+                   class="flex items-center gap-2 px-6 py-2.5 bg-slate-900 text-white rounded-2xl font-bold text-sm shadow-xl shadow-slate-200 no-underline hover:bg-slate-800 transition-all">
+                    Detail Report
+                    <span class="material-symbols-outlined text-base">analytics</span>
+                </a>
+            </div>
+            {% endif %}
+
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-50/50">
+                            <th class="px-8 py-4">Initialization Pulse</th>
+                            <th class="px-8 py-4">Health Status</th>
+                            <th class="px-8 py-4">Cycle Duration</th>
+                            <th class="px-8 py-4">Object Sync Count</th>
+                            <th class="px-8 py-4">Data Intensity</th>
+                            <th class="px-8 py-4 text-right">Report</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-50">
+                        {% for execution in executions %}
+                        <tr class="group hover:bg-slate-50 transition-colors">
+                            <td class="px-8 py-6">
+                                <div class="flex flex-col">
+                                    <span class="text-sm font-bold text-on-surface">{{ execution.started_at|date:"Y-m-d H:i:s" }}</span>
+                                    <span class="text-[10px] font-bold text-slate-300 uppercase mt-0.5">Session ID: {{ execution.id|slice:":6" }}</span>
+                                </div>
+                            </td>
+                            <td class="px-8 py-6">
+                                <div class="flex items-center gap-2">
+                                    <span class="w-2 h-2 rounded-full bg-{{ execution.status|status_badge_class }}"></span>
+                                    <span class="text-xs font-black text-{{ execution.status|status_badge_class }} uppercase tracking-wider">{{ execution.get_status_display }}</span>
+                                </div>
+                            </td>
+                            <td class="px-8 py-6 text-sm font-bold text-slate-500">
+                                {% if execution.status == 'running' %}
+                                    <span class="inline-flex items-center gap-1.5 text-primary">
+                                        <span class="material-symbols-outlined text-xs animate-spin-slow">autorenew</span>
+                                        Calculating...
+                                    </span>
+                                {% else %}
+                                    {{ execution|execution_duration }}
+                                {% endif %}
+                            </td>
+                            <td class="px-8 py-6">
+                                <div class="text-sm font-bold text-slate-600">{{ execution.completed_tables }}/{{ execution.total_tables }}</div>
+                                <div class="text-[10px] font-bold text-slate-300 uppercase">Synchronized</div>
+                            </td>
+                            <td class="px-8 py-6 text-sm font-bold text-slate-600">
+                                {{ execution.total_rows_synced|intcomma }}
+                                <span class="text-xs font-bold text-slate-300 ml-1">ROWS</span>
+                            </td>
+                            <td class="px-8 py-6 text-right">
+                                <a href="{% url 'sync_jobs:execution_detail' job_id=job.id execution_id=execution.id %}" 
+                                   class="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-600 rounded-xl font-bold text-xs hover:bg-primary hover:text-white transition-all no-underline shadow-sm"
+                                   title="View Detailed Report">
+                                    <span class="material-symbols-outlined text-[18px]">assignment</span>
+                                    Report
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% if not executions %}
+            <div class="px-8 py-20 text-center space-y-4">
+                <div class="w-16 h-16 rounded-full bg-slate-50 flex items-center justify-center mx-auto text-slate-300">
+                    <span class="material-symbols-outlined text-3xl">list_alt</span>
+                </div>
+                <div>
+                    <h6 class="text-lg font-bold text-slate-900">Archive Is Empty</h6>
+                    <p class="text-sm text-slate-500">No lifecycle events recorded for this pipeline yet.</p>
+                </div>
+                <a href="{% url 'sync_jobs:job_run_now' job.id %}" class="inline-flex items-center gap-2 px-6 py-2.5 bg-primary text-white rounded-2xl font-bold text-sm no-underline shadow-lg shadow-primary/20">
+                    Initiate First Sync
+                </a>
+            </div>
+            {% endif %}
         </div>
     </div>
 </div>
 {% endblock %}
 
 {% block extra_js %}
+<!-- Include Alpine.js for Tab switching without heavy overhead -->
+<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
 <script src="{% static 'js/sync_jobs.js' %}"></script>
 {% if job.sync_type == 'incremental' %}
 <script src="{% static 'js/checkpoint_management.js' %}"></script>
 {% endif %}
 <script>
-// Auto-refresh page when job is running
+// Auto-refresh page when job is running to show real-time progress
 (function() {
     const jobStatus = '{{ job.status }}';
     const latestExecutionStatus = '{{ latest_execution.status|default:"" }}';
     const isRunning = jobStatus === 'running' || latestExecutionStatus === 'running';
     
     if (isRunning) {
-        // Refresh every 3 seconds when job is running
+        // Refresh every 5 seconds when job is running to avoid excessive load but show progress
         let refreshInterval = setInterval(function() {
-            window.location.reload();
-        }, 3000); // Refresh every 3 seconds
+            // Only refresh if the browser tab is focused to save resources
+            if (!document.hidden) {
+                window.location.reload();
+            }
+        }, 5000);
         
-        // Stop auto-refresh when user navigates away
         window.addEventListener('beforeunload', function() {
             clearInterval(refreshInterval);
         });

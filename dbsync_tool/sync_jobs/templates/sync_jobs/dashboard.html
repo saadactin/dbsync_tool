@@ -2,809 +2,300 @@
 {% load static %}
 {% load humanize %}
 
-{% block title %}Dashboard - DB Sync Tool{% endblock %}
-
-{% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/sync_jobs.css' %}">
-<script src="https://code.highcharts.com/highcharts.js"></script>
-<style>
-    .dashboard-shell {
-        padding-bottom: 0.5rem;
-    }
-
-    .dashboard-top {
-        background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
-        border-radius: 14px;
-        padding: 1.1rem 1.25rem;
-        color: #fff;
-        margin-bottom: 1rem;
-        box-shadow: 0 10px 22px rgba(15, 23, 42, 0.24);
-    }
-
-    .dashboard-title {
-        margin: 0;
-        font-size: 1.55rem;
-        font-weight: 700;
-    }
-
-    .dashboard-subtitle {
-        display: none;
-    }
-
-    .quick-actions {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-    }
-
-    .kpi-card {
-        background: #fff;
-        border: 1px solid #e5e7eb;
-        border-radius: 12px;
-        padding: 0.9rem 1rem;
-        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
-        height: 100%;
-    }
-
-    .kpi-label {
-        font-size: 0.72rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: #6b7280;
-        margin: 0 0 0.35rem 0;
-        line-height: 1.2;
-    }
-
-    .kpi-value {
-        font-size: 1.65rem;
-        font-weight: 700;
-        color: #111827;
-        line-height: 1.2;
-        margin: 0 0 0.15rem 0;
-    }
-
-    .kpi-sub {
-        font-size: 0.8rem;
-        color: #6b7280;
-        margin: 0;
-        line-height: 1.3;
-    }
-
-    .panel-card {
-        background: #fff;
-        border: 1px solid #e5e7eb;
-        border-radius: 12px;
-        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
-        overflow: hidden;
-    }
-
-    .panel-head {
-        padding: 0.8rem 1rem;
-        border-bottom: 1px solid #eef0f3;
-        font-weight: 700;
-        color: #111827;
-        font-size: 0.95rem;
-        background: #fbfcfd;
-    }
-
-    .panel-body {
-        padding: 0.9rem;
-    }
-
-    .chart-box {
-        height: 320px;
-    }
-
-    .ssr-chart-wrap {
-        height: 100%;
-        width: 100%;
-        background: linear-gradient(180deg, #fcfdff 0%, #f8fafc 100%);
-        border: 1px solid #e5e7eb;
-        border-radius: 10px;
-        padding: 10px;
-    }
-
-    .ssr-legend {
-        display: none;
-    }
-
-    .ssr-dot {
-        display: inline-block;
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        margin-right: 6px;
-    }
-
-    .donut-wrap {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        height: 100%;
-        gap: 0.5rem;
-    }
-
-    .donut-stat {
-        font-size: 0.95rem;
-        font-weight: 700;
-        color: #0f172a;
-    }
-
-    .usage-bars {
-        display: flex;
-        flex-direction: column;
-        gap: 0.7rem;
-        margin-top: 0.4rem;
-    }
-
-    .usage-row {
-        display: grid;
-        grid-template-columns: 140px 1fr auto;
-        gap: 0.6rem;
-        align-items: center;
-    }
-
-    .usage-label {
-        font-size: 0.84rem;
-        font-weight: 600;
-        color: #334155;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
-    .usage-track {
-        background: #e5e7eb;
-        border-radius: 999px;
-        height: 10px;
-        overflow: hidden;
-    }
-
-    .usage-fill {
-        height: 100%;
-        background: linear-gradient(90deg, #0284c7 0%, #2563eb 100%);
-        border-radius: 999px;
-        min-width: 0;
-    }
-
-    .usage-value {
-        font-size: 0.82rem;
-        color: #475569;
-        font-weight: 600;
-        min-width: 115px;
-        text-align: right;
-    }
-
-    .chart-fallback {
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        text-align: center;
-        color: #6b7280;
-        padding: 1rem;
-        background: linear-gradient(180deg, #fcfdff 0%, #f8fafc 100%);
-        border: 1px dashed #dbe2ea;
-        border-radius: 10px;
-    }
-
-    .chart-fallback-title {
-        font-weight: 700;
-        color: #334155;
-        margin-bottom: 0.35rem;
-    }
-
-    .mini-bars {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 10px;
-        width: 100%;
-        margin-top: 0.9rem;
-        align-items: end;
-        max-width: 260px;
-        height: 88px;
-    }
-
-    .mini-bar {
-        background: linear-gradient(180deg, #60a5fa 0%, #2563eb 100%);
-        border-radius: 8px 8px 4px 4px;
-        min-height: 8px;
-    }
-
-    .mini-pie-legend {
-        margin-top: 0.8rem;
-        width: 100%;
-        max-width: 260px;
-    }
-
-    .mini-pie-item {
-        display: flex;
-        justify-content: space-between;
-        font-size: 0.84rem;
-        margin: 0.18rem 0;
-    }
-
-    .mini-dot {
-        display: inline-block;
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        margin-right: 6px;
-    }
-
-    .recent-item {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 0.7rem 0;
-        border-bottom: 1px solid #f1f3f5;
-    }
-
-    .recent-item:last-child {
-        border-bottom: none;
-    }
-
-    .recent-name {
-        font-weight: 600;
-        margin: 0;
-        color: #1f2937;
-        font-size: 0.92rem;
-    }
-
-    .recent-meta {
-        margin: 0.15rem 0 0;
-        color: #6b7280;
-        font-size: 0.8rem;
-    }
-
-    @media (max-width: 768px) {
-        .dashboard-title {
-            font-size: 1.3rem;
-        }
-
-        .chart-box {
-            height: 270px;
-        }
-    }
-</style>
-{% endblock %}
+{% block title %}SyncArchitect | Dashboard{% endblock %}
 
 {% block content %}
-<div class="container-fluid dashboard-shell">
-    {% if is_super_admin %}
-        <div class="alert alert-info">
-            <strong>Super Admin View:</strong> You are viewing aggregated statistics across all tenants.
-        </div>
-    {% elif is_admin %}
-        <div class="alert alert-info">
-            <strong>Admin View:</strong> You are viewing statistics for your tenant only.
-        </div>
-    {% endif %}
-
-    <div class="dashboard-top d-flex justify-content-between align-items-center flex-wrap gap-3">
+<!-- Dashboard Content -->
+<div class="flex-1 overflow-y-auto p-6 space-y-8 no-scrollbar">
+    <!-- Page Header -->
+    <div class="flex items-end justify-between">
         <div>
-            <h1 class="dashboard-title">Dashboard</h1>
-            <p class="dashboard-subtitle"></p>
+            <h1 class="text-3xl font-extrabold text-on-surface tracking-tight">System Overview</h1>
+            <p class="text-on-surface-variant mt-1 font-medium">Monitoring data pipelines across all availability zones.</p>
         </div>
-        <div class="quick-actions">
-            <a href="{% url 'sync_jobs:create_step1' %}" class="btn btn-primary">
-                <i class="bi bi-plus-circle"></i> Create New Job
-            </a>
-            <a href="{% url 'sync_jobs:list' %}" class="btn btn-outline-primary">
-                <i class="bi bi-list"></i> View All Jobs
-            </a>
+        <div class="hidden sm:flex items-center gap-2 px-4 py-2 bg-surface-container-low rounded-lg text-primary font-bold text-sm">
+            <span class="w-2 h-2 rounded-full bg-primary relative">
+                <span class="absolute inset-0 rounded-full bg-primary animate-ping opacity-75"></span>
+            </span>
+            System Online
         </div>
     </div>
 
-    <div class="row g-3 mb-3">
-        <div class="col-6 col-lg-2">
-            <div class="kpi-card">
-                <div class="kpi-label">Total Jobs</div>
-                <p class="kpi-value text-primary">{{ stats.jobs.total }}</p>
-                <div class="kpi-sub">{{ stats.jobs.running }} running</div>
+    <!-- KPI Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+        <!-- Total Jobs -->
+        <div class="bg-surface-container-lowest p-4 rounded-xl border border-slate-100 shadow-sm hover:border-primary-container/20 transition-all">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-[10px] font-bold text-slate-400 tracking-wider uppercase">Total Jobs</span>
+                <span class="material-symbols-outlined text-blue-500 text-lg">stacks</span>
             </div>
+            <div class="text-2xl font-extrabold font-headline">{{ stats.jobs.total }}</div>
+            <div class="text-[10px] font-bold text-slate-500 mt-1">{{ stats.jobs.running }} running</div>
         </div>
-        <div class="col-6 col-lg-2">
-            <div class="kpi-card">
-                <div class="kpi-label">Success Rate (30d)</div>
-                <p class="kpi-value text-success">{{ stats.success_rates.last_30d }}%</p>
-                <div class="kpi-sub">{{ stats.executions.last_30d }} executions</div>
+        <!-- Success Rate -->
+        <div class="bg-surface-container-lowest p-4 rounded-xl border border-slate-100 shadow-sm hover:border-primary-container/20 transition-all">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-[10px] font-bold text-slate-400 tracking-wider uppercase">Success (30d)</span>
+                <span class="material-symbols-outlined text-emerald-500 text-lg">check_circle</span>
             </div>
+            <div class="text-2xl font-extrabold font-headline">{{ stats.success_rates.last_30d }}%</div>
+            <div class="text-[10px] font-bold text-emerald-600 mt-1">{{ stats.executions.last_30d }} executions</div>
         </div>
-        <div class="col-6 col-lg-2">
-            <div class="kpi-card">
-                <div class="kpi-label">Executions (24h)</div>
-                <p class="kpi-value text-info">{{ stats.executions.last_24h }}</p>
-                <div class="kpi-sub">7d: {{ stats.executions.last_7d }}</div>
+        <!-- Executions -->
+        <div class="bg-surface-container-lowest p-4 rounded-xl border border-slate-100 shadow-sm hover:border-primary-container/20 transition-all">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-[10px] font-bold text-slate-400 tracking-wider uppercase">Execs (24h)</span>
+                <span class="material-symbols-outlined text-purple-500 text-lg">bolt</span>
             </div>
+            <div class="text-2xl font-extrabold font-headline">{{ stats.executions.last_24h }}</div>
+            <div class="text-[10px] font-bold text-slate-500 mt-1">7d: {{ stats.executions.last_7d }} total</div>
         </div>
-        <div class="col-6 col-lg-2">
-            <div class="kpi-card">
-                <div class="kpi-label">Rows Synced (30d)</div>
-                <p class="kpi-value text-primary">{{ stats.rows_synced.last_30d|intcomma }}</p>
-                <div class="kpi-sub">24h: {{ stats.rows_synced.last_24h|intcomma }}</div>
+        <!-- Rows Synced -->
+        <div class="bg-surface-container-lowest p-4 rounded-xl border border-slate-100 shadow-sm hover:border-primary-container/20 transition-all">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-[10px] font-bold text-slate-400 tracking-wider uppercase">Rows (30d)</span>
+                <span class="material-symbols-outlined text-amber-500 text-lg">database</span>
             </div>
+            <div class="text-2xl font-extrabold font-headline">{{ stats.rows_synced.last_30d|intcomma }}</div>
+            <div class="text-[10px] font-bold text-slate-500 mt-1">24h: {{ stats.rows_synced.last_24h|intcomma }}</div>
         </div>
-        <div class="col-6 col-lg-2">
-            <div class="kpi-card">
-                <div class="kpi-label">Avg Duration</div>
-                {% if stats.performance.avg_duration_30d %}
-                    <p class="kpi-value text-dark">{{ stats.performance.avg_duration_30d|floatformat:0 }}s</p>
-                {% else %}
-                    <p class="kpi-value text-muted">N/A</p>
-                {% endif %}
-                <div class="kpi-sub">Last 30 days</div>
+        <!-- Avg Duration -->
+        <div class="bg-surface-container-lowest p-4 rounded-xl border border-slate-100 shadow-sm hover:border-primary-container/20 transition-all">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-[10px] font-bold text-slate-400 tracking-wider uppercase">Avg Duration</span>
+                <span class="material-symbols-outlined text-slate-500 text-lg">timer</span>
             </div>
+            <div class="text-2xl font-extrabold font-headline">{% if stats.performance.avg_duration_30d %}{{ stats.performance.avg_duration_30d|floatformat:0 }}s{% else %}N/A{% endif %}</div>
+            <div class="text-[10px] font-bold text-slate-500 mt-1">Last 30 days</div>
         </div>
-        <div class="col-6 col-lg-2">
-            <div class="kpi-card">
-                <div class="kpi-label">Connections</div>
-                <p class="kpi-value text-secondary">{{ stats.connections.total }}</p>
-                <div class="kpi-sub">APIs: {{ stats.api_connections.total }}</div>
+        <!-- Connections -->
+        <div class="bg-surface-container-lowest p-4 rounded-xl border border-slate-100 shadow-sm hover:border-primary-container/20 transition-all">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-[10px] font-bold text-slate-400 tracking-wider uppercase">Connections</span>
+                <span class="material-symbols-outlined text-indigo-500 text-lg">hub</span>
             </div>
-        </div>
-    </div>
-
-    <div class="row g-3 mb-3">
-        <div class="col-lg-8">
-            <div class="panel-card">
-                <div class="panel-head">Most Used Databases (Tables Synced - 30d)</div>
-                <div class="panel-body">
-                    <div id="databaseUsageChart" class="chart-box">
-                        <div class="ssr-chart-wrap">
-                            {% with usage=stats.database_usage %}
-                                {% if usage %}
-                                    {% with max_tables=usage.0.tables_synced %}
-                                        <div class="usage-bars">
-                                            {% for item in usage|slice:":6" %}
-                                                <div class="usage-row">
-                                                    <div class="usage-label">{{ item.label }}</div>
-                                                    <div class="usage-track">
-                                                        <div class="usage-fill" style="width:{% if max_tables > 0 %}{% widthratio item.tables_synced max_tables 100 %}{% else %}0{% endif %}%;"></div>
-                                                    </div>
-                                                    <div class="usage-value">{{ item.tables_synced }} tables</div>
-                                                </div>
-                                            {% endfor %}
-                                        </div>
-                                    {% endwith %}
-                                {% else %}
-                                    <div class="chart-fallback">
-                                        <div class="chart-fallback-title">No database sync activity yet</div>
-                                        <div>Run at least one database source sync to populate this graph.</div>
-                                    </div>
-                                {% endif %}
-                            {% endwith %}
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <div class="col-lg-4">
-            <div class="panel-card">
-                <div class="panel-head">Execution Outcome (30d)</div>
-                <div class="panel-body">
-                    <div id="successPieChart" class="chart-box">
-                        <div class="ssr-chart-wrap donut-wrap">
-                            {% with ok=stats.executions.successful_30d|default:0 fail=stats.executions.failed_30d|default:0 total=stats.executions.last_30d|default:0 %}
-                            <svg viewBox="0 0 220 220" width="220" height="220" role="img" aria-label="Execution outcome pie chart">
-                                <circle cx="110" cy="110" r="70" fill="none" stroke="#e5e7eb" stroke-width="24"></circle>
-                                {% if total > 0 %}
-                                    {% widthratio ok total 440 as ok_dash %}
-                                    {% widthratio fail total 440 as fail_dash %}
-                                    {% widthratio ok total 360 as ok_deg %}
-                                    <circle cx="110" cy="110" r="70" fill="none" stroke="#16a34a" stroke-width="24"
-                                            stroke-dasharray="{{ ok_dash }} 440"
-                                            transform="rotate(-90 110 110)"></circle>
-                                    <circle cx="110" cy="110" r="70" fill="none" stroke="#dc2626" stroke-width="24"
-                                            stroke-dasharray="{{ fail_dash }} 440"
-                                            transform="rotate({{ ok_deg|add:'-90' }} 110 110)"></circle>
-                                {% endif %}
-                                <circle cx="110" cy="110" r="48" fill="white"></circle>
-                                <text x="110" y="106" text-anchor="middle" fill="#0f172a" font-size="20" font-weight="700">{{ total }}</text>
-                                <text x="110" y="124" text-anchor="middle" fill="#64748b" font-size="11">Total</text>
-                            </svg>
-                            <div class="donut-stat">{{ total }} total executions</div>
-                            {% endwith %}
-                            <div class="ssr-legend">
-                                <span><span class="ssr-dot" style="background:#16a34a;"></span>Successful: {{ stats.executions.successful_30d|default:0 }}</span>
-                                <span><span class="ssr-dot" style="background:#dc2626;"></span>Failed: {{ stats.executions.failed_30d|default:0 }}</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+            <div class="text-2xl font-extrabold font-headline">{{ stats.connections.total }}</div>
+            <div class="text-[10px] font-bold text-indigo-600 mt-1">APIs: {{ stats.api_connections.total }}</div>
         </div>
     </div>
 
-    <div class="row g-3 mb-3">
-        <div class="col-lg-4">
-            <div class="panel-card">
-                <div class="panel-head">Source Type Breakdown</div>
-                <div class="panel-body">
-                    <div id="sourceTypeChart" class="chart-box">
-                        <div class="ssr-chart-wrap donut-wrap">
-                            {% with db=stats.source_breakdown.database|default:0 api=stats.source_breakdown.api|default:0 total_jobs=stats.jobs.total|default:0 mix_total=stats.source_breakdown.database|add:stats.source_breakdown.api %}
-                            <svg viewBox="0 0 220 220" width="220" height="220" role="img" aria-label="Source type pie chart">
-                                <circle cx="110" cy="110" r="70" fill="none" stroke="#e5e7eb" stroke-width="24"></circle>
-                                {% if mix_total > 0 %}
-                                    {% widthratio db mix_total 440 as db_dash %}
-                                    {% widthratio api mix_total 440 as api_dash %}
-                                    {% widthratio db mix_total 360 as db_deg %}
-                                    <circle cx="110" cy="110" r="70" fill="none" stroke="#2563eb" stroke-width="24"
-                                            stroke-dasharray="{{ db_dash }} 440"
-                                            transform="rotate(-90 110 110)"></circle>
-                                    <circle cx="110" cy="110" r="70" fill="none" stroke="#06b6d4" stroke-width="24"
-                                            stroke-dasharray="{{ api_dash }} 440"
-                                            transform="rotate({{ db_deg|add:'-90' }} 110 110)"></circle>
-                                {% endif %}
-                                <circle cx="110" cy="110" r="48" fill="white"></circle>
-                                <text x="110" y="106" text-anchor="middle" fill="#0f172a" font-size="20" font-weight="700">{{ total_jobs }}</text>
-                                <text x="110" y="124" text-anchor="middle" fill="#64748b" font-size="11">Jobs</text>
-                            </svg>
-                            <div class="donut-stat">{{ total_jobs }} total jobs</div>
-                            {% endwith %}
-                            <div class="ssr-legend">
-                                <span><span class="ssr-dot" style="background:#2563eb;"></span>Database: {{ stats.source_breakdown.database|default:0 }}</span>
-                                <span><span class="ssr-dot" style="background:#06b6d4;"></span>API: {{ stats.source_breakdown.api|default:0 }}</span>
-                            </div>
-                        </div>
-                    </div>
+    <!-- Main Grid Layout -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <!-- Recent Sync Activity -->
+        <div class="lg:col-span-2 space-y-4">
+            <div class="flex items-center justify-between">
+                <h3 class="text-lg font-bold tracking-tight">Recent Activity</h3>
+                <a href="{% url 'sync_jobs:list' %}" class="text-sm font-bold text-primary hover:underline no-underline">View All</a>
+            </div>
+            <div class="bg-surface-container-low rounded-2xl overflow-hidden shadow-sm">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left">
+                        <thead>
+                            <tr class="text-xs font-bold text-slate-400 uppercase tracking-widest bg-slate-100/50">
+                                <th class="px-6 py-4">Job Name</th>
+                                <th class="px-6 py-4">Last Execution</th>
+                                <th class="px-6 py-4">Rows</th>
+                                <th class="px-6 py-4 text-right">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-white/20">
+                            {% for execution in recent_activity %}
+                            <tr class="{% if forloop.counter|divisibleby:2 %}bg-surface-container-low{% else %}bg-surface-container-lowest{% endif %} hover:bg-blue-50/30 transition-colors cursor-pointer" onclick="window.location='{% url 'sync_jobs:execution_detail' job_id=execution.job.id execution_id=execution.id %}'">
+                                <td class="px-6 py-4 font-bold text-on-surface">{{ execution.job.name }}</td>
+                                <td class="px-6 py-4 text-sm text-slate-500">{{ execution.started_at|timesince }} ago</td>
+                                <td class="px-6 py-4 font-headline text-slate-700">{{ execution.total_rows_synced|default:0|intcomma }}</td>
+                                <td class="px-6 py-4 text-right">
+                                    {% if execution.status == 'completed' %}
+                                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800">Completed</span>
+                                    {% elif execution.status == 'failed' %}
+                                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-red-100 text-red-800">Failed</span>
+                                    {% elif execution.status == 'running' %}
+                                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-800 animate-pulse">Running</span>
+                                    {% else %}
+                                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-800">{{ execution.get_status_display }}</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="4" class="px-6 py-8 text-center text-slate-500 italic">No recent activity detected.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
-        <div class="col-lg-8">
-            <div class="panel-card">
-                <div class="panel-head">Recent Activity</div>
-                <div class="panel-body">
-                    {% if recent_activity %}
-                        {% for execution in recent_activity %}
-                        <div class="recent-item">
+
+        <!-- Insights Widgets -->
+        <div class="space-y-6">
+            <!-- Most Used Databases -->
+            <div class="bg-surface-container-lowest rounded-2xl p-6 shadow-sm border border-slate-100">
+                <h3 class="text-sm font-bold text-slate-900 mb-4 uppercase tracking-wider">Most Used Databases</h3>
+                <div class="space-y-4">
+                    {% for item in stats.database_usage|slice:":6" %}
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <div class="w-2 h-2 rounded-full {% if item.db_type == 'postgres' %}bg-blue-500{% elif item.db_type == 'mysql' %}bg-orange-500{% elif item.db_type == 'sqlserver' %}bg-red-500{% else %}bg-indigo-500{% endif %}"></div>
+                            <span class="text-sm font-medium">{{ item.label }}</span>
+                        </div>
+                        <span class="text-xs font-bold text-slate-500">{{ item.tables_synced }} tables</span>
+                    </div>
+                    {% empty %}
+                    <p class="text-xs text-slate-400 italic">No database telemetry available.</p>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Distribution Widgets -->
+            <div class="grid grid-cols-1 gap-6">
+                <!-- Execution Outcome -->
+                <div class="bg-surface-container-lowest rounded-2xl p-6 shadow-sm border border-slate-100">
+                    <h3 class="text-sm font-bold text-slate-900 mb-2 uppercase tracking-wider">Execution Outcome (30d)</h3>
+                    <div class="text-2xl font-extrabold mb-4">{{ stats.executions.last_30d }} Total</div>
+                    <div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden flex">
+                        {% with successful=stats.executions.successful_30d failed=stats.executions.failed_30d total=stats.executions.last_30d %}
+                            {% if total > 0 %}
+                            <div class="bg-emerald-500 h-full" style="width: {% widthratio successful total 100 %}%" title="{{ successful }} Successful"></div>
+                            <div class="bg-red-500 h-full" style="width: {% widthratio failed total 100 %}%" title="{{ failed }} Failed"></div>
+                            {% else %}
+                            <div class="bg-slate-200 h-full w-full"></div>
+                            {% endif %}
+                        {% endwith %}
+                    </div>
+                    <div class="flex justify-between mt-2 text-[10px] font-bold">
+                        <span class="text-emerald-600">{{ stats.executions.successful_30d }} SUCCESS</span>
+                        <span class="text-red-600">{{ stats.executions.failed_30d }} FAILED</span>
+                    </div>
+                </div>
+
+                <!-- Source Type Breakdown -->
+                <div class="bg-surface-container-lowest rounded-2xl p-6 shadow-sm border border-slate-100">
+                    <h3 class="text-sm font-bold text-slate-900 mb-2 uppercase tracking-wider">Source Type Breakdown</h3>
+                    <div class="text-2xl font-extrabold mb-4">{{ stats.jobs.total }} Jobs</div>
+                    <div class="relative pt-1">
+                        <div class="flex mb-2 items-center justify-between">
                             <div>
-                                <p class="recent-name">
-                                    <a href="{% url 'sync_jobs:job_detail' job_id=execution.job.id %}" class="text-decoration-none">{{ execution.job.name }}</a>
-                                </p>
-                                <p class="recent-meta">{{ execution.started_at|timesince }} ago | {{ execution.total_rows_synced|default:0|intcomma }} rows</p>
+                                <span class="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-primary bg-primary-fixed">Databases</span>
                             </div>
-                            <div class="d-flex align-items-center gap-2">
-                                {% if execution.status == 'completed' %}
-                                    <span class="badge bg-success">{{ execution.get_status_display }}</span>
-                                {% elif execution.status == 'failed' %}
-                                    <span class="badge bg-danger">{{ execution.get_status_display }}</span>
-                                {% elif execution.status == 'running' %}
-                                    <span class="badge bg-primary">{{ execution.get_status_display }}</span>
-                                {% else %}
-                                    <span class="badge bg-secondary">{{ execution.get_status_display }}</span>
-                                {% endif %}
-                                <a href="{% url 'sync_jobs:execution_detail' job_id=execution.job.id execution_id=execution.id %}" class="btn btn-sm btn-outline-primary">View</a>
+                            <div class="text-right">
+                                <span class="text-xs font-semibold inline-block text-primary">
+                                    {% with db=stats.source_breakdown.database total=stats.jobs.total %}
+                                        {% if total > 0 %}{% widthratio db total 100 %}{% else %}0{% endif %}%
+                                    {% endwith %}
+                                </span>
                             </div>
                         </div>
-                        {% endfor %}
-                    {% else %}
-                        <p class="text-muted text-center py-4 mb-0">No recent activity.</p>
-                    {% endif %}
+                        <div class="overflow-hidden h-2 mb-4 text-xs flex rounded bg-slate-100">
+                            {% with db=stats.source_breakdown.database total=stats.jobs.total %}
+                            <div class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-primary" style="width: {% if total > 0 %}{% widthratio db total 100 %}{% else %}0{% endif %}%"></div>
+                            {% endwith %}
+                        </div>
+                        
+                        <div class="flex mb-2 items-center justify-between">
+                            <div>
+                                <span class="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-on-tertiary-fixed-variant bg-tertiary-fixed">APIs</span>
+                            </div>
+                            <div class="text-right">
+                                <span class="text-xs font-semibold inline-block text-tertiary">
+                                    {% with api=stats.source_breakdown.api total=stats.jobs.total %}
+                                        {% if total > 0 %}{% widthratio api total 100 %}{% else %}0{% endif %}%
+                                    {% endwith %}
+                                </span>
+                            </div>
+                        </div>
+                        <div class="overflow-hidden h-2 mb-4 text-xs flex rounded bg-slate-100">
+                            {% with api=stats.source_breakdown.api total=stats.jobs.total %}
+                            <div class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-tertiary" style="width: {% if total > 0 %}{% widthratio api total 100 %}{% else %}0{% endif %}%"></div>
+                            {% endwith %}
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 </div>
 
-<div
-    id="dashboard-data"
-    data-successful-30d="{{ stats.executions.successful_30d|default:0 }}"
-    data-failed-30d="{{ stats.executions.failed_30d|default:0 }}"
-    data-api-jobs="{{ stats.source_breakdown.api|default:0 }}"
-    data-database-jobs="{{ stats.source_breakdown.database|default:0 }}"
-></div>
-{{ trends_json|json_script:"trends-data-json" }}
-{{ stats.database_usage|json_script:"db-usage-json" }}
-
 <script>
-// Data bootstrapping for charts
-let trendsData = [];
-try {
-    const trendsDataRaw = document.getElementById('trends-data-json');
-    trendsData = trendsDataRaw ? JSON.parse(trendsDataRaw.textContent) : [];
-} catch (e) {
-    console.error('Error parsing trends data:', e);
-    trendsData = [];
-}
-
-// Ensure we have data, or create empty structure
-if (!trendsData || trendsData.length === 0) {
-    const today = new Date();
-    trendsData = [];
-    for (let i = 29; i >= 0; i--) {
-        const date = new Date(today);
-        date.setDate(date.getDate() - i);
-        trendsData.push({
-            day: date.toISOString().split('T')[0],
-            total: 0,
-            successful: 0,
-            failed: 0,
-            rows_synced: 0
+document.addEventListener('DOMContentLoaded', function() {
+    // Utility for SVG Charts if Highcharts is missing
+    function renderSvgDonutChart(containerId, title, data) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        const total = data.reduce((sum, item) => sum + item.value, 0);
+        if (total === 0) {
+            container.innerHTML = '<div class="h-full flex items-center justify-center text-slate-400 italic text-xs">No data</div>';
+            return;
+        }
+        let currentAngle = 0;
+        let paths = '';
+        data.forEach(item => {
+            if (item.value === 0) return;
+            const sliceAngle = (item.value / total) * 360;
+            const x1 = 50 + 40 * Math.cos(Math.PI * (currentAngle - 90) / 180);
+            const y1 = 50 + 40 * Math.sin(Math.PI * (currentAngle - 90) / 180);
+            currentAngle += sliceAngle;
+            const x2 = 50 + 40 * Math.cos(Math.PI * (currentAngle - 90) / 180);
+            const y2 = 50 + 40 * Math.sin(Math.PI * (currentAngle - 90) / 180);
+            const largeArc = sliceAngle > 180 ? 1 : 0;
+            paths += `<path d="M 50 50 L ${x1} ${y1} A 40 40 0 ${largeArc} 1 ${x2} ${y2} Z" fill="${item.color}" />`;
         });
+        container.innerHTML = `
+            <div class="relative w-40 h-40 mx-auto">
+                <svg viewBox="0 0 100 100" class="w-full h-full">${paths}</svg>
+                <div class="absolute inset-0 flex flex-col items-center justify-center bg-white rounded-full m-8 shadow-inner">
+                    <span class="text-xs font-bold text-slate-400 uppercase tracking-tighter">${total}</span>
+                    <span class="text-[8px] text-slate-500 font-bold uppercase">${title.slice(0, 8)}</span>
+                </div>
+            </div>
+        `;
     }
-}
 
-const dateLabels = trendsData.map(t => {
-    const date = new Date(t.day);
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-});
-
-function renderChartFallback(elId, title, subtitle, bars, pieItems) {
-    const el = document.getElementById(elId);
-    if (!el) return;
-    const barsHtml = (bars || []).map(v => {
-        const safe = Math.max(8, Math.min(88, Number(v) || 8));
-        return `<div class="mini-bar" style="height:${safe}px;"></div>`;
-    }).join('');
-    const pieHtml = (pieItems || []).map(item => `
-        <div class="mini-pie-item">
-            <span><span class="mini-dot" style="background:${item.color}"></span>${item.label}</span>
-            <strong>${item.value}</strong>
-        </div>
-    `).join('');
-    el.innerHTML = `
-        <div class="chart-fallback">
-            <div class="chart-fallback-title">${title}</div>
-            <div>${subtitle}</div>
-            ${bars && bars.length ? `<div class="mini-bars">${barsHtml}</div>` : ''}
-            ${pieItems && pieItems.length ? `<div class="mini-pie-legend">${pieHtml}</div>` : ''}
-        </div>
-    `;
-}
-
-function renderSvgTrendChart(elId, labels, series) {
-    const el = document.getElementById(elId);
-    if (!el) return;
-    const w = 760;
-    const h = 300;
-    const p = { top: 22, right: 18, bottom: 34, left: 34 };
-    const innerW = w - p.left - p.right;
-    const innerH = h - p.top - p.bottom;
-    const allValues = series.flatMap(s => s.data || []);
-    const maxY = Math.max(...allValues, 1);
-    const n = Math.max(labels.length, 2);
-    const xAt = i => p.left + (i * innerW) / (n - 1);
-    const yAt = v => p.top + innerH - (Math.max(0, v) / maxY) * innerH;
-
-    const grid = Array.from({ length: 4 }).map((_, i) => {
-        const yy = p.top + (i * innerH) / 3;
-        return `<line x1="${p.left}" y1="${yy}" x2="${w - p.right}" y2="${yy}" stroke="#e5e7eb" stroke-width="1" />`;
-    }).join('');
-
-    const xTicks = labels
-        .filter((_, i) => i % Math.ceil(labels.length / 6 || 1) === 0 || i === labels.length - 1)
-        .map((label, i, arr) => {
-            const idx = Math.round((i * (labels.length - 1)) / Math.max(arr.length - 1, 1));
-            const xx = xAt(idx);
-            return `<text x="${xx}" y="${h - 10}" text-anchor="middle" fill="#6b7280" font-size="10">${label}</text>`;
-        }).join('');
-
-    const paths = series.map(s => {
-        const pts = (s.data || []).map((v, i) => `${xAt(i)},${yAt(v)}`).join(' ');
-        return `<polyline fill="none" stroke="${s.color}" stroke-width="2.5" points="${pts}" />`;
-    }).join('');
-
-    const legend = series.map((s, i) => `
-        <g transform="translate(${p.left + i * 130}, 12)">
-            <rect x="0" y="-8" width="10" height="10" rx="2" fill="${s.color}" />
-            <text x="16" y="0" fill="#475569" font-size="11">${s.name}</text>
-        </g>
-    `).join('');
-
-    el.innerHTML = `
-        <svg viewBox="0 0 ${w} ${h}" width="100%" height="100%" role="img" aria-label="Execution trend chart">
-            <rect x="0" y="0" width="${w}" height="${h}" fill="#ffffff"/>
-            ${grid}
-            ${paths}
-            ${legend}
-            ${xTicks}
-        </svg>
-    `;
-}
-
-function renderSvgDonutChart(elId, title, items) {
-    const el = document.getElementById(elId);
-    if (!el) return;
-    const total = items.reduce((a, b) => a + (Number(b.value) || 0), 0);
-    const safeTotal = total || 1;
-    let start = -90;
-    const cx = 110;
-    const cy = 115;
-    const r = 70;
-    const strokeW = 28;
-    const segs = items.map(item => {
-        const v = Number(item.value) || 0;
-        const angle = (v / safeTotal) * 360;
-        const dash = (angle / 360) * (2 * Math.PI * r);
-        const circ = 2 * Math.PI * r;
-        const seg = `
-            <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${item.color}" stroke-width="${strokeW}"
-                stroke-dasharray="${dash} ${circ - dash}" stroke-linecap="butt"
-                transform="rotate(${start} ${cx} ${cy})" />
-        `;
-        start += angle;
-        return seg;
-    }).join('');
-
-    const legend = items.map(item => `
-        <div class="mini-pie-item">
-            <span><span class="mini-dot" style="background:${item.color}"></span>${item.label}</span>
-            <strong>${item.value}</strong>
-        </div>
-    `).join('');
-
-    el.innerHTML = `
-        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;">
-            <svg viewBox="0 0 220 220" width="220" height="220" role="img" aria-label="${title}">
-                <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#e5e7eb" stroke-width="${strokeW}"></circle>
-                ${segs}
-                <text x="${cx}" y="${cy - 2}" text-anchor="middle" font-size="16" fill="#0f172a" font-weight="700">${total}</text>
-                <text x="${cx}" y="${cy + 16}" text-anchor="middle" font-size="11" fill="#64748b">Total</text>
-            </svg>
-            <div class="mini-pie-legend">${legend}</div>
-        </div>
-    `;
-}
-
-function renderSvgHorizontalBarChart(elId, items) {
-    const el = document.getElementById(elId);
-    if (!el || !items || !items.length) return;
-    const maxVal = Math.max(...items.map(i => Number(i.tables_synced || 0)), 1);
-    const w = 760;
-    const rowH = 40;
-    const h = Math.max(220, (items.length * rowH) + 36);
-    const xLabel = 16;
-    const xBar = 160;
-    const barMaxW = 520;
-    let y = 28;
-    const rows = items.map((it) => {
-        const v = Number(it.tables_synced || 0);
-        const barW = Math.max(10, (v / maxVal) * barMaxW);
-        const label = it.label || it.db_type || 'Unknown';
-        const row = `
-            <text x="${xLabel}" y="${y + 9}" fill="#334155" font-size="12" font-weight="600">${label}</text>
-            <rect x="${xBar}" y="${y}" width="${barMaxW}" height="12" rx="6" fill="#e5e7eb"></rect>
-            <rect x="${xBar}" y="${y}" width="${barW}" height="12" rx="6" fill="url(#usageGradient)"></rect>
-            <text x="${xBar + barMaxW + 10}" y="${y + 10}" fill="#475569" font-size="11">${v} tables</text>
-        `;
-        y += rowH;
-        return row;
-    }).join('');
-
-    el.innerHTML = `
-        <div class="ssr-chart-wrap">
-            <svg viewBox="0 0 ${w} ${h}" width="100%" height="100%" role="img" aria-label="Database usage chart">
-                <defs>
-                    <linearGradient id="usageGradient" x1="0" x2="1">
-                        <stop offset="0%" stop-color="#0284c7"></stop>
-                        <stop offset="100%" stop-color="#2563eb"></stop>
-                    </linearGradient>
-                </defs>
-                ${rows}
-            </svg>
-        </div>
-    `;
-}
-
-const hasHighcharts = typeof Highcharts !== 'undefined';
-let dbUsage = [];
-try {
-    const dbUsageRaw = document.getElementById('db-usage-json');
-    dbUsage = dbUsageRaw ? JSON.parse(dbUsageRaw.textContent) : [];
-} catch (e) {
-    dbUsage = [];
-}
-
-if (document.getElementById('databaseUsageChart') && dbUsage.length && hasHighcharts) {
-    try {
-        Highcharts.chart('databaseUsageChart', {
-            chart: { type: 'bar', backgroundColor: 'transparent' },
-            title: { text: '' },
-            credits: { enabled: false },
-            xAxis: { categories: dbUsage.map(d => d.label), title: { text: null } },
-            yAxis: { min: 0, allowDecimals: false, title: { text: 'Unique tables synced' } },
-            legend: { enabled: false },
-            tooltip: { pointFormat: '<b>{point.y}</b> tables synced' },
-            plotOptions: {
-                bar: {
-                    borderRadius: 6,
-                    colorByPoint: false,
-                    dataLabels: { enabled: true, format: '{y}' }
-                }
-            },
-            series: [{
-                name: 'Tables Synced',
-                color: '#0284c7',
-                data: dbUsage.map(d => d.tables_synced || 0)
-            }]
+    function renderSvgHorizontalBarChart(containerId, data) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        const maxVal = Math.max(...data.map(d => d.tables_synced), 1);
+        let content = '<div class="space-y-3">';
+        data.forEach(item => {
+            const width = (item.tables_synced / maxVal) * 100;
+            content += `
+                <div class="space-y-1">
+                    <div class="flex justify-between text-[10px] font-bold">
+                        <span>${item.label}</span>
+                        <span>${item.tables_synced}</span>
+                    </div>
+                    <div class="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                        <div class="bg-blue-500 h-full rounded-full" style="width: ${width}%"></div>
+                    </div>
+                </div>
+            `;
         });
-    } catch (e) {
+        content += '</div>';
+        container.innerHTML = content;
+    }
+
+    const hasHighcharts = typeof Highcharts !== 'undefined';
+    const dbUsage = [
+        {% for item in stats.database_usage %}{ label: "{{ item.label }}", tables_synced: {{ item.tables_synced }}, db_type: "{{ item.db_type }}" }{% if not forloop.last %},{% endif %}{% endfor %}
+    ];
+
+    if (document.getElementById('databaseUsageChart') && dbUsage.length) {
         renderSvgHorizontalBarChart('databaseUsageChart', dbUsage.slice(0, 6));
     }
-} else if (document.getElementById('databaseUsageChart') && dbUsage.length) {
-    renderSvgHorizontalBarChart('databaseUsageChart', dbUsage.slice(0, 6));
-}
 
-const dashboardDataEl = document.getElementById('dashboard-data');
-const successfulCount = Number(dashboardDataEl?.dataset?.successful30d || 0);
-const failedCount = Number(dashboardDataEl?.dataset?.failed30d || 0);
-if (document.getElementById('successPieChart') && hasHighcharts) {
-    try {
-        Highcharts.chart('successPieChart', {
-            chart: { type: 'pie', backgroundColor: 'transparent' },
-            title: { text: '' },
-            credits: { enabled: false },
-            tooltip: { pointFormat: '<b>{point.y}</b> ({point.percentage:.1f}%)' },
-            plotOptions: {
-                pie: {
-                    innerSize: '58%',
-                    dataLabels: { enabled: true, format: '{point.name}: {point.percentage:.1f}%' }
-                }
-            },
-            series: [{
-                name: 'Executions',
-                data: [
-                    { name: 'Successful', y: successfulCount, color: '#16a34a' },
-                    { name: 'Failed', y: failedCount, color: '#dc2626' }
-                ]
-            }]
-        });
-    } catch (e) {
-        renderSvgDonutChart('successPieChart', 'Execution outcomes', [
-            { label: 'Successful', value: successfulCount, color: '#16a34a' },
-            { label: 'Failed', value: failedCount, color: '#dc2626' }
-        ]);
-    }
-} else {
-    renderSvgDonutChart('successPieChart', 'Execution outcomes', [
-        { label: 'Successful', value: successfulCount, color: '#16a34a' },
-        { label: 'Failed', value: failedCount, color: '#dc2626' }
+    const successfulCount = {{ stats.executions.successful_30d|default:0 }};
+    const failedCount = {{ stats.executions.failed_30d|default:0 }};
+    renderSvgDonutChart('successPieChart', 'Executions', [
+        { label: 'Successful', value: successfulCount, color: '#10b981' },
+        { label: 'Failed', value: failedCount, color: '#ef4444' }
     ]);
-}
 
-const apiJobs = Number(dashboardDataEl?.dataset?.apiJobs || 0);
-const databaseJobs = Number(dashboardDataEl?.dataset?.databaseJobs || 0);
-if (document.getElementById('sourceTypeChart') && hasHighcharts) {
-    try {
-        Highcharts.chart('sourceTypeChart', {
-            chart: { type: 'pie', backgroundColor: 'transparent' },
-            title: { text: '' },
-            credits: { enabled: false },
-            tooltip: { pointFormat: '<b>{point.y}</b> ({point.percentage:.1f}%)' },
-            plotOptions: {
-                pie: {
-                    innerSize: '58%',
-                    dataLabels: { enabled: true, format: '{point.name}: {point.percentage:.1f}%' }
-                }
-            },
-            series: [{
-                name: 'Jobs',
-                data: [
-                    { name: 'Database', y: databaseJobs, color: '#2563eb' },
-                    { name: 'API', y: apiJobs, color: '#06b6d4' }
-                ]
-            }]
-        });
-    } catch (e) {
-        renderSvgDonutChart('sourceTypeChart', 'Source type mix', [
-            { label: 'Database', value: databaseJobs, color: '#2563eb' },
-            { label: 'API', value: apiJobs, color: '#06b6d4' }
-        ]);
-    }
-} else {
-    renderSvgDonutChart('sourceTypeChart', 'Source type mix', [
-        { label: 'Database', value: databaseJobs, color: '#2563eb' },
+    const databaseJobs = {{ stats.source_breakdown.database|default:0 }};
+    const apiJobs = {{ stats.source_breakdown.api|default:0 }};
+    renderSvgDonutChart('sourceTypeChart', 'Jobs', [
+        { label: 'Database', value: databaseJobs, color: '#3b82f6' },
         { label: 'API', value: apiJobs, color: '#06b6d4' }
     ]);
-}
-
-setInterval(function() {
-    location.reload();
-}, 30000);
+});
 </script>
 {% endblock %}

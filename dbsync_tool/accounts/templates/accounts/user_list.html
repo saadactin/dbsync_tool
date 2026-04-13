@@ -1,115 +1,134 @@
 {% extends 'base.html' %}
 {% load static %}
 
-{% block title %}User Management - DB Sync Tool{% endblock %}
+{% block title %}User Management | SyncArchitect{% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2>User Management</h2>
+<div class="flex-1 overflow-y-auto p-6 space-y-8 no-scrollbar">
+    <!-- Page Header -->
+    <div class="flex items-end justify-between">
+        <div>
+            <h1 class="text-3xl font-extrabold text-on-surface tracking-tight">User Management</h1>
+            <p class="text-on-surface-variant mt-1 font-medium">Manage access and roles for all workspace collaborators.</p>
+        </div>
         {% if user.userprofile.is_super_admin or user.userprofile.is_admin %}
-            <a href="{% url 'accounts:user_create' %}" class="btn btn-primary">+ Create User</a>
+        <a href="{% url 'accounts:user_create' %}" class="flex items-center gap-2 px-5 py-2.5 bg-primary text-white rounded-lg font-bold shadow-lg shadow-primary/20 hover:bg-primary-container transition-all no-underline">
+            <span class="material-symbols-outlined text-sm">person_add</span>
+            Create User
+        </a>
         {% endif %}
     </div>
 
-    {% if messages %}
-        {% for message in messages %}
-            <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
-                {{ message }}
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-            </div>
-        {% endfor %}
-    {% endif %}
-
-    <div class="card">
-        <div class="card-body">
-            <table class="table table-striped">
+    <!-- Users Table Card -->
+    <div class="bg-surface-container-lowest rounded-2xl overflow-hidden shadow-sm border border-slate-100">
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
                 <thead>
-                    <tr>
-                        <th>Username</th>
-                        <th>Email</th>
-                        <th>Role</th>
-                        <th>Tenant</th>
-                        <th>Date Joined</th>
-                        <th>Status</th>
-                        <th>Actions</th>
+                    <tr class="text-xs font-bold text-slate-400 uppercase tracking-widest bg-slate-50/50">
+                        <th class="px-6 py-4">User</th>
+                        <th class="px-6 py-4">Role</th>
+                        <th class="px-6 py-4">Tenant</th>
+                        <th class="px-6 py-4">Date Joined</th>
+                        <th class="px-6 py-4">Status</th>
+                        <th class="px-6 py-4 text-right">Actions</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody class="divide-y divide-slate-100">
                     {% for user_obj in users %}
-                    <tr>
-                        <td>{{ user_obj.username }}</td>
-                        <td>{{ user_obj.email|default:"—" }}</td>
-                        <td>
-                            <span class="badge 
-                                {% if user_obj.userprofile.role == 'super_admin' %}bg-danger
-                                {% elif user_obj.userprofile.role == 'admin' %}bg-primary
-                                {% elif user_obj.userprofile.role == 'operator' %}bg-success
-                                {% else %}bg-secondary
+                    <tr class="group hover:bg-blue-50/30 transition-colors">
+                        <td class="px-6 py-4">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-primary font-bold">
+                                    {{ user_obj.username|slice:":1"|upper }}
+                                </div>
+                                <div>
+                                    <div class="font-bold text-on-surface">{{ user_obj.username }}</div>
+                                    <div class="text-xs text-slate-500">{{ user_obj.email|default:"No email set" }}</div>
+                                </div>
+                            </div>
+                        </td>
+                        <td class="px-6 py-4">
+                            <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider
+                                {% if user_obj.userprofile.role == 'super_admin' %}bg-red-100 text-red-700
+                                {% elif user_obj.userprofile.role == 'admin' %}bg-blue-100 text-blue-700
+                                {% elif user_obj.userprofile.role == 'operator' %}bg-emerald-100 text-emerald-700
+                                {% else %}bg-slate-100 text-slate-600
                                 {% endif %}">
                                 {{ user_obj.userprofile.get_role_display }}
                             </span>
                         </td>
-                        <td>
-                            {% if user_obj.userprofile.tenant %}
-                                {{ user_obj.userprofile.tenant.username }}
-                            {% else %}
-                                <span class="text-muted">—</span>
-                            {% endif %}
+                        <td class="px-6 py-4">
+                            <div class="text-sm text-slate-600">
+                                {% if user_obj.userprofile.tenant %}
+                                    {{ user_obj.userprofile.tenant.username }}
+                                {% else %}
+                                    <span class="text-slate-300">—</span>
+                                {% endif %}
+                            </div>
                         </td>
-                        <td>{{ user_obj.date_joined|date:"M d, Y" }}</td>
-                        <td>
+                        <td class="px-6 py-4">
+                            <div class="text-sm text-slate-500">{{ user_obj.date_joined|date:"M d, Y" }}</div>
+                        </td>
+                        <td class="px-6 py-4">
                             {% if user_obj.is_active %}
-                                <span class="badge bg-success">Active</span>
+                            <div class="flex items-center gap-1.5 text-emerald-600 text-xs font-bold">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                Active
+                            </div>
                             {% else %}
-                                <span class="badge bg-secondary">Inactive</span>
+                            <div class="flex items-center gap-1.5 text-slate-400 text-xs font-bold">
+                                <span class="w-1.5 h-1.5 rounded-full bg-slate-300"></span>
+                                Inactive
+                            </div>
                             {% endif %}
                         </td>
-                        <td>
-                            <a href="{% url 'accounts:user_edit' user_obj.id %}" class="btn btn-sm btn-primary">Edit</a>
-                            {% if not user_obj.userprofile.is_super_admin %}
-                                <a href="{% url 'accounts:user_delete' user_obj.id %}" class="btn btn-sm btn-danger">Delete</a>
-                            {% endif %}
+                        <td class="px-6 py-4 text-right">
+                            <div class="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <a href="{% url 'accounts:user_edit' user_obj.id %}" class="p-2 text-slate-400 hover:text-primary hover:bg-primary/10 rounded-lg transition-all" title="Edit">
+                                    <span class="material-symbols-outlined text-sm">edit</span>
+                                </a>
+                                {% if not user_obj.userprofile.is_super_admin %}
+                                <a href="{% url 'accounts:user_delete' user_obj.id %}" class="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all" title="Delete">
+                                    <span class="material-symbols-outlined text-sm">delete</span>
+                                </a>
+                                {% endif %}
+                            </div>
                         </td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="7" class="text-center">No users found.</td>
+                        <td colspan="6" class="px-6 py-12 text-center">
+                            <div class="flex flex-col items-center gap-2">
+                                <span class="material-symbols-outlined text-4xl text-slate-300">group_off</span>
+                                <p class="text-slate-500 italic">No users found in this directory.</p>
+                            </div>
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
-
-            {% if is_paginated %}
-            <nav aria-label="User pagination">
-                <ul class="pagination justify-content-center">
-                    {% if page_obj.has_previous %}
-                        <li class="page-item">
-                            <a class="page-link" href="?page=1">First</a>
-                        </li>
-                        <li class="page-item">
-                            <a class="page-link" href="?page={{ page_obj.previous_page_number }}">Previous</a>
-                        </li>
-                    {% endif %}
-
-                    <li class="page-item active">
-                        <span class="page-link">
-                            Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
-                        </span>
-                    </li>
-
-                    {% if page_obj.has_next %}
-                        <li class="page-item">
-                            <a class="page-link" href="?page={{ page_obj.next_page_number }}">Next</a>
-                        </li>
-                        <li class="page-item">
-                            <a class="page-link" href="?page={{ page_obj.paginator.num_pages }}">Last</a>
-                        </li>
-                    {% endif %}
-                </ul>
-            </nav>
-            {% endif %}
         </div>
+
+        {% if is_paginated %}
+        <div class="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+            <div class="text-xs font-bold text-slate-500 uppercase tracking-widest">
+                Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+            </div>
+            <div class="flex gap-2">
+                {% if page_obj.has_previous %}
+                <a href="?page={{ page_obj.previous_page_number }}" class="p-2 bg-white border border-slate-200 rounded-lg hover:border-primary text-slate-600 transition-all no-underline flex items-center">
+                    <span class="material-symbols-outlined text-sm">chevron_left</span>
+                </a>
+                {% endif %}
+                
+                {% if page_obj.has_next %}
+                <a href="?page={{ page_obj.next_page_number }}" class="p-2 bg-white border border-slate-200 rounded-lg hover:border-primary text-slate-600 transition-all no-underline flex items-center">
+                    <span class="material-symbols-outlined text-sm">chevron_right</span>
+                </a>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 {% endblock %}

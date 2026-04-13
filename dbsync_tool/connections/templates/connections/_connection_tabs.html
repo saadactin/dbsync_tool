@@ -1,30 +1,58 @@
-<div class="connection-tabs-wrap mb-3">
-    <ul class="nav nav-pills connection-tabs">
-        <li class="nav-item">
-            <a class="nav-link {% if active_tab == 'databases' %}active{% endif %}" href="{% url 'connections:list' %}">
-                <i class="bi bi-database"></i>
-                <span>Databases{% if db_connections_count is not None %} ({{ db_connections_count }}){% endif %}</span>
-            </a>
-        </li>
-        <li class="nav-item">
-            <a class="nav-link {% if active_tab == 'apis' %}active{% endif %}" href="{% url 'connections:api_list' %}">
-                <i class="bi bi-cloud"></i>
-                <span>APIs{% if api_connections_count is not None %} ({{ api_connections_count }}){% endif %}</span>
-            </a>
-        </li>
-        <li class="nav-item">
-            <a class="nav-link {% if active_tab == 'flatfiles' %}active{% endif %}" href="{% url 'connections:file_source_list' %}">
-                <i class="bi bi-file-earmark-text"></i>
-                <span>Flat Files{% if file_sources_count is not None %} ({{ file_sources_count }}){% endif %}</span>
-            </a>
-        </li>
+<div class="mb-10">
+    <div class="flex flex-wrap items-center gap-2 p-1.5 bg-slate-200/50 backdrop-blur-sm rounded-2xl w-fit">
+        <!-- Databases Tab -->
+        <a href="{% url 'connections:list' %}" 
+           class="flex items-center gap-2.5 px-6 py-3 rounded-xl transition-all duration-300 no-underline group
+           {% if active_tab == 'databases' %}bg-primary text-white shadow-lg shadow-primary/20{% else %}text-slate-500 hover:text-slate-800 hover:bg-white/50{% endif %}">
+            <span class="material-symbols-outlined text-[20px] {% if active_tab == 'databases' %}filled{% endif %}">database</span>
+            <span class="text-sm font-bold tracking-tight">Databases</span>
+            {% if db_connections_count is not None %}
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-black uppercase
+                {% if active_tab == 'databases' %}bg-white/20 text-white{% else %}bg-slate-300 text-slate-600{% endif %}">
+                    {{ db_connections_count }}
+                </span>
+            {% endif %}
+        </a>
+
+        <!-- APIs Tab -->
+        <a href="{% url 'connections:api_list' %}" 
+           class="flex items-center gap-2.5 px-6 py-3 rounded-xl transition-all duration-300 no-underline group
+           {% if active_tab == 'apis' %}bg-primary text-white shadow-lg shadow-primary/20{% else %}text-slate-500 hover:text-slate-800 hover:bg-white/50{% endif %}">
+            <span class="material-symbols-outlined text-[20px] {% if active_tab == 'apis' %}filled{% endif %}">hub</span>
+            <span class="text-sm font-bold tracking-tight">APIs</span>
+            {% if api_connections_count is not None %}
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-black uppercase
+                {% if active_tab == 'apis' %}bg-white/20 text-white{% else %}bg-slate-300 text-slate-600{% endif %}">
+                    {{ api_connections_count }}
+                </span>
+            {% endif %}
+        </a>
+
+        <!-- Flat Files Tab -->
+        <a href="{% url 'connections:file_source_list' %}" 
+           class="flex items-center gap-2.5 px-6 py-3 rounded-xl transition-all duration-300 no-underline group
+           {% if active_tab == 'flatfiles' %}bg-primary text-white shadow-lg shadow-primary/20{% else %}text-slate-500 hover:text-slate-800 hover:bg-white/50{% endif %}">
+            <span class="material-symbols-outlined text-[20px] {% if active_tab == 'flatfiles' %}filled{% endif %}">description</span>
+            <span class="text-sm font-bold tracking-tight">Flat Files</span>
+            {% if file_sources_count is not None %}
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-black uppercase
+                {% if active_tab == 'flatfiles' %}bg-white/20 text-white{% else %}bg-slate-300 text-slate-600{% endif %}">
+                    {{ file_sources_count }}
+                </span>
+            {% endif %}
+        </a>
+
+        <!-- Vertical Divider -->
+        <div class="w-px h-6 bg-slate-300 mx-2"></div>
+
+        <!-- Add Connection Action -->
         {% if not user.userprofile.is_viewer %}
-        <li class="nav-item">
-            <a class="nav-link {% if active_tab == 'add' %}active{% endif %}" href="{% url 'connections:create_hub' %}">
-                <i class="bi bi-plus-circle"></i>
-                <span>Add Connection</span>
+            <a href="{% url 'connections:create_hub' %}" 
+               class="flex items-center gap-2.5 px-6 py-3 rounded-xl transition-all duration-300 no-underline group
+               {% if active_tab == 'add' %}bg-emerald-500 text-white shadow-lg shadow-emerald-500/20{% else %}text-emerald-600 hover:text-white hover:bg-emerald-500{% endif %}">
+                <span class="material-symbols-outlined text-[20px] {% if active_tab == 'add' %}filled{% endif %}">add_circle</span>
+                <span class="text-sm font-black tracking-wide uppercase">Add Connection</span>
             </a>
-        </li>
         {% endif %}
-    </ul>
+    </div>
 </div>

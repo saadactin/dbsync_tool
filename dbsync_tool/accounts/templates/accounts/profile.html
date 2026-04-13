@@ -1,312 +1,192 @@
 {% extends 'base.html' %}
 {% load static %}
 
-{% block title %}My Profile - DB Sync Tool{% endblock %}
-
-{% block extra_css %}
-<style>
-    .profile-header {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 2rem;
-        border-radius: 10px;
-        margin-bottom: 2rem;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    }
-    .profile-header.super-admin {
-        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-    }
-    .profile-header.admin {
-        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-    }
-    .profile-header.operator {
-        background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
-    }
-    .profile-header.viewer {
-        background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
-    }
-    .profile-avatar {
-        width: 100px;
-        height: 100px;
-        border-radius: 50%;
-        background: rgba(255, 255, 255, 0.2);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 3rem;
-        margin-bottom: 1rem;
-        border: 3px solid rgba(255, 255, 255, 0.3);
-    }
-    .profile-info-card {
-        border: none;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        border-radius: 10px;
-        margin-bottom: 1.5rem;
-    }
-    .profile-info-card .card-header {
-        background-color: #f8f9fa;
-        border-bottom: 2px solid #dee2e6;
-        font-weight: 600;
-        padding: 1rem 1.5rem;
-    }
-    .info-row {
-        padding: 0.75rem 1.5rem;
-        border-bottom: 1px solid #f0f0f0;
-    }
-    .info-row:last-child {
-        border-bottom: none;
-    }
-    .info-label {
-        font-weight: 600;
-        color: #495057;
-        min-width: 150px;
-    }
-    .info-value {
-        color: #212529;
-    }
-    .role-badge-large {
-        font-size: 1.1rem;
-        padding: 0.5rem 1rem;
-        border-radius: 20px;
-    }
-    .stats-card {
-        background: white;
-        border-radius: 10px;
-        padding: 1.5rem;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        text-align: center;
-    }
-    .stats-number {
-        font-size: 2rem;
-        font-weight: bold;
-        color: #667eea;
-    }
-    .stats-label {
-        color: #6c757d;
-        font-size: 0.9rem;
-        margin-top: 0.5rem;
-    }
-</style>
-{% endblock %}
+{% block title %}My Profile | SyncArchitect{% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    {% if user.is_authenticated and user.userprofile %}
-        {% if user.userprofile.is_super_admin %}
-            <div class="profile-header super-admin">
-        {% elif user.userprofile.is_admin %}
-            <div class="profile-header admin">
-        {% elif user.userprofile.is_operator %}
-            <div class="profile-header operator">
-        {% else %}
-            <div class="profile-header viewer">
-        {% endif %}
-    {% else %}
-        <div class="profile-header">
-    {% endif %}
-        <div class="d-flex align-items-center">
-            <div class="profile-avatar">
+<div class="flex-1 overflow-y-auto p-6 space-y-8 no-scrollbar bg-slate-50/50">
+    <!-- Page Header - Modern Hero Style -->
+    <div class="relative overflow-hidden rounded-3xl bg-gradient-to-br 
+        {% if user.userprofile.is_super_admin %}from-red-600 to-rose-400
+        {% elif user.userprofile.is_admin %}from-blue-600 to-indigo-400
+        {% elif user.userprofile.is_operator %}from-emerald-600 to-teal-400
+        {% else %}from-amber-500 to-orange-400
+        {% endif %} p-8 text-white shadow-xl shadow-blue-500/10">
+        
+        <!-- Animated Background Blur -->
+        <div class="absolute -right-20 -top-20 w-64 h-64 bg-white/20 rounded-full blur-3xl animate-pulse"></div>
+        <div class="absolute -left-20 -bottom-20 w-48 h-48 bg-black/10 rounded-full blur-2xl"></div>
+
+        <div class="relative flex flex-col md:flex-row items-center gap-6">
+            <!-- Profile Avatar -->
+            <div class="w-24 h-24 md:w-32 md:h-32 rounded-full bg-white/20 backdrop-blur-md border-4 border-white/30 flex items-center justify-center text-4xl md:text-5xl font-extrabold shadow-inner">
                 {% if user.first_name or user.last_name %}
                     {{ user.first_name|first|default:"" }}{{ user.last_name|first|default:"" }}
                 {% else %}
                     {{ user.username|first|upper }}
                 {% endif %}
             </div>
-            <div class="ms-4">
-                <h2 class="mb-2">{{ user.get_full_name|default:user.username }}</h2>
-                <p class="mb-1 opacity-75">{{ user.email|default:"No email provided" }}</p>
-                {% if user.is_authenticated and user.userprofile %}
-                    {% if user.userprofile.is_super_admin %}
-                        <span class="badge bg-danger role-badge-large">Super Admin</span>
-                    {% elif user.userprofile.is_admin %}
-                        <span class="badge bg-primary role-badge-large">Admin</span>
-                    {% elif user.userprofile.is_operator %}
-                        <span class="badge bg-info role-badge-large">Operator</span>
-                    {% else %}
-                        <span class="badge bg-secondary role-badge-large">Viewer</span>
-                    {% endif %}
-                {% endif %}
-            </div>
-        </div>
-    </div>
-    
-    <div class="row">
-        <div class="col-md-8">
-            <div class="card profile-info-card">
-                <div class="card-header">
-                    <h5 class="mb-0">Account Information</h5>
-                </div>
-                <div class="card-body p-0">
-                    <div class="info-row d-flex">
-                        <div class="info-label">Username:</div>
-                        <div class="info-value">{{ user.username }}</div>
-                    </div>
-                    <div class="info-row d-flex">
-                        <div class="info-label">Email:</div>
-                        <div class="info-value">{{ user.email|default:"Not provided" }}</div>
-                    </div>
-                    {% if user.first_name or user.last_name %}
-                    <div class="info-row d-flex">
-                        <div class="info-label">Full Name:</div>
-                        <div class="info-value">{{ user.get_full_name|default:"Not provided" }}</div>
-                    </div>
-                    {% endif %}
-                    <div class="info-row d-flex">
-                        <div class="info-label">Last Login:</div>
-                        <div class="info-value">
-                            {% if user.last_login %}
-                                {{ user.last_login|date:"F d, Y H:i" }}
-                            {% else %}
-                                <span class="text-muted">Never</span>
-                            {% endif %}
-                        </div>
-                    </div>
-                    <div class="info-row d-flex">
-                        <div class="info-label">Date Joined:</div>
-                        <div class="info-value">{{ user.date_joined|date:"F d, Y" }}</div>
-                    </div>
-                    <div class="info-row d-flex">
-                        <div class="info-label">Account Status:</div>
-                        <div class="info-value">
-                            {% if user.is_active %}
-                                <span class="badge bg-success">Active</span>
-                            {% else %}
-                                <span class="badge bg-danger">Inactive</span>
-                            {% endif %}
-                        </div>
-                    </div>
-                </div>
-            </div>
             
-            {% if user.is_authenticated and user.userprofile %}
-            <div class="card profile-info-card">
-                <div class="card-header">
-                    <h5 class="mb-0">Role & Permissions</h5>
+            <div class="text-center md:text-left flex-1">
+                <div class="flex flex-col md:flex-row md:items-center gap-3 mb-2">
+                    <h1 class="text-3xl md:text-4xl font-extrabold tracking-tight drop-shadow-sm">{{ user.get_full_name|default:user.username }}</h1>
+                    <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-white/20 backdrop-blur-sm border border-white/30 uppercase tracking-widest self-center md:self-auto">
+                        {{ user.userprofile.get_role_display }}
+                    </span>
                 </div>
-                <div class="card-body p-0">
-                    <div class="info-row d-flex">
-                        <div class="info-label">Role:</div>
-                        <div class="info-value">
-                            {% if user.userprofile.is_super_admin %}
-                                <span class="badge bg-danger">Super Admin</span>
-                            {% elif user.userprofile.is_admin %}
-                                <span class="badge bg-primary">Admin</span>
-                            {% elif user.userprofile.is_operator %}
-                                <span class="badge bg-info">Operator</span>
-                            {% else %}
-                                <span class="badge bg-secondary">Viewer</span>
-                            {% endif %}
-                        </div>
+                <div class="flex flex-wrap justify-center md:justify-start items-center gap-4 text-white/90 font-medium">
+                    <div class="flex items-center gap-1.5">
+                        <span class="material-symbols-outlined text-lg">mail</span>
+                        <span class="text-sm">{{ user.email|default:"No email set" }}</span>
                     </div>
-                    {% if user.userprofile.tenant %}
-                    <div class="info-row d-flex">
-                        <div class="info-label">Tenant:</div>
-                        <div class="info-value">{{ user.userprofile.tenant.username }}</div>
+                    <div class="flex items-center gap-1.5">
+                        <span class="material-symbols-outlined text-lg">calendar_today</span>
+                        <span class="text-sm">Joined {{ user.date_joined|date:"M Y" }}</span>
                     </div>
-                    {% else %}
-                    <div class="info-row d-flex">
-                        <div class="info-label">Tenant:</div>
-                        <div class="info-value">
-                            <span class="badge bg-warning">No Tenant (Super Admin)</span>
-                        </div>
-                    </div>
-                    {% endif %}
-                    <div class="info-row d-flex">
-                        <div class="info-label">Permissions:</div>
-                        <div class="info-value">
-                            {% if user.userprofile.is_super_admin %}
-                                <span class="badge bg-success me-1">Full Access</span>
-                                <span class="badge bg-success me-1">User Management</span>
-                                <span class="badge bg-success me-1">All Tenants</span>
-                            {% elif user.userprofile.is_admin %}
-                                <span class="badge bg-primary me-1">User Management</span>
-                                <span class="badge bg-primary me-1">Connections</span>
-                                <span class="badge bg-primary me-1">Sync Jobs</span>
-                            {% elif user.userprofile.is_operator %}
-                                <span class="badge bg-info me-1">Connections</span>
-                                <span class="badge bg-info me-1">Sync Jobs</span>
-                            {% else %}
-                                <span class="badge bg-secondary me-1">Read Only</span>
-                            {% endif %}
-                        </div>
-                    </div>
-                </div>
-            </div>
-            {% endif %}
-            
-            <div class="card profile-info-card">
-                <div class="card-header">
-                    <h5 class="mb-0">System Information</h5>
-                </div>
-                <div class="card-body p-0">
-                    <div class="info-row d-flex">
-                        <div class="info-label">Is Staff:</div>
-                        <div class="info-value">
-                            {% if user.is_staff %}
-                                <span class="badge bg-success">Yes</span>
-                            {% else %}
-                                <span class="badge bg-secondary">No</span>
-                            {% endif %}
-                        </div>
-                    </div>
-                    <div class="info-row d-flex">
-                        <div class="info-label">Is Superuser:</div>
-                        <div class="info-value">
-                            {% if user.is_superuser %}
-                                <span class="badge bg-danger">Yes</span>
-                            {% else %}
-                                <span class="badge bg-secondary">No</span>
-                            {% endif %}
-                        </div>
+                    <div class="flex items-center gap-1.5">
+                        <span class="material-symbols-outlined text-lg">{% if user.is_active %}verified{% else %}error{% endif %}</span>
+                        <span class="text-sm">{% if user.is_active %}Active Account{% else %}Inactive{% endif %}</span>
                     </div>
                 </div>
             </div>
         </div>
+    </div>
+
+    <!-- Main Grid Content -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 pb-12">
         
-        <div class="col-md-4">
-            <div class="card profile-info-card">
-                <div class="card-body">
-                    <h5 class="card-title mb-4">Quick Actions</h5>
-                    <div class="d-grid gap-2">
-                        <a href="{% url 'accounts:change_password' %}" class="btn btn-primary">
-                            <i class="bi bi-key"></i> Change Password
-                        </a>
-                        {% if user.is_authenticated and user.userprofile and user.userprofile.is_super_admin %}
-                            <a href="{% url 'accounts:user_list' %}" class="btn btn-outline-primary">
-                                <i class="bi bi-people"></i> Manage Users
-                            </a>
-                        {% endif %}
-                        <a href="{% url 'core:dashboard' %}" class="btn btn-outline-secondary">
-                            <i class="bi bi-speedometer2"></i> Go to Dashboard
-                        </a>
+        <!-- Left Column: Detailed Info -->
+        <div class="lg:col-span-2 space-y-8">
+            <!-- Account Details Card -->
+            <div class="bg-surface-container-lowest rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+                <div class="px-6 py-4 border-b border-slate-100 flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary text-xl">account_circle</span>
+                    <h2 class="text-lg font-bold tracking-tight">Account Information</h2>
+                </div>
+                <div class="p-0">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-slate-100">
+                        <div class="p-6 space-y-4">
+                            <div class="flex flex-col gap-1">
+                                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Username</span>
+                                <span class="text-sm font-semibold text-on-surface">{{ user.username }}</span>
+                            </div>
+                            <div class="flex flex-col gap-1">
+                                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Email Address</span>
+                                <span class="text-sm font-semibold text-on-surface">{{ user.email|default:"Not set" }}</span>
+                            </div>
+                            <div class="flex flex-col gap-1">
+                                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Full Name</span>
+                                <span class="text-sm font-semibold text-on-surface">{{ user.get_full_name|default:"Not specified" }}</span>
+                            </div>
+                        </div>
+                        <div class="p-6 space-y-4">
+                            <div class="flex flex-col gap-1">
+                                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Last Login</span>
+                                <span class="text-sm font-semibold text-on-surface">{% if user.last_login %}{{ user.last_login|date:"M d, Y H:i" }}{% else %}Never{% endif %}</span>
+                            </div>
+                            <div class="flex flex-col gap-1">
+                                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Member Since</span>
+                                <span class="text-sm font-semibold text-on-surface">{{ user.date_joined|date:"F d, Y" }}</span>
+                            </div>
+                            <div class="flex flex-col gap-1">
+                                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Tenant Context</span>
+                                <span class="text-sm font-semibold text-on-surface">
+                                    {% if user.userprofile.tenant %}{{ user.userprofile.tenant.username }}{% else %}Core/Platform{% endif %}
+                                </span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
-            
-            {% if user.is_authenticated and user.userprofile %}
-            <div class="card profile-info-card mt-3">
-                <div class="card-body">
-                    <h5 class="card-title mb-3">Account Statistics</h5>
-                    {% if user.userprofile.is_super_admin %}
-                        <div class="stats-card mb-3">
-                            <div class="stats-number text-danger">∞</div>
-                            <div class="stats-label">Unlimited Access</div>
+
+            <!-- Permissions Card -->
+            <div class="bg-surface-container-lowest rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+                <div class="px-6 py-4 border-b border-slate-100 flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary text-xl">key</span>
+                    <h2 class="text-lg font-bold tracking-tight">Permissions & Roles</h2>
+                </div>
+                <div class="p-6">
+                    <div class="mb-6">
+                        <div class="flex items-center gap-2 mb-4">
+                            <span class="material-symbols-outlined text-sm text-slate-400">shield</span>
+                            <span class="text-xs font-bold text-slate-500 uppercase tracking-widest">Effective Permissions</span>
                         </div>
-                        <p class="text-muted small mb-0">
-                            As Super Admin, you have full access to all features and can manage all users, connections, and sync jobs across all tenants.
-                        </p>
-                    {% else %}
-                        <div class="stats-card mb-3">
-                            <div class="stats-number">{{ user.userprofile.get_role_display }}</div>
-                            <div class="stats-label">Your Role</div>
+                        <div class="flex flex-wrap gap-2">
+                            {% if user.userprofile.is_super_admin %}
+                                <span class="px-3 py-1.5 rounded-lg bg-red-50 text-red-700 text-xs font-bold border border-red-100 italic">Full System Root</span>
+                                <span class="px-3 py-1.5 rounded-lg bg-red-50 text-red-700 text-xs font-bold border border-red-100">Cross-Tenant Access</span>
+                                <span class="px-3 py-1.5 rounded-lg bg-red-50 text-red-700 text-xs font-bold border border-red-100">User Orchestration</span>
+                            {% elif user.userprofile.is_admin %}
+                                <span class="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold border border-blue-100">Tenant Management</span>
+                                <span class="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold border border-blue-100">Configure Pipelines</span>
+                                <span class="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold border border-blue-100">Modify Connections</span>
+                            {% elif user.userprofile.is_operator %}
+                                <span class="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 text-xs font-bold border border-emerald-100">Run Sync Jobs</span>
+                                <span class="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 text-xs font-bold border border-emerald-100">View Telemetry</span>
+                            {% else %}
+                                <span class="px-3 py-1.5 rounded-lg bg-slate-50 text-slate-600 text-xs font-bold border border-slate-100">Read-Only View</span>
+                                <span class="px-3 py-1.5 rounded-lg bg-slate-50 text-slate-600 text-xs font-bold border border-slate-100">Audit Logs Access</span>
+                            {% endif %}
                         </div>
-                        <p class="text-muted small mb-0">
-                            Contact your administrator if you need additional permissions or have questions about your account.
-                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Column: Quick Actions & Specs -->
+        <div class="space-y-8">
+            <!-- Quick Actions -->
+            <div class="bg-surface-container-lowest rounded-2xl p-6 shadow-sm border border-slate-100">
+                <h2 class="text-sm font-bold text-slate-900 mb-6 uppercase tracking-wider">Security Actions</h2>
+                <div class="space-y-3">
+                    <a href="{% url 'accounts:change_password' %}" class="flex items-center justify-between w-full px-4 py-3 bg-primary text-white rounded-xl font-bold hover:bg-primary-container transition-all no-underline shadow-lg shadow-primary/20 group">
+                        <span class="flex items-center gap-3">
+                            <span class="material-symbols-outlined text-sm">lock_reset</span>
+                            Update Password
+                        </span>
+                        <span class="material-symbols-outlined text-sm group-hover:translate-x-1 transition-transform">chevron_right</span>
+                    </a>
+                    {% if user.userprofile.is_super_admin or user.userprofile.is_admin %}
+                    <a href="{% url 'accounts:user_list' %}" class="flex items-center justify-between w-full px-4 py-3 bg-slate-50 text-slate-700 rounded-xl font-bold hover:bg-slate-100 transition-all no-underline border border-slate-200 group">
+                        <span class="flex items-center gap-3">
+                            <span class="material-symbols-outlined text-sm">manage_accounts</span>
+                            Directory Management
+                        </span>
+                        <span class="material-symbols-outlined text-sm group-hover:translate-x-1 transition-transform">chevron_right</span>
+                    </a>
                     {% endif %}
                 </div>
             </div>
-            {% endif %}
+
+            <!-- Stats Card -->
+            <div class="bg-surface-container-lowest rounded-2xl p-8 shadow-sm border border-slate-100 text-center space-y-4">
+                <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-slate-50 text-primary border border-slate-100 mb-2">
+                    <span class="material-symbols-outlined text-3xl">{% if user.userprofile.is_super_admin %}hub{% else %}person{% endif %}</span>
+                </div>
+                <div>
+                    <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Accessibility Scope</h3>
+                    <div class="text-2xl font-black text-on-surface">
+                        {% if user.userprofile.is_super_admin %}Unrestricted{% else %}{{ user.userprofile.get_role_display }}{% endif %}
+                    </div>
+                </div>
+                <p class="text-xs text-slate-500 leading-relaxed px-2">
+                    {% if user.userprofile.is_super_admin %}
+                        Full sovereign access to the SyncArchitect ecosystem and underlying infrastructure infrastructure across all nodes.
+                    {% else %}
+                        Standard workspace access restricted to your assigned tenant and shared resources allowed by your role policy.
+                    {% endif %}
+                </p>
+                <div class="pt-4 border-t border-slate-50 flex items-center justify-center gap-8">
+                    <div class="text-center">
+                        <div class="text-lg font-bold text-on-surface">{% if user.is_staff %}YES{% else %}NO{% endif %}</div>
+                        <div class="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Staff Status</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="text-lg font-bold text-on-surface">{% if user.is_active %}Active{% else %}HOLD{% endif %}</div>
+                        <div class="text-[9px] font-bold text-slate-400 uppercase tracking-wider">System State</div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </div>

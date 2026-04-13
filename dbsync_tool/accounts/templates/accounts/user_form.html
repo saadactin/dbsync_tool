@@ -1,195 +1,193 @@
 {% extends 'base.html' %}
 {% load static %}
 
-{% block title %}{{ form_title }} - DB Sync Tool{% endblock %}
+{% block title %}{{ form_title }} | SyncArchitect{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Modern form control styling */
+    input[type="text"], input[type="email"], input[type="password"], select {
+        width: 100%;
+        padding: 0.625rem 0.875rem;
+        border-radius: 0.5rem;
+        border: 1px solid #e2e8f0;
+        background-color: #f8fafc;
+        font-size: 0.875rem;
+        transition: all 0.2s;
+        outline: none;
+    }
+    input:focus, select:focus {
+        border-color: #0c56d0;
+        background-color: #ffffff;
+        box-shadow: 0 0 0 3px rgba(12, 86, 208, 0.1);
+    }
+    .form-check-input {
+        width: 1.25rem !important;
+        height: 1.25rem !important;
+        margin-top: 0.25rem;
+        border-radius: 0.25rem !important;
+        border: 1px solid #e2e8f0 !important;
+        cursor: pointer;
+    }
+    .form-check-label {
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: #1e293b;
+        cursor: pointer;
+        padding-left: 0.5rem;
+    }
+</style>
+{% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <div class="card">
-        <div class="card-header">
-            <h3>{{ form_title }}</h3>
-        </div>
-        <div class="card-body">
-            {% if messages %}
-                {% for message in messages %}
-                    <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
-                        {{ message }}
-                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-                    </div>
-                {% endfor %}
-            {% endif %}
+<div class="flex-1 overflow-y-auto p-6 space-y-8 no-scrollbar bg-slate-50/50">
+    <!-- Breadcrumbs / Back Link -->
+    <div class="flex items-center gap-2 text-sm">
+        <a href="{% url 'accounts:user_list' %}" class="flex items-center gap-1 text-slate-500 hover:text-primary transition-colors no-underline font-medium">
+            <span class="material-symbols-outlined text-sm">arrow_back</span>
+            Back to Users
+        </a>
+    </div>
 
-            {% if form.non_field_errors %}
-                <div class="alert alert-danger">
-                    <ul class="mb-0">
+    <div class="max-w-2xl">
+        <!-- Page Header -->
+        <div class="mb-8">
+            <h1 class="text-3xl font-extrabold text-on-surface tracking-tight">{{ form_title }}</h1>
+            <p class="text-on-surface-variant mt-1 font-medium">Update account details, permissions, and security settings.</p>
+        </div>
+
+        <!-- Form Card -->
+        <div class="bg-surface-container-lowest rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+            <div class="p-8">
+                {% if form.non_field_errors %}
+                <div class="mb-6 p-4 bg-red-50 border-l-4 border-red-500 rounded-r-lg">
+                    <ul class="space-y-1">
                         {% for error in form.non_field_errors %}
-                            <li>{{ error }}</li>
+                        <li class="text-sm font-bold text-red-800 flex items-center gap-2">
+                            <span class="material-symbols-outlined text-sm">error</span>
+                            {{ error }}
+                        </li>
                         {% endfor %}
                     </ul>
                 </div>
-            {% endif %}
-
-            <form method="post">
-                {% csrf_token %}
-                
-                <div class="mb-3">
-                    <label for="{{ form.username.id_for_label }}" class="form-label">
-                        Username <span class="text-danger">*</span>
-                    </label>
-                    {{ form.username }}
-                    {% if form.username.help_text %}
-                        <div class="form-text">{{ form.username.help_text }}</div>
-                    {% endif %}
-                    {% if form.username.errors %}
-                        <div class="text-danger">
-                            {% for error in form.username.errors %}
-                                <div>{{ error }}</div>
-                            {% endfor %}
-                        </div>
-                    {% endif %}
-                </div>
-
-                <div class="mb-3">
-                    <label for="{{ form.email.id_for_label }}" class="form-label">Email</label>
-                    {{ form.email }}
-                    {% if form.email.help_text %}
-                        <div class="form-text">{{ form.email.help_text }}</div>
-                    {% endif %}
-                    {% if form.email.errors %}
-                        <div class="text-danger">
-                            {% for error in form.email.errors %}
-                                <div>{{ error }}</div>
-                            {% endfor %}
-                        </div>
-                    {% endif %}
-                </div>
-
-                {% if form.password1 %}
-                <div class="mb-3">
-                    <label for="{{ form.password1.id_for_label }}" class="form-label">
-                        Password <span class="text-danger">*</span>
-                    </label>
-                    {{ form.password1 }}
-                    {% if form.password1.help_text %}
-                        <div class="form-text">{{ form.password1.help_text }}</div>
-                    {% endif %}
-                    {% if form.password1.errors %}
-                        <div class="text-danger">
-                            {% for error in form.password1.errors %}
-                                <div>{{ error }}</div>
-                            {% endfor %}
-                        </div>
-                    {% endif %}
-                </div>
-
-                <div class="mb-3">
-                    <label for="{{ form.password2.id_for_label }}" class="form-label">
-                        Password Confirmation <span class="text-danger">*</span>
-                    </label>
-                    {{ form.password2 }}
-                    {% if form.password2.help_text %}
-                        <div class="form-text">{{ form.password2.help_text }}</div>
-                    {% endif %}
-                    {% if form.password2.errors %}
-                        <div class="text-danger">
-                            {% for error in form.password2.errors %}
-                                <div>{{ error }}</div>
-                            {% endfor %}
-                        </div>
-                    {% endif %}
-                </div>
                 {% endif %}
 
-                {% if form.new_password %}
-                <div class="mb-3">
-                    <label for="{{ form.new_password.id_for_label }}" class="form-label">New Password</label>
-                    {{ form.new_password }}
-                    {% if form.new_password.help_text %}
-                        <div class="form-text">{{ form.new_password.help_text }}</div>
-                    {% endif %}
-                    {% if form.new_password.errors %}
-                        <div class="text-danger">
-                            {% for error in form.new_password.errors %}
-                                <div>{{ error }}</div>
-                            {% endfor %}
+                <form method="post" class="space-y-6">
+                    {% csrf_token %}
+                    
+                    <!-- Basic Info Group -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div class="space-y-1.5">
+                            <label for="{{ form.username.id_for_label }}" class="text-sm font-bold text-slate-700">
+                                Username <span class="text-red-500">*</span>
+                            </label>
+                            {{ form.username }}
+                            {% if form.username.help_text %}
+                            <p class="text-[10px] text-slate-400 font-medium">{{ form.username.help_text }}</p>
+                            {% endif %}
+                            {% if form.username.errors %}
+                            <div class="text-xs font-bold text-red-500 mt-1">
+                                {% for error in form.username.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
                         </div>
-                    {% endif %}
-                </div>
 
-                <div class="mb-3">
-                    <label for="{{ form.confirm_password.id_for_label }}" class="form-label">Confirm New Password</label>
-                    {{ form.confirm_password }}
-                    {% if form.confirm_password.help_text %}
-                        <div class="form-text">{{ form.confirm_password.help_text }}</div>
-                    {% endif %}
-                    {% if form.confirm_password.errors %}
-                        <div class="text-danger">
-                            {% for error in form.confirm_password.errors %}
-                                <div>{{ error }}</div>
-                            {% endfor %}
+                        <div class="space-y-1.5">
+                            <label for="{{ form.email.id_for_label }}" class="text-sm font-bold text-slate-700">Email Address</label>
+                            {{ form.email }}
+                            {% if form.email.errors %}
+                            <div class="text-xs font-bold text-red-500 mt-1">
+                                {% for error in form.email.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
                         </div>
-                    {% endif %}
-                </div>
-                {% endif %}
+                    </div>
 
-                {% if form.role %}
-                <div class="mb-3">
-                    <label for="{{ form.role.id_for_label }}" class="form-label">
-                        Role <span class="text-danger">*</span>
-                    </label>
-                    {{ form.role }}
-                    {% if form.role.help_text %}
-                        <div class="form-text">{{ form.role.help_text }}</div>
-                    {% endif %}
-                    {% if form.role.errors %}
-                        <div class="text-danger">
-                            {% for error in form.role.errors %}
-                                <div>{{ error }}</div>
-                            {% endfor %}
+                    <!-- Password Group -->
+                    {% if form.password1 or form.new_password %}
+                    <div class="pt-4 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {% if form.password1 %}
+                        <div class="space-y-1.5">
+                            <label for="{{ form.password1.id_for_label }}" class="text-sm font-bold text-slate-700">
+                                Password <span class="text-red-500">*</span>
+                            </label>
+                            {{ form.password1 }}
+                            {% if form.password1.errors %}
+                            <div class="text-xs font-bold text-red-500 mt-1">
+                                {% for error in form.password1.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
                         </div>
-                    {% endif %}
-                </div>
-                {% endif %}
-
-                <div class="mb-3 form-check">
-                    {{ form.is_active }}
-                    <label class="form-check-label" for="{{ form.is_active.id_for_label }}">
-                        Is Active
-                    </label>
-                    {% if form.is_active.help_text %}
-                        <div class="form-text">{{ form.is_active.help_text }}</div>
-                    {% endif %}
-                    {% if form.is_active.errors %}
-                        <div class="text-danger">
-                            {% for error in form.is_active.errors %}
-                                <div>{{ error }}</div>
-                            {% endfor %}
+                        <div class="space-y-1.5">
+                            <label for="{{ form.password2.id_for_label }}" class="text-sm font-bold text-slate-700">Confirm Password</label>
+                            {{ form.password2 }}
                         </div>
-                    {% endif %}
-                </div>
+                        {% endif %}
 
-                <div class="mb-3 form-check">
-                    {{ form.is_staff }}
-                    <label class="form-check-label" for="{{ form.is_staff.id_for_label }}">
-                        Is Staff (Admin)
-                    </label>
-                    {% if form.is_staff.help_text %}
-                        <div class="form-text">{{ form.is_staff.help_text }}</div>
-                    {% endif %}
-                    {% if form.is_staff.errors %}
-                        <div class="text-danger">
-                            {% for error in form.is_staff.errors %}
-                                <div>{{ error }}</div>
-                            {% endfor %}
+                        {% if form.new_password %}
+                        <div class="space-y-1.5">
+                            <label for="{{ form.new_password.id_for_label }}" class="text-sm font-bold text-slate-700">New Password</label>
+                            {{ form.new_password }}
+                            {% if form.new_password.errors %}
+                            <div class="text-xs font-bold text-red-500 mt-1">
+                                {% for error in form.new_password.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
                         </div>
+                        <div class="space-y-1.5">
+                            <label for="{{ form.confirm_password.id_for_label }}" class="text-sm font-bold text-slate-700">Confirm New Password</label>
+                            {{ form.confirm_password }}
+                        </div>
+                        {% endif %}
+                    </div>
                     {% endif %}
-                </div>
 
-                <div class="d-flex gap-2">
-                    <button type="submit" class="btn btn-primary">{{ submit_button }}</button>
-                    <a href="{% url 'accounts:user_list' %}" class="btn btn-secondary">Cancel</a>
-                </div>
-            </form>
+                    <!-- Permissions Group -->
+                    <div class="pt-4 border-t border-slate-100 flex flex-col gap-4">
+                        {% if form.role %}
+                        <div class="space-y-1.5 max-w-xs">
+                            <label for="{{ form.role.id_for_label }}" class="text-sm font-bold text-slate-700">
+                                Assigned Role <span class="text-red-500">*</span>
+                            </label>
+                            {{ form.role }}
+                            {% if form.role.errors %}
+                            <div class="text-xs font-bold text-red-500 mt-1">
+                                {% for error in form.role.errors %}{{ error }}{% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+
+                        <div class="flex gap-8">
+                            <div class="flex items-start gap-2">
+                                {{ form.is_active }}
+                                <label class="form-check-label" for="{{ form.is_active.id_for_label }}">
+                                    Account Enabled
+                                    <p class="font-normal text-[10px] text-slate-400">Allow user to login to the system.</p>
+                                </label>
+                            </div>
+
+                            <div class="flex items-start gap-2">
+                                {{ form.is_staff }}
+                                <label class="form-check-label" for="{{ form.is_staff.id_for_label }}">
+                                    Staff Access
+                                    <p class="font-normal text-[10px] text-slate-400">Access to Django admin interface.</p>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Actions -->
+                    <div class="pt-8 border-t border-slate-100 flex items-center justify-end gap-3">
+                        <a href="{% url 'accounts:user_list' %}" class="px-6 py-2.5 text-slate-500 font-bold hover:text-slate-800 transition-colors no-underline">
+                            Cancel
+                        </a>
+                        <button type="submit" class="px-8 py-2.5 bg-primary text-white rounded-lg font-bold shadow-lg shadow-primary/20 hover:bg-primary-container active:scale-95 transition-all outline-none">
+                            {{ submit_button }}
+                        </button>
+                    </div>
+                </form>
+            </div>
         </div>
     </div>
 </div>

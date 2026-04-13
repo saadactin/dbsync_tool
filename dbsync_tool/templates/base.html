@@ -1,149 +1,237 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}DB Sync Tool{% endblock %}</title>
-    {% load static %}
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-    <link rel="stylesheet" href="{% static 'css/main.css' %}">
-    <link rel="stylesheet" href="{% static 'css/sidebar.css' %}">
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@100;200;300;400;500;600;700;800;900&family=Plus+Jakarta+Sans:ital,wght@0,200;0,300;0,400;0,500;0,600;0,700;0,800;1,200;1,300;1,400;1,500;1,600;1,700;1,800&display=swap" rel="stylesheet">
+    
+    <!-- Icons -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    
+    <!-- CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#0c56d0',
+                        secondary: '#475569',
+                        success: '#10b981',
+                        danger: '#ef4444',
+                        warning: '#f59e0b',
+                    },
+                    fontFamily: {
+                        sans: ['Plus Jakarta Sans', 'sans-serif'],
+                        headline: ['Outfit', 'sans-serif'],
+                    },
+                    dropShadow: {
+                        'glow': '0 0 15px rgba(12, 86, 208, 0.4)',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        :root {
+            --primary-color: #0c56d0;
+            --sidebar-width: 224px;
+        }
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: #f8fafc;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            display: inline-block;
+            vertical-align: middle;
+        }
+        .material-symbols-outlined.filled {
+            font-variation-settings: 'FILL' 1;
+        }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        .active-nav {
+            position: relative;
+        }
+        .active-nav::after {
+            content: '';
+            position: absolute;
+            right: 0;
+            top: 20%;
+            bottom: 20%;
+            width: 4px;
+            background: white;
+            border-radius: 4px 0 0 4px;
+        }
+    </style>
     {% block extra_css %}{% endblock %}
 </head>
-<body>
-    {% if user.is_authenticated and user.userprofile %}
-        {% if user.userprofile.is_viewer %}
-            <div class="alert alert-info alert-dismissible fade show" role="alert" style="position: fixed; top: 20px; right: 20px; z-index: 9999; min-width: 300px;">
-                <strong>Read-Only Mode:</strong> You are logged in as a Viewer. You can view data but cannot create, edit, or delete.
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-            </div>
-        {% endif %}
-    {% endif %}
-    
-    {% if messages %}
-        {% for message in messages %}
-            <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert" style="position: fixed; top: 20px; right: 20px; z-index: 9999; min-width: 300px;">
-                {{ message }}
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-            </div>
-        {% endfor %}
-    {% endif %}
+<body class="bg-gray-50 text-slate-900 antialiased">
     
     {% if user.is_authenticated %}
-    <div class="container-fluid">
-        <div class="row">
-            <!-- Sidebar -->
-            <nav class="sidebar col-md-3 col-lg-2 d-md-block">
-                <div class="sidebar-sticky">
-                    <div class="sidebar-header">
-                        <h4>DB Sync</h4>
-                    </div>
-                    <ul class="nav flex-column">
-                        {% url 'core:dashboard' as dashboard_url %}
-                        <li class="nav-item">
-                            <a class="nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{{ dashboard_url }}">
-                                <span class="nav-link-icon"><i class="bi bi-house-door"></i></span>
-                                <span class="nav-link-text">Dashboard</span>
-                            </a>
-                        </li>
-                        {% if user.is_authenticated and user.userprofile %}
-                            {% if user.userprofile.is_super_admin or user.userprofile.is_admin %}
-                                {% url 'accounts:user_list' as user_list_url %}
-                                <li class="nav-item">
-                                    <a class="nav-link {% if request.resolver_match.url_name == 'user_list' or request.resolver_match.url_name == 'user_create' or request.resolver_match.url_name == 'user_edit' %}active{% endif %}" href="{{ user_list_url }}">
-                                        <span class="nav-link-icon"><i class="bi bi-people"></i></span>
-                                        <span class="nav-link-text">User Management</span>
-                                    </a>
-                                </li>
-                            {% endif %}
-                            
-                            {% if not user.userprofile.is_viewer %}
-                                {% url 'connections:list' as connections_list_url %}
-                                <li class="nav-item">
-                                    <a class="nav-link {% if request.resolver_match.url_name == 'list' and request.resolver_match.app_name == 'connections' %}active{% endif %}" href="{{ connections_list_url }}">
-                                        <span class="nav-link-icon"><i class="bi bi-plug"></i></span>
-                                        <span class="nav-link-text">Connections</span>
-                                    </a>
-                                </li>
-                                {% url 'sync_jobs:list' as sync_jobs_list_url %}
-                                <li class="nav-item">
-                                    <a class="nav-link {% if request.resolver_match.url_name == 'list' and request.resolver_match.app_name == 'sync_jobs' %}active{% endif %}" href="{{ sync_jobs_list_url }}">
-                                        <span class="nav-link-icon"><i class="bi bi-arrow-repeat"></i></span>
-                                        <span class="nav-link-text">Sync Jobs</span>
-                                    </a>
-                                </li>
-                            {% else %}
-                                {% url 'connections:list' as connections_list_url %}
-                                <li class="nav-item">
-                                    <a class="nav-link {% if request.resolver_match.url_name == 'list' and request.resolver_match.app_name == 'connections' %}active{% endif %}" href="{{ connections_list_url }}">
-                                        <span class="nav-link-icon"><i class="bi bi-plug"></i></span>
-                                        <span class="nav-link-text">View Connections</span>
-                                    </a>
-                                </li>
-                                {% url 'sync_jobs:list' as sync_jobs_list_url %}
-                                <li class="nav-item">
-                                    <a class="nav-link {% if request.resolver_match.url_name == 'list' and request.resolver_match.app_name == 'sync_jobs' %}active{% endif %}" href="{{ sync_jobs_list_url }}">
-                                        <span class="nav-link-icon"><i class="bi bi-arrow-repeat"></i></span>
-                                        <span class="nav-link-text">View Jobs</span>
-                                    </a>
-                                </li>
-                            {% endif %}
-                        {% else %}
-                            {% url 'connections:list' as connections_list_url %}
-                            <li class="nav-item">
-                                <a class="nav-link {% if request.resolver_match.url_name == 'list' and request.resolver_match.app_name == 'connections' %}active{% endif %}" href="{{ connections_list_url }}">
-                                    <span class="nav-link-icon"><i class="bi bi-plug"></i></span>
-                                    <span class="nav-link-text">Connections</span>
-                                </a>
-                            </li>
-                            {% url 'sync_jobs:list' as sync_jobs_list_url %}
-                            <li class="nav-item">
-                                <a class="nav-link {% if request.resolver_match.url_name == 'list' and request.resolver_match.app_name == 'sync_jobs' %}active{% endif %}" href="{{ sync_jobs_list_url }}">
-                                    <span class="nav-link-icon"><i class="bi bi-arrow-repeat"></i></span>
-                                    <span class="nav-link-text">Sync Jobs</span>
-                                </a>
-                            </li>
-                        {% endif %}
-                        {% url 'accounts:profile' as profile_url %}
-                        <li class="nav-item profile-nav-item">
-                            <a class="nav-link {% if request.resolver_match.url_name == 'profile' or request.resolver_match.url_name == 'change_password' %}active{% endif %}" href="{{ profile_url }}">
-                                <span class="nav-link-icon"><i class="bi bi-person-circle"></i></span>
-                                <span class="nav-link-text">My Profile</span>
-                                {% if user.is_authenticated and user.userprofile %}
-                                    {% if user.userprofile.is_super_admin %}
-                                        <span class="badge bg-danger profile-badge">Super Admin</span>
-                                    {% elif user.userprofile.is_admin %}
-                                        <span class="badge bg-primary profile-badge">Admin</span>
-                                    {% elif user.userprofile.is_operator %}
-                                        <span class="badge bg-info profile-badge">Operator</span>
-                                    {% else %}
-                                        <span class="badge bg-secondary profile-badge">Viewer</span>
-                                    {% endif %}
-                                {% endif %}
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" href="{% url 'accounts:logout' %}">
-                                <span class="nav-link-icon"><i class="bi bi-box-arrow-right"></i></span>
-                                <span class="nav-link-text">Logout</span>
-                            </a>
-                        </li>
-                    </ul>
+    <!-- Modernized Sidebar - High Z-Index for absolute clickability -->
+    <nav class="fixed inset-y-0 left-0 z-[9999] w-56 bg-[#041b3c] shadow-2xl border-r border-white/5 flex flex-col transition-all duration-300 transform -translate-x-full md:translate-x-0 overflow-y-auto no-scrollbar pointer-events-auto">
+        <!-- Brand Header -->
+        <div class="px-4 py-8 border-b border-white/5 mb-6">
+            <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-lg bg-primary flex items-center justify-center shadow-lg shadow-primary/20">
+                    <span class="material-symbols-outlined text-white filled text-lg">sync_alt</span>
                 </div>
-            </nav>
-
-            <!-- Main content -->
-            <main class="main-content col-md-9 ms-sm-auto col-lg-10 px-md-4">
-                {% block content %}{% endblock %}
-            </main>
+                <div class="flex flex-col">
+                    <span class="text-base font-black text-white tracking-tighter leading-none font-headline">DB Sync</span>
+                </div>
+            </div>
         </div>
-    </div>
+
+        <!-- Navigation Links -->
+        <div class="flex-1 px-2.5 space-y-1">
+            {% url 'core:dashboard' as dashboard_url %}
+            <a href="{{ dashboard_url }}" class="flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all group no-underline
+                {% if request.resolver_match.url_name == 'dashboard' %}bg-primary text-white shadow-lg shadow-primary/20 active-nav{% else %}text-slate-400 hover:text-white hover:bg-white/5{% endif %}">
+                <span class="material-symbols-outlined text-[18px] {% if request.resolver_match.url_name == 'dashboard' %}filled{% endif %}">dashboard</span>
+                <span class="text-[13px] font-black tracking-wide whitespace-nowrap">Dashboard</span>
+            </a>
+
+            {% if user.is_authenticated and user.userprofile %}
+                {% if user.userprofile.is_super_admin or user.userprofile.is_admin %}
+                    {% url 'accounts:user_list' as user_list_url %}
+                    <a href="{{ user_list_url }}" class="flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all group no-underline
+                        {% if request.resolver_match.url_name == 'user_list' or request.resolver_match.url_name == 'user_create' or request.resolver_match.url_name == 'user_edit' %}bg-primary text-white shadow-lg shadow-primary/20 active-nav{% else %}text-slate-400 hover:text-white hover:bg-white/5{% endif %}">
+                        <span class="material-symbols-outlined text-[18px] {% if request.resolver_match.url_name == 'user_list' or request.resolver_match.url_name == 'user_create' or request.resolver_match.url_name == 'user_edit' %}filled{% endif %}">group</span>
+                        <span class="text-[13px] font-black tracking-wide whitespace-nowrap">User Management</span>
+                    </a>
+                {% endif %}
+                
+                {% if not user.userprofile.is_viewer %}
+                    {% url 'connections:list' as connections_list_url %}
+                    <a href="{{ connections_list_url }}" class="flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all group no-underline
+                        {% if request.resolver_match.url_name == 'list' and request.resolver_match.app_name == 'connections' %}bg-primary text-white shadow-lg shadow-primary/20 active-nav{% else %}text-slate-400 hover:text-white hover:bg-white/5{% endif %}">
+                        <span class="material-symbols-outlined text-[18px] {% if request.resolver_match.url_name == 'list' and request.resolver_match.app_name == 'connections' %}filled{% endif %}">hub</span>
+                        <span class="text-[13px] font-black tracking-wide whitespace-nowrap">Connections</span>
+                    </a>
+
+                    {% url 'sync_jobs:list' as sync_jobs_list_url %}
+                    <a href="{{ sync_jobs_list_url }}" class="flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all group no-underline
+                        {% if request.resolver_match.url_name == 'list' and request.resolver_match.app_name == 'sync_jobs' %}bg-primary text-white shadow-lg shadow-primary/20 active-nav{% else %}text-slate-400 hover:text-white hover:bg-white/5{% endif %}">
+                        <span class="material-symbols-outlined text-[18px] {% if request.resolver_match.url_name == 'list' and request.resolver_match.app_name == 'sync_jobs' %}filled{% endif %}">sync_saved_locally</span>
+                        <span class="text-[13px] font-black tracking-wide whitespace-nowrap">Sync Jobs</span>
+                    </a>
+                {% endif %}
+            {% endif %}
+        </div>
+
+        <!-- Footer Section (Profile & Logout) -->
+        <div class="p-2.5 mt-auto space-y-1 mb-4">
+            {% url 'accounts:profile' as profile_url %}
+            <a href="{{ profile_url }}" class="flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all group no-underline
+                {% if request.resolver_match.url_name == 'profile' or request.resolver_match.url_name == 'change_password' %}bg-primary text-white shadow-lg shadow-primary/20 active-nav{% else %}text-slate-400 hover:text-white hover:bg-white/5{% endif %}">
+                <span class="material-symbols-outlined text-[18px] {% if request.resolver_match.url_name == 'profile' %}filled{% endif %}">account_circle</span>
+                <div class="flex flex-col flex-1 min-w-0">
+                    <span class="text-[13px] font-black tracking-wide truncate">Profile</span>
+                    {% if user.is_authenticated and user.userprofile %}
+                        <span class="text-[8px] font-black uppercase tracking-widest text-blue-300/80 leading-none mt-1">
+                            {% if user.userprofile.is_super_admin %}Super Admin
+                            {% elif user.userprofile.is_admin %}Admin
+                            {% elif user.userprofile.is_operator %}Operator
+                            {% else %}Viewer{% endif %}
+                        </span>
+                    {% endif %}
+                </div>
+            </a>
+
+            <!-- Secure Logout Form -->
+            <form action="{% url 'accounts:logout' %}" method="post" class="w-full">
+                {% csrf_token %}
+                <button type="submit" class="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all text-red-400 hover:text-white hover:bg-red-500/20 border-none outline-none bg-transparent cursor-pointer group pointer-events-auto">
+                    <span class="material-symbols-outlined text-[18px] group-hover:filled">logout</span>
+                    <span class="text-[13px] font-black tracking-wide">Logout</span>
+                </button>
+            </form>
+        </div>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 md:ml-56 min-h-screen flex flex-col transition-all duration-300 relative">
+        <div class="flex-1 p-0">
+            {% block content %}{% endblock %}
+        </div>
+
+        <!-- Floating Chatbot Widget (Inside Main for Scope, but Fixed positioned) -->
+        <div x-data="{ open: false }" class="fixed bottom-8 right-8 z-[100] flex flex-col items-end gap-4">
+            <!-- Chat Popover -->
+            <div x-show="open" 
+                 x-transition:enter="transition ease-out duration-300"
+                 x-transition:enter-start="opacity-0 translate-y-4 scale-95"
+                 x-transition:enter-end="opacity-100 translate-y-0 scale-100"
+                 x-transition:leave="transition ease-in duration-200"
+                 x-transition:leave-start="opacity-100 translate-y-0 scale-100"
+                 x-transition:leave-end="opacity-0 translate-y-4 scale-95"
+                 class="w-80 md:w-96 bg-white/95 backdrop-blur-xl rounded-[2rem] shadow-2xl border border-slate-200 overflow-hidden mb-2"
+                 @click.outside="open = false"
+                 style="display: none;">
+                
+                <!-- Chat Header -->
+                <div class="bg-primary p-6 text-white flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-sm">
+                            <img src="{% static 'img/chatbot_avatar.png' %}" alt="Bot" class="w-7 h-7 object-contain" onerror="this.src='https://cdn-icons-png.flaticon.com/512/4712/4712035.png'">
+                        </div>
+                        <div>
+                            <h4 class="text-sm font-black uppercase tracking-widest leading-none">Syncro</h4>
+                            <span class="text-[10px] font-bold opacity-80 uppercase tracking-tighter">Intelligent Architect</span>
+                        </div>
+                    </div>
+                    <button @click="open = false" class="text-white/60 hover:text-white transition-colors">
+                        <span class="material-symbols-outlined">close</span>
+                    </button>
+                </div>
+
+                <!-- Chat Body -->
+                <div class="p-8 bg-slate-50/50 min-h-[160px] flex flex-col items-center justify-center text-center space-y-4">
+                    <div class="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center text-primary group">
+                        <span class="material-symbols-outlined text-4xl animate-pulse">forum</span>
+                    </div>
+                    <div>
+                        <h5 class="text-lg font-black text-slate-800">Hi, I'm Syncro!</h5>
+                        <p class="text-sm text-slate-500 font-medium leading-relaxed">
+                            I'm currently training to become your expert data companion. Soon I'll be here to help you architect and synchronize your pipelines with AI precision.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Chat Footer -->
+                <div class="p-4 bg-white border-t border-slate-100 flex justify-center">
+                    <span class="text-[9px] font-black text-slate-300 uppercase tracking-[0.2em]">Alpha Integration Phase</span>
+                </div>
+            </div>
+
+            <!-- Floating Toggle Button -->
+            <button @click="open = !open" 
+                    class="w-16 h-16 rounded-3xl bg-primary text-white shadow-2xl shadow-primary/30 flex items-center justify-center transition-all duration-300 transform hover:scale-110 active:scale-90 hover:rotate-3 group relative overflow-hidden">
+                <div class="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                <img src="{% static 'img/chatbot_avatar.png' %}" alt="Chat" class="w-10 h-10 object-contain group-hover:drop-shadow-glow transition-all" onerror="this.src='https://cdn-icons-png.flaticon.com/512/4712/4712035.png'">
+                
+                <!-- Notification Badge -->
+                <span class="absolute top-3 right-3 w-3 h-3 bg-emerald-400 border-2 border-primary rounded-full"></span>
+            </button>
+        </div>
+    </main>
     {% else %}
         {% block unauthenticated_content %}{% endblock %}
     {% endif %}
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Alpine.js for interactive components -->
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="{% static 'js/main.js' %}"></script>
     {% block extra_js %}{% endblock %}
 </body>

@@ -8,71 +8,102 @@
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid db-connections-page">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1>File Sources</h1>
-        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="window.history.back();">
-            <i class="bi bi-arrow-left"></i> Back
-        </button>
+<div class="file-sources-page pb-24">
+    <!-- Header Section -->
+    <div class="flex items-center justify-between mb-12 px-2">
+        <div>
+            <h1 class="text-4xl font-black text-slate-800 tracking-tight flex items-center gap-4">
+                <div class="w-14 h-14 bg-primary/10 rounded-2xl flex items-center justify-center">
+                    <span class="material-symbols-outlined text-4xl text-primary filled">description</span>
+                </div>
+                Flat File Sources
+            </h1>
+            <p class="text-slate-500 font-bold mt-2 ml-18">Map local and shared enterprise data repositories to the sync grid</p>
+        </div>
     </div>
 
-    {% include 'connections/_connection_tabs.html' %}
+    <div class="px-2">
+        {% include 'connections/_connection_tabs.html' with active_tab='flatfiles' %}
+    </div>
 
-    <div class="card">
-        <div class="card-body p-0">
+    <div class="bg-white rounded-[32px] border border-slate-200 shadow-2xl shadow-slate-200/50 overflow-hidden mx-2 transition-all duration-500">
+        <div class="p-0">
             {% if file_sources %}
-                <div class="table-responsive">
-                    <table class="table table-hover mb-0 table-modern">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
                         <thead>
-                            <tr>
-                                <th>Name</th>
-                                <th>Relative Path</th>
-                                <th>Delimiter</th>
-                                <th>Encoding</th>
-                                <th>Header</th>
-                                <th>Status</th>
-                                <th>Actions</th>
+                            <tr class="border-b border-slate-100 bg-slate-50/50">
+                                <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500">Resource Identifier</th>
+                                <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500">Infrastructure Path</th>
+                                <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500">Separator</th>
+                                <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500">Metadata</th>
+                                <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500 text-center">Availability</th>
+                                <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500 text-right">Actions</th>
                             </tr>
                         </thead>
-                        <tbody>
+                        <tbody class="divide-y divide-slate-50">
                             {% for source in file_sources %}
-                            <tr>
-                                <td>
-                                    <a href="{% url 'connections:file_source_detail' source.id %}" class="text-decoration-none fw-semibold">
+                            <tr class="hover:bg-slate-50/80 transition-all group/row">
+                                <td class="px-10 py-10">
+                                    <a href="{% url 'connections:file_source_detail' source.id %}" class="text-lg font-black text-primary hover:text-black hover:underline decoration-black decoration-2 underline-offset-4 transition-all no-underline block leading-tight">
                                         {{ source.name }}
                                     </a>
+                                    <span class="text-[10px] font-black uppercase text-slate-400 mt-1 block tracking-tighter">{{ source.encoding|default:"UTF-8"|upper }} DATA ENCODING</span>
                                 </td>
-                                <td><code>{{ source.relative_path }}</code></td>
-                                <td><code>{{ source.delimiter }}</code></td>
-                                <td>{{ source.encoding }}</td>
-                                <td>
+                                <td class="px-10 py-10">
+                                    <div class="flex items-center gap-2">
+                                        <span class="material-symbols-outlined text-[18px] text-slate-400">folder_zip</span>
+                                        <code class="text-sm font-bold text-slate-500 bg-slate-100 px-3 py-1 rounded-lg border border-slate-200/50">{{ source.relative_path }}</code>
+                                    </div>
+                                </td>
+                                <td class="px-10 py-10">
+                                    <code class="text-sm font-black text-slate-700 bg-white w-10 h-10 flex items-center justify-center rounded-xl border-2 border-slate-100 shadow-sm">
+                                        {{ source.delimiter|default:"," }}
+                                    </code>
+                                </td>
+                                <td class="px-10 py-10">
                                     {% if source.has_header %}
-                                        <span class="badge bg-info">Yes</span>
+                                        <div class="flex items-center gap-2 text-emerald-600">
+                                            <span class="material-symbols-outlined text-[18px] filled">inventory_2</span>
+                                            <span class="text-xs font-black uppercase tracking-wider">Header Tracked</span>
+                                        </div>
                                     {% else %}
-                                        <span class="badge bg-secondary">No</span>
+                                        <div class="flex items-center gap-2 text-slate-300">
+                                            <span class="material-symbols-outlined text-[18px]">tab_unselected</span>
+                                            <span class="text-xs font-black uppercase tracking-wider italic">Raw Stream</span>
+                                        </div>
                                     {% endif %}
                                 </td>
-                                <td>
+                                <td class="px-10 py-10 text-center">
                                     {% if source.is_active %}
-                                        <span class="badge bg-success">Active</span>
+                                        <span class="px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-600 border border-emerald-100">Synchronized</span>
                                     {% else %}
-                                        <span class="badge bg-secondary">Inactive</span>
+                                        <span class="px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-slate-100 text-slate-400 border border-slate-200">Offline</span>
                                     {% endif %}
                                 </td>
-                                <td>
-                                    <div class="btn-group action-btn-group" role="group">
-                                        <a href="{% url 'connections:file_source_detail' source.id %}" class="btn btn-sm btn-outline-primary action-btn" title="View">
-                                            <i class="bi bi-eye"></i>
+                                <td class="px-10 py-10 text-right">
+                                    <div class="flex items-center justify-end gap-3 translate-x-4">
+                                        <a href="{% url 'connections:file_source_detail' source.id %}" 
+                                           class="w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-sky-50 text-sky-600 border border-sky-100 hover:bg-sky-600 hover:text-white hover:shadow-lg hover:shadow-sky-600/20" 
+                                           title="Inspect Data Source">
+                                            <span class="material-symbols-outlined text-[20px] filled">visibility</span>
                                         </a>
                                         {% if not user.userprofile.is_viewer %}
-                                            <a href="{% url 'connections:file_source_update' source.id %}" class="btn btn-sm btn-outline-secondary action-btn" title="Edit">
-                                                <i class="bi bi-pencil"></i>
+                                            <a href="{% url 'connections:file_source_update' source.id %}" 
+                                               class="w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-600 hover:text-white hover:shadow-lg hover:shadow-indigo-600/20" 
+                                               title="Modify Path & Rules">
+                                                <span class="material-symbols-outlined text-[20px] filled">settings</span>
                                             </a>
-                                            <button type="button" class="btn btn-sm btn-outline-info test-file-source action-btn" data-source-id="{{ source.id }}" title="Test">
-                                                <i class="bi bi-bezier2"></i>
+                                            <button type="button" 
+                                                    class="w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-emerald-50 text-emerald-600 border border-emerald-100 hover:bg-emerald-600 hover:text-white hover:shadow-lg hover:shadow-emerald-600/20 test-file-source" 
+                                                    data-source-id="{{ source.id }}" 
+                                                    title="Verify Source Access">
+                                                <span class="material-symbols-outlined text-[20px] filled">quick_reference_all</span>
                                             </button>
-                                            <a href="{% url 'connections:file_source_delete' source.id %}" class="btn btn-sm btn-outline-danger action-btn" title="Delete">
-                                                <i class="bi bi-trash3"></i>
+                                            <a href="{% url 'connections:file_source_delete' source.id %}" 
+                                               class="w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-rose-50 text-rose-600 border border-rose-100 hover:bg-rose-600 hover:text-white hover:shadow-lg hover:shadow-rose-600/20" 
+                                               title="Remove Resource">
+                                                <span class="material-symbols-outlined text-[20px] filled">delete</span>
                                             </a>
                                         {% endif %}
                                     </div>
@@ -83,12 +114,16 @@
                     </table>
                 </div>
             {% else %}
-                <div class="text-center py-5">
-                    <h5 class="text-muted">No file sources found</h5>
-                    <p class="text-muted">Add a file source to use CSV files as sync input.</p>
+                <div class="p-24 text-center bg-slate-50/50">
+                    <div class="w-28 h-28 bg-white rounded-full flex items-center justify-center mx-auto mb-8 text-slate-200 shadow-xl">
+                        <span class="material-symbols-outlined text-7xl">folder_off</span>
+                    </div>
+                    <h3 class="text-3xl font-black text-slate-800 tracking-tight">Zero Data Files Configured</h3>
+                    <p class="text-slate-500 max-w-md mx-auto mt-4 text-lg font-medium leading-relaxed">Map enterprise CSV or JSON repositories to the SyncArchitect grid to enable seamless multi-source data ingestion.</p>
                     {% if not user.userprofile.is_viewer %}
-                        <a href="{% url 'connections:file_source_create' %}" class="btn btn-primary">
-                            <span>➕</span> Add File Source
+                        <a href="{% url 'connections:file_source_create' %}" class="inline-flex items-center gap-3 px-10 py-5 bg-primary text-white rounded-[24px] font-black uppercase tracking-widest text-sm shadow-2xl shadow-primary/30 hover:scale-105 transition-all mt-10 no-underline">
+                            <span class="material-symbols-outlined text-xl">add_circle</span>
+                            Register Data File
                         </a>
                     {% endif %}
                 </div>

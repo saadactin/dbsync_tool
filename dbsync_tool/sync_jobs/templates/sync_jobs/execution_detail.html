@@ -3,274 +3,332 @@
 {% load humanize %}
 {% load sync_jobs_tags %}
 
-{% block title %}Execution Detail - {{ execution.id }}{% endblock %}
+{% block title %}Execution Log: {{ execution.id|slice:":8" }} | SyncArchitect{% endblock %}
 
 {% block extra_css %}
 <style>
-    .execution-header {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 2rem;
-        border-radius: 8px;
-        margin-bottom: 2rem;
+    .animate-progress {
+        background-size: 30px 30px;
+        background-image: linear-gradient(
+            135deg,
+            rgba(255, 255, 255, 0.15) 25%,
+            transparent 25%,
+            transparent 50%,
+            rgba(255, 255, 255, 0.15) 50%,
+            rgba(255, 255, 255, 0.15) 75%,
+            transparent 75%,
+            transparent
+        );
+        animation: progress-animation 1s linear infinite;
     }
-    .stat-card {
-        background: white;
-        padding: 1.5rem;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        margin-bottom: 1rem;
-    }
-    .stat-label {
-        font-size: 0.875rem;
-        color: #6c757d;
-        margin-bottom: 0.5rem;
-    }
-    .stat-value {
-        font-size: 1.5rem;
-        font-weight: 600;
-    }
-    .log-row {
-        transition: background-color 0.2s;
-    }
-    .log-row:hover {
-        background-color: #f8f9fa;
-    }
-    .progress-bar-container {
-        height: 8px;
-        background-color: #e9ecef;
-        border-radius: 4px;
-        overflow: hidden;
-        margin-top: 0.5rem;
-    }
-    .progress-bar-fill {
-        height: 100%;
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-        transition: width 0.3s ease;
+    @keyframes progress-animation {
+        from { background-position: 0 0; }
+        to { background-position: 30px 0; }
     }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <!-- Breadcrumb -->
-    <nav aria-label="breadcrumb" class="mb-3">
-        <ol class="breadcrumb">
-            <li class="breadcrumb-item"><a href="{% url 'sync_jobs:list' %}">Sync Jobs</a></li>
-            <li class="breadcrumb-item"><a href="{% url 'sync_jobs:job_detail' job_id=job.id %}">{{ job.name }}</a></li>
-            <li class="breadcrumb-item active">Execution {{ execution.id|truncatechars:8 }}</li>
-        </ol>
-    </nav>
+<div class="flex-1 overflow-y-auto p-8 space-y-10 no-scrollbar bg-slate-50/50">
+    <!-- Breadcrumbs / Meta -->
+    <div class="flex items-center gap-3 text-sm font-bold text-slate-400">
+        <a href="{% url 'sync_jobs:list' %}" class="flex items-center gap-1 hover:text-primary transition-colors no-underline">
+            <span class="material-symbols-outlined text-[18px]">list</span>
+            Pipelines
+        </a>
+        <span class="text-slate-200">/</span>
+        <a href="{% url 'sync_jobs:job_detail' job_id=job.id %}" class="flex items-center gap-1 hover:text-primary transition-colors no-underline">
+            {{ job.name }}
+        </a>
+        <span class="text-slate-200">/</span>
+        <span class="text-slate-500">Execution Archive: {{ execution.id|slice:":8" }}</span>
+    </div>
 
     <!-- Execution Header -->
-    <div class="execution-header">
-        <div class="d-flex justify-content-between align-items-start">
-            <div>
-                <h2 class="mb-2">Execution Details</h2>
-                <p class="mb-0">
-                    <strong>Job:</strong> {{ job.name }}<br>
-                    <strong>Started:</strong> {{ execution.started_at|date:"Y-m-d H:i:s" }}<br>
-                    {% if execution.completed_at %}
-                        <strong>Completed:</strong> {{ execution.completed_at|date:"Y-m-d H:i:s" }}<br>
-                    {% endif %}
-                    {% if duration %}
-                        <strong>Duration:</strong> {{ duration|format_duration }}<br>
-                    {% endif %}
-                    {% if job.source_connection_type == 'api' and job.source_api_connection and job.source_api_connection.api_type == 'azure_devops' %}
-                        <strong>Azure DevOps:</strong>
-                        {{ job.source_api_connection.organization }}
-                        → ClickHouse {{ job.target_connection.database_name }}
-                    {% endif %}
-                </p>
-            </div>
-            <div class="text-end">
-                <span class="badge bg-{{ execution.status|status_badge_class }} fs-6 px-3 py-2">
-                    {{ execution.get_status_display }}
-                </span>
-                {% if execution.status == 'running' %}
-                    <div class="spinner-border spinner-border-sm text-white ms-2" role="status">
-                        <span class="visually-hidden">Loading...</span>
+    <div class="bg-surface-container-lowest rounded-3xl shadow-sm border border-slate-100 p-8 flex flex-col lg:flex-row lg:items-center justify-between gap-8">
+        <div class="space-y-4">
+            <div class="flex items-center gap-4">
+                <div class="w-14 h-14 rounded-2xl bg-primary/10 text-primary flex items-center justify-center">
+                    <span class="material-symbols-outlined text-3xl">analytics</span>
+                </div>
+                <div>
+                    <h1 class="text-3xl font-black text-on-surface tracking-tight">Execution Report</h1>
+                    <div class="flex items-center gap-2 mt-0.5">
+                        <span class="text-xs font-black text-slate-400 uppercase tracking-widest">Job:</span>
+                        <span class="text-xs font-black text-primary uppercase tracking-widest">{{ job.name }}</span>
                     </div>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-8">
+                <div class="flex items-center gap-3 px-5 py-2.5 rounded-2xl border
+                    {% if execution.status == 'pending' %}bg-slate-50 text-slate-500 border-slate-200
+                    {% elif execution.status == 'running' %}bg-blue-50 text-primary border-blue-200
+                    {% elif execution.status == 'completed' %}bg-emerald-50 text-emerald-600 border-emerald-200
+                    {% elif execution.status == 'failed' %}bg-red-50 text-red-600 border-red-200
+                    {% endif %} shadow-sm">
+                    <span class="w-2.5 h-2.5 rounded-full 
+                        {% if execution.status == 'pending' %}bg-slate-400
+                        {% elif execution.status == 'running' %}bg-primary animate-pulse
+                        {% elif execution.status == 'completed' %}bg-emerald-500
+                        {% elif execution.status == 'failed' %}bg-red-500
+                        {% endif %}">
+                    </span>
+                    <span class="text-base font-black uppercase tracking-wider">{{ execution.get_status_display }}</span>
+                    {% if execution.status == 'running' %}
+                        <span class="material-symbols-outlined animate-spin text-lg ml-1">sync</span>
+                    {% endif %}
+                </div>
+
+                <div class="flex flex-col">
+                    <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Initialization</span>
+                    <span class="text-sm font-bold text-slate-600 mt-1">{{ execution.started_at|date:"M d, Y H:i:s" }}</span>
+                </div>
+                
+                {% if execution.completed_at %}
+                <div class="flex flex-col">
+                    <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Termination</span>
+                    <span class="text-sm font-bold text-slate-600 mt-1">{{ execution.completed_at|date:"M d, Y H:i:s" }}</span>
+                </div>
+                {% endif %}
+
+                {% if duration %}
+                <div class="flex flex-col">
+                    <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Duration Cycle</span>
+                    <span class="text-sm font-bold text-slate-600 mt-1">{{ duration|format_duration }}</span>
+                </div>
                 {% endif %}
             </div>
         </div>
-    </div>
 
-    <!-- Execution Statistics -->
-    <div class="row mb-4">
-        <div class="col-md-3">
-            <div class="stat-card">
-                <div class="stat-label">Tables Progress</div>
-                <div class="stat-value">
-                    {% with completed_count=completed_logs.count total_count=logs.count %}
-                        {{ completed_count }}/{{ total_count }}
-                    {% endwith %}
-                </div>
-                <div class="progress-bar-container">
-                    {% with completed_count=completed_logs.count total_count=logs.count %}
-                        {% if total_count > 0 %}
-                            <div class="progress-bar-fill" 
-                                 style="width: {% widthratio completed_count total_count 100 %}%">
-                            </div>
-                        {% else %}
-                            <div class="progress-bar-fill" style="width: 0%"></div>
-                        {% endif %}
-                    {% endwith %}
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="stat-card">
-                <div class="stat-label">
-                    {% if job.sync_type == 'incremental' %}
-                        Rows Processed (Upserted)
-                    {% else %}
-                        Rows Synced
-                    {% endif %}
-                </div>
-                <div class="stat-value">{{ execution.total_rows_synced|intcomma }}</div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="stat-card">
-                <div class="stat-label">Completed Tables</div>
-                <div class="stat-value text-success">{{ completed_logs.count }}</div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="stat-card">
-                <div class="stat-label">Failed Tables</div>
-                <div class="stat-value text-danger">{{ failed_logs.count }}</div>
-            </div>
+        <div class="flex items-center gap-3">
+             <button class="flex items-center gap-2 px-6 py-3 bg-white border border-slate-200 text-slate-700 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-50 transition-all shadow-sm" onclick="exportLogs('csv')">
+                <span class="material-symbols-outlined text-lg">download</span>
+                Export CSV
+            </button>
+            <button class="flex items-center gap-2 px-6 py-3 bg-white border border-slate-200 text-slate-700 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-50 transition-all shadow-sm" onclick="exportLogs('json')">
+                <span class="material-symbols-outlined text-lg">data_object</span>
+                JSON
+            </button>
         </div>
     </div>
 
-    <!-- Error Message (if failed) -->
+    <!-- Error Summary (If failure exists) -->
     {% if execution.status == 'failed' and execution.error_message %}
-    <div class="alert alert-danger">
-        <strong>Error:</strong> {{ execution.error_message }}
+    <div class="bg-red-50 border border-red-100 p-6 rounded-3xl flex gap-4 items-start animate-fade-in">
+        <div class="p-2 rounded-xl bg-red-100 text-red-600">
+            <span class="material-symbols-outlined text-xl">error</span>
+        </div>
+        <div class="space-y-2">
+            <h5 class="text-sm font-black text-red-900 uppercase tracking-wide">Critical Execution Abort</h5>
+            <p class="text-sm text-red-700 font-medium leading-relaxed">{{ execution.error_message }}</p>
+        </div>
     </div>
     {% endif %}
 
-    <!-- Per-Table / Per-Endpoint Logs -->
-    <div class="card">
-        <div class="card-header d-flex justify-content-between align-items-center">
-            <h5 class="mb-0">{% if job.source_connection_type == 'api' %}Endpoint Sync Logs{% else %}Table Sync Logs{% endif %}</h5>
-            <div>
-                <button class="btn btn-sm btn-outline-primary" onclick="exportLogs('csv')">
-                    <i class="bi bi-download"></i> Export CSV
-                </button>
-                <button class="btn btn-sm btn-outline-primary" onclick="exportLogs('json')">
-                    <i class="bi bi-download"></i> Export JSON
-                </button>
+    <!-- Metric Cluster -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+        <!-- Tables Progress Card -->
+        <div class="bg-surface-container-lowest p-8 rounded-3xl shadow-sm border border-slate-100 flex flex-col justify-between space-y-4">
+             <div class="flex justify-between items-start">
+                <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Schema Objects</div>
+                <span class="material-symbols-outlined text-slate-300">account_tree</span>
+            </div>
+            {% with completed_count=completed_logs.count total_count=logs.count %}
+            <div class="flex items-baseline gap-1">
+                <span class="text-4xl font-black text-on-surface">{{ completed_count }}</span>
+                <span class="text-sm font-bold text-slate-400">/ {{ total_count }}</span>
+            </div>
+            
+            <div class="space-y-2">
+                <div class="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
+                    <div class="h-full bg-primary {% if execution.status == 'running' %}animate-progress{% endif %} transition-all duration-1000" 
+                         style="width: {% if total_count > 0 %}{% widthratio completed_count total_count 100 %}{% else %}0{% endif %}%"></div>
+                </div>
+                <div class="flex justify-between text-[9px] font-black text-slate-400 uppercase">
+                    <span>Progress</span>
+                    <span>{% if total_count > 0 %}{% widthratio completed_count total_count 100 %}{% else %}0{% endif %}%</span>
+                </div>
+            </div>
+            {% endwith %}
+        </div>
+
+        <!-- Rows Processed Card -->
+        <div class="bg-surface-container-lowest p-8 rounded-3xl shadow-sm border border-slate-100 flex flex-col justify-between">
+            <div class="flex justify-between items-start">
+                <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                    {% if job.sync_type == 'incremental' %}Rows Upserted{% else %}Rows Synced{% endif %}
+                </div>
+                <span class="material-symbols-outlined text-slate-300">dataset</span>
+            </div>
+            <div class="my-4">
+                <div class="text-4xl font-black text-on-surface">{{ execution.total_rows_synced|intcomma }}</div>
+                <div class="text-[10px] font-bold text-slate-400 uppercase mt-1 tracking-widest leading-none">Total Records Processed</div>
+            </div>
+            <div class="flex items-center gap-2 pt-2 border-t border-slate-50">
+                <span class="material-symbols-outlined text-xs text-emerald-500">trending_up</span>
+                <span class="text-[10px] font-bold text-slate-400 uppercase">Active Stream</span>
             </div>
         </div>
-        <div class="card-body">
-            <div class="table-responsive">
-                <table class="table table-hover">
-                    <thead>
-                        <tr>
-                            <th>Schema.Table</th>
-                            <th>Status</th>
-                            <th>Batches</th>
-                            <th>Rows Fetched</th>
-                            <th>
-                                {% if job.sync_type == 'incremental' %}
-                                    Rows Upserted
-                                {% else %}
-                                    Rows Inserted
-                                {% endif %}
-                            </th>
-                            <th>Duration</th>
-                            <th>Verification</th>
-                            <th>Error</th>
-                        </tr>
-                    </thead>
-                    <tbody id="logs-table-body">
-                        {% for log in logs %}
-                        <tr class="log-row" data-log-id="{{ log.id }}">
-                            <td>
-                                <strong>{{ log.schema_name }}.{{ log.table_name }}</strong>
-                            </td>
-                            <td>
-                                <span class="badge bg-{{ log.status|status_badge_class }}">
-                                    {{ log.get_status_display }}
-                                </span>
+
+        <!-- Health Pulse: Success -->
+        <div class="bg-surface-container-lowest p-8 rounded-3xl shadow-sm border border-slate-100 flex flex-col justify-between">
+            <div class="flex justify-between items-start">
+                <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Successful Entities</div>
+                <span class="material-symbols-outlined text-emerald-300">check_circle</span>
+            </div>
+            <div class="my-4">
+                <div class="text-4xl font-black text-emerald-600">{{ completed_logs.count }}</div>
+                <div class="text-[10px] font-bold text-slate-400 uppercase mt-1 tracking-widest leading-none">Verified Completions</div>
+            </div>
+            <div class="text-[10px] font-bold text-emerald-500 uppercase">Status: Healthy</div>
+        </div>
+
+        <!-- Health Pulse: Failures -->
+        <div class="bg-surface-container-lowest p-8 rounded-3xl shadow-sm border border-slate-100 flex flex-col justify-between">
+            <div class="flex justify-between items-start">
+                <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Entity Failures</div>
+                <span class="material-symbols-outlined text-red-300">report</span>
+            </div>
+            <div class="my-4">
+                <div class="text-4xl font-black {% if failed_logs.count > 0 %}text-red-500{% else %}text-on-surface{% endif %}">
+                    {{ failed_logs.count }}
+                </div>
+                <div class="text-[10px] font-bold text-slate-400 uppercase mt-1 tracking-widest leading-none">Critical Aborts</div>
+            </div>
+            <div class="text-[10px] font-bold {% if failed_logs.count > 0 %}text-red-400{% else %}text-slate-400{% endif %} uppercase tracking-widest">
+                {% if failed_logs.count > 0 %}Attention Required{% else %}No Issues Detected{% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Audit Log Grid -->
+    <div class="bg-surface-container-lowest rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+        <div class="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/20">
+            <div>
+                <h5 class="text-lg font-black text-on-surface">Data Hub Audit Trail</h5>
+                <p class="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1">Granular per-object sync telemetry</p>
+            </div>
+            <div class="flex items-center gap-4">
+                 <div class="relative">
+                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">search</span>
+                    <input type="text" placeholder="Filter entities..." class="pl-9 pr-4 py-2 rounded-xl bg-white border border-slate-200 text-xs font-bold focus:ring-2 focus:ring-primary/20 outline-none w-64">
+                </div>
+            </div>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-50/50">
+                        <th class="px-8 py-4">Context / Object</th>
+                        <th class="px-8 py-4">Life Cycle</th>
+                        <th class="px-8 py-4">Batches</th>
+                        <th class="px-8 py-4">Input Stream</th>
+                        <th class="px-8 py-4">{% if job.sync_type == 'incremental' %}Integrations{% else %}Insertions{% endif %}</th>
+                        <th class="px-8 py-4">Duration</th>
+                        <th class="px-8 py-4">Verification</th>
+                        <th class="px-8 py-4 text-right">Audit</th>
+                    </tr>
+                </thead>
+                <tbody id="logs-table-body" class="divide-y divide-slate-50">
+                    {% for log in logs %}
+                    <tr class="group hover:bg-slate-50 transition-all log-row" data-log-id="{{ log.id }}">
+                        <td class="px-8 py-5">
+                            <div class="flex flex-col">
+                                <span class="text-sm font-black text-on-surface">{{ log.table_name }}</span>
+                                <span class="text-[10px] font-bold text-slate-300 font-mono tracking-tighter uppercase">{{ log.schema_name }}</span>
+                            </div>
+                        </td>
+                        <td class="px-8 py-5">
+                            <div class="flex items-center gap-2">
+                                <span class="w-2 h-2 rounded-full bg-{{ log.status|status_badge_class }}"></span>
+                                <span class="text-[10px] font-black text-{{ log.status|status_badge_class }} uppercase tracking-widest">{{ log.get_status_display }}</span>
                                 {% if log.status == 'running' %}
-                                    <span class="spinner-border spinner-border-sm ms-1" role="status"></span>
+                                    <span class="material-symbols-outlined animate-spin text-xs text-primary">autorenew</span>
                                 {% endif %}
-                            </td>
-                            <td>{{ log.batch_number|default:"-" }}</td>
-                            <td>{{ log.rows_fetched|intcomma|default:"-" }}</td>
-                            <td>{{ log.rows_inserted|intcomma|default:"-" }}</td>
-                            <td>
-                                {% if log.status == 'running' and log.started_at %}
-                                    <span class="text-info">Running...</span>
-                                {% elif log.completed_at and log.started_at %}
-                                    {% with duration=log.completed_at|timeuntil:log.started_at %}
-                                        {{ duration|slice:":-4" }}
-                                    {% endwith %}
-                                {% elif log.verification_summary|slice:":9" == "Duration:" %}
-                                    {{ log.verification_summary }}
-                                {% else %}
-                                    -
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% if log.verification_summary %}
-                                    <span class="badge bg-info" title="{{ log.verification_summary }}">{{ log.verification_summary|truncatewords:8 }}</span>
-                                {% else %}
-                                    -
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% if log.error_message %}
-                                    <div class="small text-danger mb-1" title="{{ log.error_message }}">
-                                        {{ log.error_message|truncatechars:120 }}
-                                    </div>
-                                    <button class="btn btn-sm btn-outline-danger"
-                                            data-bs-toggle="modal"
-                                            data-bs-target="#errorModal{{ log.id }}">
-                                        View Error
-                                    </button>
-                                    <!-- Error Modal -->
-                                    <div class="modal fade" id="errorModal{{ log.id }}" tabindex="-1">
-                                        <div class="modal-dialog">
-                                            <div class="modal-content">
-                                                <div class="modal-header">
-                                                    <h5 class="modal-title">Error Details</h5>
-                                                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                        </td>
+                        <td class="px-8 py-5 text-sm font-bold text-slate-500">{{ log.batch_number|default:"-" }}</td>
+                        <td class="px-8 py-5 text-sm font-bold text-slate-600">{{ log.rows_fetched|intcomma|default:"0" }}</td>
+                        <td class="px-8 py-5 text-sm font-bold text-slate-600">{{ log.rows_inserted|intcomma|default:"0" }}</td>
+                        <td class="px-8 py-5 text-sm font-bold text-slate-500">
+                             {% if log.status == 'running' and log.started_at %}
+                                <span class="text-primary font-bold animate-pulse text-[10px] uppercase">Active...</span>
+                            {% elif log.completed_at and log.started_at %}
+                                {% with duration=log.completed_at|timeuntil:log.started_at %}
+                                    {{ duration|slice:":-4" }}
+                                {% endwith %}
+                            {% elif log.verification_summary|slice:":9" == "Duration:" %}
+                                {{ log.verification_summary }}
+                            {% else %}
+                                <span class="text-slate-300">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-8 py-5">
+                            {% if log.verification_summary %}
+                                <div class="px-2.5 py-1 bg-blue-50 text-blue-600 text-[9px] font-black uppercase tracking-widest rounded-lg border border-blue-100 inline-block" title="{{ log.verification_summary }}">
+                                    {{ log.verification_summary|truncatewords:8 }}
+                                </div>
+                            {% else %}
+                                <span class="text-slate-300">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-8 py-5 text-right">
+                             {% if log.error_message %}
+                                <button class="p-2 text-red-400 hover:text-red-600 transition-colors"
+                                        title="View Error Details"
+                                        data-bs-toggle="modal"
+                                        data-bs-target="#errorModal{{ log.id }}">
+                                    <span class="material-symbols-outlined text-[20px]">warning</span>
+                                </button>
+                                
+                                <!-- Error Modal -->
+                                <div class="modal fade" id="errorModal{{ log.id }}" tabindex="-1" aria-hidden="true">
+                                    <div class="modal-dialog modal-lg">
+                                        <div class="modal-content rounded-3xl border-none shadow-2xl overflow-hidden text-left">
+                                            <div class="bg-red-50 px-8 py-6 border-b border-red-100 flex justify-between items-center">
+                                                <div class="flex items-center gap-3">
+                                                    <span class="material-symbols-outlined text-red-500">report_problem</span>
+                                                    <h5 class="text-lg font-black text-red-900 tracking-tight">Audit Failure Details</h5>
                                                 </div>
-                                                <div class="modal-body">
-                                                    <pre class="bg-light p-3 rounded">{{ log.error_message }}</pre>
-                                                </div>
+                                                <button type="button" class="material-symbols-outlined text-red-400 hover:text-red-600 transition-all outline-none" data-bs-dismiss="modal">close</button>
+                                            </div>
+                                            <div class="p-8 space-y-4">
+                                                <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Target Object: {{ log.schema_name }}.{{ log.table_name }}</div>
+                                                <pre class="bg-slate-900 text-blue-100 p-6 rounded-2xl text-xs font-mono overflow-x-auto border-4 border-slate-800 leading-relaxed">{{ log.error_message }}</pre>
+                                            </div>
+                                            <div class="px-8 py-6 bg-slate-50 flex justify-end">
+                                                <button type="button" class="px-8 py-2.5 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest outline-none" data-bs-dismiss="modal">Close Audit</button>
                                             </div>
                                         </div>
                                     </div>
-                                {% else %}
-                                    -
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% empty %}
-                        <tr>
-                            <td colspan="8" class="text-center text-muted">
-                                No table logs available yet.
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+                                </div>
+                            {% else %}
+                                <span class="material-symbols-outlined text-slate-200 text-[20px]">check_circle</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="8" class="text-center py-20">
+                            <div class="w-16 h-16 rounded-full bg-slate-50 flex items-center justify-center mx-auto text-slate-200 mb-4">
+                                <span class="material-symbols-outlined text-4xl">folder_off</span>
+                            </div>
+                            <h6 class="text-base font-bold text-slate-900">Archive Sequence Null</h6>
+                            <p class="text-sm text-slate-500">Telemetry logs have not been generated for this sequence.</p>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
     </div>
 </div>
 
-<!-- Real-time update script -->
 {% if execution.status == 'running' %}
 <script src="{% static 'js/execution_detail.js' %}"></script>
 <script>
-    // Initialize real-time updates
     const executionId = '{{ execution.id }}';
     const jobId = '{{ job.id }}';
     initializeExecutionUpdates(executionId, jobId);
@@ -278,7 +336,6 @@
 {% endif %}
 
 <script>
-// Export logs functionality
 function exportLogs(format) {
     const logs = [
         {% for log in logs %}
@@ -296,50 +353,27 @@ function exportLogs(format) {
         {% endfor %}
     ];
     
-    if (format === 'csv') {
-        exportToCSV(logs);
-    } else if (format === 'json') {
-        exportToJSON(logs);
-    }
+    if (format === 'csv') { exportToCSV(logs); } 
+    else if (format === 'json') { exportToJSON(logs); }
 }
 
 function exportToCSV(logs) {
     const rowCountHeader = {% if job.sync_type == 'incremental' %}'Rows Upserted'{% else %}'Rows Inserted'{% endif %};
     const headers = ['Schema', 'Table', 'Status', 'Batches', 'Rows Fetched', rowCountHeader, 'Started At', 'Completed At', 'Error'];
-    const rows = logs.map(log => [
-        log.schema,
-        log.table,
-        log.status,
-        log.batches,
-        log.rowsFetched,
-        log.rowsInserted,
-        log.startedAt,
-        log.completedAt,
-        log.error
-    ]);
-    
-    const csvContent = [
-        headers.join(','),
-        ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n');
-    
+    const rows = logs.map(log => [log.schema, log.table, log.status, log.batches, log.rowsFetched, log.rowsInserted, log.startedAt, log.completedAt, log.error]);
+    const csvContent = [headers.join(','), ...rows.map(row => row.map(cell => `"${cell}"`).join(','))].join('\n');
     downloadFile(csvContent, 'execution_logs.csv', 'text/csv');
 }
 
 function exportToJSON(logs) {
-    const jsonContent = JSON.stringify(logs, null, 2);
-    downloadFile(jsonContent, 'execution_logs.json', 'application/json');
+    downloadFile(JSON.stringify(logs, null, 2), 'execution_logs.json', 'application/json');
 }
 
 function downloadFile(content, filename, mimeType) {
     const blob = new Blob([content], { type: mimeType });
     const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const a = document.createElement('a'); a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
     window.URL.revokeObjectURL(url);
 }
 </script>
