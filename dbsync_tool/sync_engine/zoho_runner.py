@@ -85,6 +85,11 @@ def _build_zoho_env(api_conn: APIConnection) -> dict:
     # Optional: prefix for all tables (we use the same default as the scripts)
     env.setdefault("PREFIX_ZOHO", "ZOHO_")
 
+    # Pass selected modules as JSON for the script to use
+    if api_conn.selected_modules:
+        import json
+        env["MODULES_TO_SYNC"] = json.dumps(api_conn.selected_modules)
+
     return env
 
 

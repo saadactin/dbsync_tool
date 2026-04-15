@@ -22,213 +22,256 @@
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <div class="row">
-        <div class="col-md-8 offset-md-2">
-            <div class="card">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h3>{% if object %}Edit{% else %}Create{% endif %} API Connection</h3>
-                    <div>
-                        <button type="button" class="btn btn-outline-secondary btn-sm me-2" onclick="window.history.back();">
-                            <i class="bi bi-arrow-left"></i> Back
-                        </button>
-                        <a href="{% url 'connections:create_hub' %}" class="btn btn-outline-primary btn-sm">
-                            <i class="bi bi-diagram-3"></i> Connection Type Hub
-                        </a>
-                    </div>
+<div class="api-connection-form-page min-h-screen pb-32">
+    <!-- Premium Header -->
+    <div class="px-8 pt-6 pb-8">
+        <div class="max-w-[1000px] mx-auto flex flex-col md:flex-row md:items-center justify-between gap-8">
+            <div class="flex items-center gap-4">
+                <div class="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-lg border border-slate-100 rotate-3 transition-transform hover:rotate-0">
+                    <span class="material-symbols-outlined text-2xl text-primary font-bold">{% if object %}edit_note{% else %}add_link{% endif %}</span>
                 </div>
-                <div class="card-body">
-                    {% if messages %}
-                        {% for message in messages %}
-                            <div class="alert alert-{{ message.tags }} alert-dismissible fade show">
-                                {{ message }}
-                                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                            </div>
-                        {% endfor %}
-                    {% endif %}
+                <div>
+                    <h1 class="text-2xl font-black text-slate-800 tracking-tight leading-none font-headline">{% if object %}Configure Node{% else %}Initialize Node{% endif %}</h1>
+                    <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-2">API Connection Parameters</p>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-3">
+                <a href="{% url 'connections:list' %}" class="w-10 h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 hover:text-primary hover:border-primary/20 hover:shadow-lg transition-all no-underline" title="Go Back">
+                    <span class="material-symbols-outlined text-lg">arrow_back</span>
+                </a>
+                <a href="{% url 'connections:create_hub' %}" class="flex items-center gap-3 px-5 py-3 bg-slate-900 text-white rounded-xl font-black uppercase tracking-widest text-[9px] shadow-xl shadow-slate-900/20 hover:scale-105 active:scale-95 transition-all no-underline">
+                    <span class="material-symbols-outlined text-base">apps</span>
+                    Hub
+                </a>
+            </div>
+        </div>
+    </div>
 
-                    <form method="post" id="api-connection-form" action="{% if object %}{% url 'connections:api_update' object.pk %}{% else %}{% url 'connections:api_create' %}{% endif %}">
+    <div class="px-8">
+        <div class="max-w-[1000px] mx-auto">
+            {% if messages %}
+                <div class="mb-8 space-y-4">
+                    {% for message in messages %}
+                        <div class="p-6 rounded-[2rem] {% if message.tags == 'success' %}bg-emerald-50 text-emerald-700 border border-emerald-100{% else %}bg-rose-50 text-rose-700 border border-rose-100{% endif %} flex items-center gap-4 shadow-sm animate-in fade-in slide-in-from-top-4 duration-500">
+                            <span class="material-symbols-outlined text-2xl">{% if message.tags == 'success' %}check_circle{% else %}error{% endif %}</span>
+                            <span class="font-bold text-sm">{{ message }}</span>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+
+            <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-200/40 overflow-hidden relative">
+                <div class="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-primary to-indigo-500"></div>
+                
+                <!-- Form Section -->
+                <div class="p-8 md:p-10">
+                    <form method="post" id="api-connection-form" class="space-y-8" action="{% if object %}{% url 'connections:api_update' object.pk %}{% else %}{% url 'connections:api_create' %}{% endif %}">
                         {% csrf_token %}
                         
-                        <div class="mb-3">
-                            <label for="{{ form.name.id_for_label }}" class="form-label">Connection Name *</label>
-                            {{ form.name }}
-                            {% if form.name.errors %}
-                                <div class="text-danger small">{{ form.name.errors }}</div>
-                            {% endif %}
-                            <small class="form-text text-muted">A friendly name to identify this connection</small>
-                        </div>
+                        <!-- Core Configuration Group -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                            <div class="space-y-3">
+                                <label for="{{ form.name.id_for_label }}" class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Identity Name *</label>
+                                <div class="relative group">
+                                    <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-300 group-focus-within:text-primary transition-colors">
+                                        <span class="material-symbols-outlined text-lg">badge</span>
+                                    </div>
+                                    <input type="text" name="{{ form.name.name }}" id="{{ form.name.id_for_label }}" value="{{ form.name.value|default:'' }}" class="w-full pl-12 pr-6 py-3.5 bg-white border border-slate-200 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all placeholder:text-slate-300 text-sm shadow-sm" placeholder="e.g. Sales Production Node">
+                                </div>
+                                {% if form.name.errors %}
+                                    <p class="text-[9px] font-bold text-rose-500 mt-2 ml-4 lowercase italic tracking-wide">! {{ form.name.errors.0 }}</p>
+                                {% endif %}
+                            </div>
 
-                        <div class="mb-3">
-                            <label for="{{ form.api_type.id_for_label }}" class="form-label">API Type *</label>
-                            {{ form.api_type }}
-                            {% if form.api_type.errors %}
-                                <div class="text-danger small">{{ form.api_type.errors }}</div>
-                            {% endif %}
-                        </div>
-
-                        <div id="zoho-fields" class="api-type-fields" style="display: none;">
-                            <div class="mb-3">
-                                <label for="{{ form.client_id.id_for_label }}" class="form-label">Client ID *</label>
-                                {{ form.client_id }}
-                                {% if form.client_id.errors %}
-                                    <div class="text-danger small">{{ form.client_id.errors }}</div>
+                            <div class="space-y-3">
+                                <label for="{{ form.api_type.id_for_label }}" class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Node Protocol *</label>
+                                <div class="relative group">
+                                    <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-300 group-focus-within:text-primary transition-colors">
+                                        <span class="material-symbols-outlined text-lg">protocol</span>
+                                    </div>
+                                    <select name="{{ form.api_type.name }}" id="{{ form.api_type.id_for_label }}" class="w-full pl-12 pr-6 py-3.5 bg-white border border-slate-200 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all appearance-none cursor-pointer text-sm shadow-sm">
+                                        {% for val, label in form.api_type.field.choices %}
+                                            <option value="{{ val }}" {% if form.api_type.value == val %}selected{% endif %}>{{ label }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    <div class="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none text-slate-300">
+                                        <span class="material-symbols-outlined text-lg">unfold_more</span>
+                                    </div>
+                                </div>
+                                {% if form.api_type.errors %}
+                                    <p class="text-[9px] font-bold text-rose-500 mt-2 ml-4">! {{ form.api_type.errors.0 }}</p>
                                 {% endif %}
-                                <small class="form-text text-muted">OAuth Client ID from Zoho</small>
-                            </div>
-                            <div class="mb-3">
-                                <label for="{{ form.client_secret.id_for_label }}" class="form-label">Client Secret {% if not object %}*{% endif %}</label>
-                                {{ form.client_secret }}
-                                {% if form.client_secret.errors %}
-                                    <div class="text-danger small">{{ form.client_secret.errors }}</div>
-                                {% endif %}
-                                <small class="form-text text-muted">{{ form.client_secret.help_text }}</small>
-                            </div>
-                            <div class="mb-3">
-                                <label for="{{ form.refresh_token.id_for_label }}" class="form-label">Refresh Token {% if not object %}*{% endif %}</label>
-                                {{ form.refresh_token }}
-                                {% if form.refresh_token.errors %}
-                                    <div class="text-danger small">{{ form.refresh_token.errors }}</div>
-                                {% endif %}
-                                <small class="form-text text-muted">{{ form.refresh_token.help_text }}</small>
-                            </div>
-                            <div class="mb-3">
-                                <label for="{{ form.api_domain.id_for_label }}" class="form-label">API Domain *</label>
-                                {{ form.api_domain }}
-                                {% if form.api_domain.errors %}
-                                    <div class="text-danger small">{{ form.api_domain.errors }}</div>
-                                {% endif %}
-                                <small class="form-text text-muted">Zoho API domain based on your region</small>
-                            </div>
-                            <div class="mb-3">
-                                <label for="{{ form.token_url.id_for_label }}" class="form-label">Token URL *</label>
-                                {{ form.token_url }}
-                                {% if form.token_url.errors %}
-                                    <div class="text-danger small">{{ form.token_url.errors }}</div>
-                                {% endif %}
-                                <small class="form-text text-muted">OAuth token URL (auto-populated based on API domain - read-only)</small>
                             </div>
                         </div>
 
-                        <div id="sap-fields" class="api-type-fields" style="display: none;">
-                            <div class="mb-3">
-                                <label for="{{ form.sap_base_url.id_for_label }}" class="form-label" title="Service Layer URL, e.g. https://server:50000/b1s/v2/">SAP Base URL *</label>
-                                {{ form.sap_base_url }}
-                                {% if form.sap_base_url.errors %}
-                                    <div class="text-danger small">{{ form.sap_base_url.errors }}</div>
-                                {% endif %}
-                                <small class="form-text text-muted">{{ form.sap_base_url.help_text }}</small>
+                        <!-- Dynamic Type Fields Container -->
+                        <div class="pt-6 border-t border-slate-100">
+                            <!-- Zoho Specific -->
+                            <div id="zoho-fields" class="api-type-fields space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500" style="display: none;">
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                    <div class="p-5 bg-slate-50/50 rounded-2xl border border-slate-100 space-y-3 group/field">
+                                        <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1 group-focus-within/field:text-primary transition-colors">Client ID *</label>
+                                        <input type="text" name="{{ form.client_id.name }}" id="{{ form.client_id.id_for_label }}" value="{{ form.client_id.value|default:'' }}" class="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl font-bold text-slate-800 shadow-sm focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all text-sm">
+                                    </div>
+                                    <div class="p-5 bg-slate-50/50 rounded-2xl border border-slate-100 space-y-3 group/field" x-data="{ show: false }">
+                                        <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1 group-focus-within/field:text-primary transition-colors">Client Secret *</label>
+                                        <div class="relative">
+                                            <input :type="show ? 'text' : 'password'" name="{{ form.client_secret.name }}" id="{{ form.client_secret.id_for_label }}" class="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl font-bold text-slate-800 shadow-sm focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all text-sm" placeholder="••••••••••••••••">
+                                            <button type="button" @click="show = !show" class="absolute inset-y-0 right-0 pr-5 flex items-center text-slate-400 hover:text-primary transition-colors border-none bg-transparent">
+                                                <span class="material-symbols-outlined text-lg" x-text="show ? 'visibility_off' : 'visibility'"></span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="p-6 bg-slate-50/50 rounded-3xl border border-slate-100 space-y-3">
+                                    <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Refresh Token *</label>
+                                    <textarea name="{{ form.refresh_token.name }}" id="{{ form.refresh_token.id_for_label }}" class="w-full px-6 py-4 bg-white border border-slate-200 rounded-2xl font-bold text-slate-800 shadow-sm focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all min-h-[100px] text-sm">{{ form.refresh_token.value|default:'' }}</textarea>
+                                </div>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                    <div class="p-5 bg-slate-50/50 rounded-2xl border border-slate-100 space-y-3">
+                                        <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">API Domain *</label>
+                                        {{ form.api_domain }}
+                                    </div>
+                                    <div class="p-5 bg-slate-50/50 rounded-2xl border border-slate-100 space-y-3">
+                                        <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Token End-point</label>
+                                        {{ form.token_url }}
+                                    </div>
+                                </div>
                             </div>
-                            <div class="mb-3">
-                                <label for="{{ form.sap_user_name.id_for_label }}" class="form-label" title="SAP B1 user login name (from B1 admin)">SAP User Name *</label>
-                                {{ form.sap_user_name }}
-                                {% if form.sap_user_name.errors %}
-                                    <div class="text-danger small">{{ form.sap_user_name.errors }}</div>
-                                {% endif %}
-                                <small class="form-text text-muted">{{ form.sap_user_name.help_text }}</small>
+
+                            <!-- SAP B1 Specific -->
+                            <div id="sap-fields" class="api-type-fields space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500" style="display: none;">
+                                <div class="p-6 bg-slate-50/50 rounded-3xl border border-slate-100 space-y-3">
+                                    <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Service Layer Base URL *</label>
+                                    <input type="url" name="{{ form.sap_base_url.name }}" id="{{ form.sap_base_url.id_for_label }}" value="{{ form.sap_base_url.value|default:'' }}" class="w-full px-6 py-4 bg-white border border-slate-200 rounded-2xl font-bold text-slate-800 shadow-sm focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all text-sm" placeholder="https://your-server:50000/b1s/v2/">
+                                </div>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                    <div class="p-5 bg-slate-50/50 rounded-2xl border border-slate-100 space-y-3">
+                                        <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">B1 User Identity *</label>
+                                        <input type="text" name="{{ form.sap_user_name.name }}" id="{{ form.sap_user_name.id_for_label }}" value="{{ form.sap_user_name.value|default:'' }}" class="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl font-bold text-slate-800 shadow-sm focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all text-sm">
+                                    </div>
+                                    <div class="p-5 bg-slate-50/50 rounded-2xl border border-slate-100 space-y-3">
+                                        <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Company Physical DB *</label>
+                                        <input type="text" name="{{ form.sap_company_db.name }}" id="{{ form.sap_company_db.id_for_label }}" value="{{ form.sap_company_db.value|default:'' }}" class="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl font-bold text-slate-800 shadow-sm focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all text-sm" placeholder="SBODEMOIN">
+                                    </div>
+                                </div>
+                                <div class="p-5 bg-slate-50/50 rounded-2xl border border-slate-100 space-y-3" x-data="{ show: false }">
+                                    <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Secure Password *</label>
+                                    <div class="relative">
+                                        <input :type="show ? 'text' : 'password'" name="{{ form.sap_password.name }}" id="{{ form.sap_password.id_for_label }}" class="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl font-bold text-slate-800 shadow-sm focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all text-sm" placeholder="••••••••••••••••">
+                                        <button type="button" @click="show = !show" class="absolute inset-y-0 right-0 pr-5 flex items-center text-slate-400 hover:text-primary transition-colors border-none bg-transparent">
+                                            <span class="material-symbols-outlined text-lg" x-text="show ? 'visibility_off' : 'visibility'"></span>
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
-                            <div class="mb-3">
-                                <label for="{{ form.sap_company_db.id_for_label }}" class="form-label" title="Company database name (e.g. SBODEMO)">SAP Company DB *</label>
-                                {{ form.sap_company_db }}
-                                {% if form.sap_company_db.errors %}
-                                    <div class="text-danger small">{{ form.sap_company_db.errors }}</div>
-                                {% endif %}
-                                <small class="form-text text-muted">{{ form.sap_company_db.help_text }}</small>
-                            </div>
-                            <div class="mb-3">
-                                <label for="{{ form.sap_password.id_for_label }}" class="form-label" title="SAP user password (stored encrypted; never logged)">SAP Password {% if not object %}*{% endif %}</label>
-                                {{ form.sap_password }}
-                                {% if form.sap_password.errors %}
-                                    <div class="text-danger small">{{ form.sap_password.errors }}</div>
-                                {% endif %}
-                                <small class="form-text text-muted">{{ form.sap_password.help_text }}</small>
+
+                            <!-- Azure DevOps Specific -->
+                            <div id="azure-devops-fields" class="api-type-fields space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500" style="display: none;">
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                    <div class="p-5 bg-slate-50/50 rounded-2xl border border-slate-100 space-y-3">
+                                        <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Org Namespace *</label>
+                                        <input type="text" name="{{ form.organization.name }}" id="{{ form.organization.id_for_label }}" value="{{ form.organization.value|default:'' }}" class="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl font-bold text-slate-800 shadow-sm focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all text-sm" placeholder="AcmeDevOps">
+                                    </div>
+                                    <div class="p-5 bg-slate-50/50 rounded-2xl border border-slate-100 space-y-3">
+                                        <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Azure Tenant ID *</label>
+                                        <input type="text" name="{{ form.azure_tenant_id.name }}" id="{{ form.azure_tenant_id.id_for_label }}" value="{{ form.azure_tenant_id.value|default:'' }}" class="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl font-bold text-slate-800 shadow-sm focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all text-sm" placeholder="GUID format">
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                    <div class="p-5 bg-slate-50/50 rounded-2xl border border-slate-100 space-y-3">
+                                        <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">App Client ID *</label>
+                                        <input type="text" name="{{ form.azure_client_id.name }}" id="{{ form.azure_client_id.id_for_label }}" value="{{ form.azure_client_id.value|default:'' }}" class="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl font-bold text-slate-800 shadow-sm focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all text-sm">
+                                    </div>
+                                    <div class="p-5 bg-slate-50/50 rounded-2xl border border-slate-100 space-y-3" x-data="{ show: false }">
+                                        <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Client Secret Key *</label>
+                                        <div class="relative">
+                                            <input :type="show ? 'text' : 'password'" name="{{ form.azure_client_secret.name }}" id="{{ form.azure_client_secret.id_for_label }}" class="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl font-bold text-slate-800 shadow-sm focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all text-sm" placeholder="••••••••••••••••">
+                                            <button type="button" @click="show = !show" class="absolute inset-y-0 right-0 pr-5 flex items-center text-slate-400 hover:text-primary transition-colors border-none bg-transparent">
+                                                <span class="material-symbols-outlined text-lg" x-text="show ? 'visibility_off' : 'visibility'"></span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
-                        <div id="azure-devops-fields" class="api-type-fields" style="display: none;">
-                            <div class="mb-3">
-                                <label for="{{ form.organization.id_for_label }}" class="form-label">Organization *</label>
-                                {{ form.organization }}
-                                {% if form.organization.errors %}
-                                    <div class="text-danger small">{{ form.organization.errors }}</div>
-                                {% endif %}
-                                <small class="form-text text-muted">Azure DevOps organization name (e.g. MyOrg)</small>
+                        <!-- Hidden Logic Fields -->
+                        <div class="hidden">
+                            {{ form.selected_modules }}
+                            {{ form.sap_endpoints }}
+                        </div>
+
+                        <!-- Connectivity Validation Area -->
+                        <div class="p-6 px-8 bg-slate-900 rounded-2xl shadow-xl space-y-6 relative overflow-hidden" id="test-connection-section">
+                            <div class="absolute top-0 right-0 w-64 h-64 bg-primary/20 rounded-full -translate-y-1/2 translate-x-1/2 blur-3xl"></div>
+                            <div class="flex items-center justify-between relative z-10">
+                                <div>
+                                    <h4 class="text-lg font-black text-white leading-tight font-headline">Relay Validation</h4>
+                                    <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-2">Verify node reachability before persistence</p>
+                                </div>
+                                <button type="button" id="test-connection-btn" class="flex items-center gap-4 px-6 py-3.5 bg-primary text-white border-none rounded-xl font-black uppercase tracking-widest text-[10px] shadow-lg shadow-primary/20 hover:scale-110 active:scale-95 transition-all outline-none group">
+                                    <span id="test-connection-text">Begin Handshake</span>
+                                    <span id="test-connection-spinner" class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin hidden"></span>
+                                    <span class="material-symbols-outlined text-lg group-hover:translate-x-1 transition-transform">bolt</span>
+                                </button>
                             </div>
-                            <div class="mb-3">
-                                <label for="{{ form.azure_tenant_id.id_for_label }}" class="form-label">Azure Tenant ID *</label>
-                                {{ form.azure_tenant_id }}
-                                {% if form.azure_tenant_id.errors %}
-                                    <div class="text-danger small">{{ form.azure_tenant_id.errors }}</div>
-                                {% endif %}
-                                <small class="form-text text-muted">Azure AD Tenant ID (GUID)</small>
+                            <div id="test-connection-message" class="relative z-10"></div>
+                        </div>
+
+                        <!-- Scoped Module Selection -->
+                        <div class="space-y-8 animate-in fade-in duration-700" id="module-selection-section" style="display: none;">
+                            <div class="flex items-center gap-4 ml-1">
+                                <div class="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+                                    <span class="material-symbols-outlined">account_tree</span>
+                                </div>
+                                <label class="text-[11px] font-black uppercase tracking-[0.2em] text-slate-800">Available Projects / Units *</label>
                             </div>
-                            <div class="mb-3">
-                                <label for="{{ form.azure_client_id.id_for_label }}" class="form-label">Azure Client ID *</label>
-                                {{ form.azure_client_id }}
-                                {% if form.azure_client_id.errors %}
-                                    <div class="text-danger small">{{ form.azure_client_id.errors }}</div>
-                                {% endif %}
-                                <small class="form-text text-muted">Application (client) ID from Azure App Registration</small>
+                            <div id="module-checkboxes" class="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                                <!-- Populated dynamically -->
                             </div>
-                            <div class="mb-3">
-                                <label for="{{ form.azure_client_secret.id_for_label }}" class="form-label">Azure Client Secret {% if not object %}*{% endif %}</label>
-                                {{ form.azure_client_secret }}
-                                {% if form.azure_client_secret.errors %}
-                                    <div class="text-danger small">{{ form.azure_client_secret.errors }}</div>
-                                {% endif %}
-                                <small class="form-text text-muted">{{ form.azure_client_secret.help_text }}</small>
+                            <div id="module-selection-error" class="p-6 bg-rose-50 text-rose-500 rounded-[2rem] text-[11px] font-black border border-rose-100 hidden"></div>
+                        </div>
+
+                        <!-- SAP Specific Endpoint Selection -->
+                        <div class="space-y-8 animate-in fade-in duration-700" id="endpoint-selection-section" style="display: none;">
+                            <div class="flex items-center justify-between ml-1">
+                                <div class="flex items-center gap-4">
+                                    <div class="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+                                        <span class="material-symbols-outlined">dynamic_feed</span>
+                                    </div>
+                                    <label class="text-[11px] font-black uppercase tracking-[0.2em] text-slate-800">SAP B1 Data Objects *</label>
+                                </div>
+                                <div class="flex items-center gap-3 px-5 py-2.5 bg-slate-100 rounded-2xl cursor-pointer hover:bg-slate-200 transition-colors group">
+                                    <input type="checkbox" id="sap-select-all-cb" class="w-5 h-5 rounded-lg border-slate-300 text-primary focus:ring-primary transition-all cursor-pointer">
+                                    <label class="text-[10px] font-black uppercase tracking-widest text-slate-600 cursor-pointer select-none" for="sap-select-all-cb">Select Global</label>
+                                </div>
+                            </div>
+                            <div id="endpoint-checkboxes" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar p-1">
+                                <!-- Populated dynamically -->
+                            </div>
+                            <div id="endpoint-selection-error" class="p-6 bg-rose-50 text-rose-500 rounded-[2rem] text-[11px] font-black border border-rose-100 hidden"></div>
+                        </div>
+
+                        <!-- Operational Status -->
+                        <div class="flex items-center gap-6 p-6 bg-slate-50/50 rounded-2xl border border-slate-100 group/status transition-colors hover:border-primary/20">
+                            <div class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" name="{{ form.is_active.name }}" id="{{ form.is_active.id_for_label }}" class="sr-only peer" {% if form.is_active.value %}checked{% endif %}>
+                                <div class="w-14 h-8 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-emerald-500 shadow-inner"></div>
+                            </div>
+                            <div>
+                                <label for="{{ form.is_active.id_for_label }}" class="text-sm font-black text-slate-800 leading-none">Operational Mode</label>
+                                <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-2">Node will be available for sync orchestration</p>
                             </div>
                         </div>
 
-                        {{ form.selected_modules }}
-                        {{ form.sap_endpoints }}
-
-                        <div class="mb-3" id="test-connection-section">
-                            <button type="button" id="test-connection-btn" class="btn btn-info">
-                                <span id="test-connection-text">Test Connection</span>
-                                <span id="test-connection-spinner" class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                        <!-- Submission Controls -->
+                        <div class="flex items-center justify-between pt-8 border-t border-slate-100">
+                            <a href="{% url 'connections:list' %}" class="px-8 py-3.5 text-slate-400 hover:text-slate-600 font-black uppercase tracking-widest text-[10px] transition-colors no-underline">Abort Session</a>
+                            <button type="submit" id="submit-btn" class="px-10 py-3.5 bg-primary text-white rounded-xl font-black uppercase tracking-widest text-[10px] shadow-xl shadow-primary/40 hover:scale-110 hover:rotate-1 active:scale-95 transition-all outline-none">
+                                {% if object %}Confirm Node Update{% else %}Provision Hub Node{% endif %}
                             </button>
-                            <div id="test-connection-message" class="mt-2"></div>
-                        </div>
-
-                        <div class="mb-3" id="module-selection-section" style="display: none;">
-                            <label class="form-label">Select Projects / Modules to Sync *</label>
-                            <div id="module-checkboxes" class="border rounded p-3" style="max-height: 300px; overflow-y: auto;">
-                                <!-- Module checkboxes will be populated here -->
-                            </div>
-                            <small class="form-text text-muted">Select one or more projects or modules to sync. At least one must be selected.</small>
-                            <div id="module-selection-error" class="text-danger small mt-1" style="display: none;"></div>
-                        </div>
-
-                        <div class="mb-3" id="endpoint-selection-section" style="display: none;">
-                            <label class="form-label">Select SAP Endpoints to Sync *</label>
-                            <div class="form-check mb-2">
-                                <input class="form-check-input" type="checkbox" id="sap-select-all-cb" title="Select or deselect all endpoints">
-                                <label class="form-check-label fw-semibold" for="sap-select-all-cb">Select all</label>
-                            </div>
-                            <div id="endpoint-checkboxes" class="border rounded p-3" style="max-height: 300px; overflow-y: auto;">
-                                <!-- Endpoint checkboxes will be populated here -->
-                            </div>
-                            <small class="form-text text-muted">Select one or more SAP document types to sync. At least one must be selected.</small>
-                            <div id="endpoint-selection-error" class="text-danger small mt-1" style="display: none;"></div>
-                            {% if form.sap_endpoints.errors %}
-                                <div class="alert alert-danger mt-2 mb-0">{% for err in form.sap_endpoints.errors %}{{ err }}{% endfor %}</div>
-                            {% endif %}
-                        </div>
-
-                        <div class="mb-3 form-check">
-                            {{ form.is_active }}
-                            <label class="form-check-label" for="{{ form.is_active.id_for_label }}">
-                                Active
-                            </label>
-                            {% if form.is_active.errors %}
-                                <div class="text-danger small">{{ form.is_active.errors }}</div>
-                            {% endif %}
-                        </div>
-
-                        <div class="d-flex justify-content-between">
-                            <a href="{% url 'connections:api_list' %}" class="btn btn-secondary">Cancel</a>
-                            <button type="submit" class="btn btn-primary" id="submit-btn">{% if object %}Update{% else %}Create{% endif %} Connection</button>
                         </div>
                     </form>
                 </div>
@@ -236,4 +279,21 @@
         </div>
     </div>
 </div>
+
+<style>
+    /* Styling for dynamic form controls injected by Django/Alpine */
+    input[type="text"], input[type="password"], input[type="url"], input[type="email"], select, textarea {
+        @apply w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all placeholder:text-slate-300 text-sm shadow-sm;
+    }
+    
+    .custom-scrollbar::-webkit-scrollbar {
+        width: 6px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+        @apply bg-transparent;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+        @apply bg-slate-200 rounded-full hover:bg-slate-300 transition-colors;
+    }
+</style>
 {% endblock %}

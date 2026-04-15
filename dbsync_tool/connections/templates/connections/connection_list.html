@@ -8,179 +8,212 @@
 {% endblock %}
 
 {% block content %}
-<div class="db-connections-page pb-24" x-data="{ activeGroup: null }">
-    <!-- Header Section -->
-    <div class="flex items-center justify-between mb-12 px-2">
-        <div>
-            <h1 class="text-4xl font-black text-slate-800 tracking-tight flex items-center gap-4">
-                <div class="w-14 h-14 bg-primary/10 rounded-2x flex items-center justify-center">
-                    <span class="material-symbols-outlined text-4xl text-primary filled">database</span>
-                </div>
-                Database Connections
-            </h1>
-            <p class="text-slate-500 font-bold mt-2 ml-18">Enterprise-grade infrastructure auditing and orchestration</p>
-        </div>
-    </div>
-
-    <div class="px-2">
-        {% include 'connections/_connection_tabs.html' with active_tab='databases' %}
-    </div>
-
-    {% if grouped_list and total_connections > 0 %}
-        <div class="grid gap-8 px-2">
-            {% for group in grouped_list %}
-                {% if group.connections %}
-                    <div class="bg-white rounded-[32px] border border-slate-200 shadow-2xl shadow-slate-200/50 overflow-hidden transition-all duration-500"
-                         :class="activeGroup === '{{ group.type }}' ? 'ring-4 ring-primary/5 border-primary/20 bg-slate-50/20' : ''">
-                        
-                        <!-- Premium Drawer Header -->
-                        <button @click="activeGroup = (activeGroup === '{{ group.type }}' ? null : '{{ group.type }}')"
-                                class="w-full flex items-center justify-between p-10 bg-white hover:bg-slate-50 transition-all border-none outline-none group text-left">
-                            <div class="flex items-center gap-6">
-                                <div class="w-18 h-18 rounded-[24px] bg-slate-100 flex items-center justify-center transition-all group-hover:bg-primary/10 group-hover:scale-105">
-                                    <span class="db-type-icon db-type-{{ group.type }} text-3xl"></span>
-                                </div>
-                                <div>
-                                    <h3 class="text-2xl font-black text-slate-800 tracking-tight">{{ group.name }}</h3>
-                                    <span class="text-xs font-black uppercase tracking-[0.2em] text-slate-400 mt-1 block">Active Data Nodes</span>
-                                </div>
-                            </div>
-                            <div class="flex items-center gap-6">
-                                <div class="flex flex-col items-end">
-                                    <span class="px-4 py-1.5 bg-primary text-white rounded-full text-xs font-black tracking-wide shadow-lg shadow-primary/20">
-                                        {{ group.count }} Connection{{ group.count|pluralize }}
-                                    </span>
-                                </div>
-                                <div class="w-10 h-10 rounded-full bg-slate-50 flex items-center justify-center text-slate-400 group-hover:text-primary transition-all shadow-sm"
-                                     :class="activeGroup === '{{ group.type }}' ? 'rotate-180 bg-primary/10' : ''">
-                                    <span class="material-symbols-outlined">expand_more</span>
-                                </div>
-                            </div>
-                        </button>
-
-                        <!-- Drawer Body -->
-                        <div x-show="activeGroup === '{{ group.type }}'" 
-                             x-collapse
-                             x-cloak
-                             class="border-t border-slate-100 bg-white">
-                            <div class="overflow-x-auto">
-                                <table class="w-full text-left border-collapse">
-                                    <thead>
-                                        <tr class="border-b border-slate-100 bg-slate-50/50">
-                                            <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500">Infrastructure Identity</th>
-                                            <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500">Host / IP Node</th>
-                                            <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500">Catalog Name</th>
-                                            <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500 text-center">Health Status</th>
-                                            <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500">Verification Audit</th>
-                                            {% if not user.userprofile.is_viewer %}
-                                                <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500 text-right">Actions</th>
-                                            {% endif %}
-                                        </tr>
-                                    </thead>
-                                    <tbody class="divide-y divide-slate-50">
-                                        {% for connection in group.connections %}
-                                        <tr class="hover:bg-slate-50/80 transition-all group/row">
-                                            <td class="px-10 py-10">
-                                                <a href="{% url 'connections:detail' connection.id %}" class="text-lg font-black text-primary hover:text-black hover:underline decoration-black decoration-2 underline-offset-4 transition-all no-underline block leading-tight">
-                                                    {{ connection.name }}
-                                                </a>
-                                                <div class="flex items-center gap-1.5 mt-1">
-                                                    <span class="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-black uppercase text-slate-500">Port {{ connection.port }}</span>
-                                                    <span class="w-1 h-1 rounded-full bg-slate-300"></span>
-                                                    <span class="text-[10px] font-black uppercase text-slate-400">Standard Relay</span>
-                                                </div>
-                                            </td>
-                                            <td class="px-10 py-10">
-                                                <div class="flex flex-col gap-1">
-                                                    <div class="flex items-center gap-2 text-slate-700">
-                                                        <span class="material-symbols-outlined text-[18px] text-slate-400">dns</span>
-                                                        <span class="text-sm font-bold truncate max-w-[180px]">{{ connection.host }}</span>
-                                                    </div>
-                                                </div>
-                                            </td>
-                                            <td class="px-10 py-10">
-                                                <span class="text-sm font-black text-slate-600 bg-slate-100/50 px-3 py-1 rounded-lg border border-slate-200/50">
-                                                    {{ connection.database_name }}
-                                                </span>
-                                            </td>
-                                            <td class="px-10 py-10 text-center">
-                                                {% if connection.is_active %}
-                                                    <div class="inline-flex flex-col items-center">
-                                                        <span class="px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-600 border border-emerald-100 shadow-sm shadow-emerald-500/5">Operational</span>
-                                                    </div>
-                                                {% else %}
-                                                    <span class="px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-slate-100 text-slate-500 border border-slate-200">Deactivated</span>
-                                                {% endif %}
-                                            </td>
-                                            <td class="px-10 py-10">
-                                                {% with last_test=connection.test_logs.first %}
-                                                    {% if last_test %}
-                                                        <div class="flex items-center gap-3">
-                                                            <div class="w-1.5 h-1.5 rounded-full {% if last_test.status == 'success' %}bg-emerald-500 animate-pulse{% else %}bg-rose-500{% endif %}"></div>
-                                                            <div class="flex flex-col">
-                                                                <span class="text-xs font-black {% if last_test.status == 'success' %}text-slate-800{% else %}text-rose-600{% endif %} uppercase tracking-wide">
-                                                                    {{ last_test.status|upper }}
-                                                                </span>
-                                                                <span class="text-[11px] font-bold text-slate-400">{{ last_test.tested_at|timesince }} ago</span>
-                                                            </div>
-                                                        </div>
-                                                    {% else %}
-                                                        <span class="text-[11px] font-black text-slate-300 uppercase tracking-widest italic">Never Verified</span>
-                                                    {% endif %}
-                                                {% endwith %}
-                                            </td>
-                                            {% if not user.userprofile.is_viewer %}
-                                                <td class="px-10 py-10 text-right">
-                                                    <div class="flex items-center justify-end gap-3 translate-x-4">
-                                                        <a href="{% url 'connections:detail' connection.id %}" 
-                                                           class="w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-sky-50 text-sky-600 border border-sky-100 hover:bg-sky-600 hover:text-white hover:shadow-lg hover:shadow-sky-600/20" 
-                                                           title="View Full Detail">
-                                                            <span class="material-symbols-outlined text-[20px] filled">visibility</span>
-                                                        </a>
-                                                        <a href="{% url 'connections:update' connection.id %}" 
-                                                           class="w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-600 hover:text-white hover:shadow-lg hover:shadow-indigo-600/20" 
-                                                           title="Edit Instance Configuration">
-                                                            <span class="material-symbols-outlined text-[20px] filled">settings</span>
-                                                        </a>
-                                                        <button type="button" 
-                                                                class="w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-emerald-50 text-emerald-600 border border-emerald-100 hover:bg-emerald-600 hover:text-white hover:shadow-lg hover:shadow-emerald-600/20 test-connection" 
-                                                                data-connection-id="{{ connection.id }}" 
-                                                                title="Verify Node Access">
-                                                            <span class="material-symbols-outlined text-[20px] filled">satellite_alt</span>
-                                                        </button>
-                                                        <a href="{% url 'connections:delete' connection.id %}" 
-                                                           class="w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-rose-50 text-rose-600 border border-rose-100 hover:bg-rose-600 hover:text-white hover:shadow-lg hover:shadow-rose-600/20" 
-                                                           title="Permanent Deletion">
-                                                            <span class="material-symbols-outlined text-[20px] filled">delete</span>
-                                                        </a>
-                                                    </div>
-                                                </td>
-                                            {% endif %}
-                                        </tr>
-                                        {% endfor %}
-                                    </tbody>
-                                </table>
-                            </div>
+<div class="db-connections-page min-h-screen bg-transparent pb-32" x-data="{ activeGroup: null }">
+    <!-- Premium Header -->
+    <div class="px-8 pt-6 pb-8">
+        <div class="max-w-[1600px] mx-auto flex flex-col md:flex-row md:items-end justify-between gap-6">
+            <div class="space-y-3">
+                <div class="flex items-center gap-3">
+                    <div class="w-12 h-12 bg-primary rounded-2xl flex items-center justify-center shadow-lg shadow-primary/20 transition-transform">
+                        <span class="material-symbols-outlined text-2xl text-white filled">database</span>
+                    </div>
+                    <div>
+                        <h1 class="text-3xl font-extrabold text-slate-800 tracking-tight leading-tight font-headline">Database Hub</h1>
+                        <div class="flex items-center gap-3 mt-1">
+                            <span class="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[9px] font-black uppercase tracking-wider rounded-md">Infrastructure Audit Ready</span>
+                            <div class="w-1 h-1 rounded-full bg-slate-300"></div>
+                            <span class="text-xs font-bold text-slate-500">{{ total_connections }} Active Nodes</span>
                         </div>
                     </div>
-                {% endif %}
-            {% endfor %}
-        </div>
-    {% else %}
-        <div class="bg-white rounded-[40px] border border-dashed border-slate-300 p-24 text-center mx-2 shadow-inner bg-slate-50/50">
-            <div class="w-28 h-28 bg-white rounded-full flex items-center justify-center mx-auto mb-8 text-slate-300 shadow-xl">
-                <span class="material-symbols-outlined text-7xl">cloud_off</span>
+                </div>
             </div>
-            <h3 class="text-3xl font-black text-slate-800 tracking-tight">Zero Infrastructure Nodes Found</h3>
-            <p class="text-slate-500 max-w-md mx-auto mt-4 text-lg font-medium leading-relaxed">Map your first database instance to the SyncArchitect grid to enable enterprise-grade data management and orchestration.</p>
+            
             {% if not user.userprofile.is_viewer %}
-                <a href="{% url 'connections:create' %}" class="inline-flex items-center gap-3 px-10 py-5 bg-primary text-white rounded-[24px] font-black uppercase tracking-widest text-sm shadow-2xl shadow-primary/30 hover:scale-105 active:scale-95 transition-all mt-10 no-underline">
-                    <span class="material-symbols-outlined text-xl">add_circle</span>
+            <div class="flex items-center gap-3">
+                <a href="{% url 'connections:create' %}" class="flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-xl font-bold uppercase tracking-wider text-[11px] shadow-lg shadow-primary/20 hover:bg-primary-hover transition-all no-underline group">
+                    <span class="material-symbols-outlined text-lg">add_circle</span>
                     Initialize Data Node
                 </a>
+            </div>
             {% endif %}
         </div>
-    {% endif %}
+    </div>
+
+    <!-- Navigation Tabs -->
+    <div class="px-8 mb-6">
+        <div class="max-w-[1600px] mx-auto">
+            {% include 'connections/_connection_tabs.html' with active_tab='databases' %}
+        </div>
+    </div>
+
+    <div class="px-8">
+        <div class="max-w-[1600px] mx-auto">
+            {% if grouped_list and total_connections > 0 %}
+                <div class="space-y-8">
+                    {% for group in grouped_list %}
+                        {% if group.connections %}
+                            <div class="group/drawer bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-200/40 overflow-hidden transition-all duration-300"
+                                 :class="activeGroup === '{{ group.type }}' ? 'border-primary/30 bg-slate-50/5' : ''">
+                                
+                                <!-- Premium Tactile Header -->
+                                <button @click="activeGroup = (activeGroup === '{{ group.type }}' ? null : '{{ group.type }}')"
+                                        class="w-full flex items-center justify-between p-4 px-6 bg-white hover:bg-slate-50/50 transition-all border-none outline-none text-left relative overflow-hidden group">
+                                    <div class="absolute inset-0 bg-gradient-to-r from-primary/[0.02] to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                                    
+                                    <div class="flex items-center gap-5 relative z-10">
+                                        <div class="w-12 h-12 rounded-xl bg-slate-100/50 flex items-center justify-center transition-all group-hover:bg-primary/5 group-hover:scale-105">
+                                            <span class="db-type-icon db-type-{{ group.type }} text-2xl opacity-60 group-hover:opacity-100 transition-all"></span>
+                                        </div>
+                                        <div>
+                                            <h3 class="text-xl font-bold text-slate-800 tracking-tight leading-none mb-1 font-headline">{{ group.name }}</h3>
+                                            <div class="flex items-center gap-3">
+                                                <span class="text-[9px] font-bold uppercase tracking-widest text-slate-400">Core Infrastructure</span>
+                                                <div class="w-1 h-1 rounded-full bg-slate-200"></div>
+                                                <span class="text-[9px] font-bold uppercase tracking-widest text-primary">Managed Node</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="flex items-center gap-5 relative z-10">
+                                        <div class="flex flex-col items-end">
+                                            <span class="px-3 py-1 bg-slate-900 text-white rounded-lg text-[9px] font-bold uppercase tracking-wider shadow-md">
+                                                {{ group.count }} Node{{ group.count|pluralize }} Cluster
+                                            </span>
+                                        </div>
+                                        <div class="w-10 h-10 rounded-full bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-400 group-hover:text-primary transition-all shadow-sm group-hover:border-primary/20"
+                                             :class="activeGroup === '{{ group.type }}' ? 'rotate-180 bg-primary text-white' : ''">
+                                            <span class="material-symbols-outlined text-lg">expand_more</span>
+                                        </div>
+                                    </div>
+                                </button>
+                                <!-- Drawer Body with Premium Table -->
+                                <div x-show="activeGroup === '{{ group.type }}'" x-collapse x-cloak>
+                                    <div class="p-2 px-3">
+                                        <div class="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                                            <div class="overflow-x-auto">
+                                                <table class="w-full text-left border-collapse">
+                                                    <thead>
+                                                        <tr class="bg-slate-50/50 border-b border-slate-100">
+                                                            <th class="px-6 py-4 text-[10px] font-bold uppercase tracking-wider text-slate-400">Infrastructure Identity</th>
+                                                            <th class="px-6 py-4 text-[10px] font-bold uppercase tracking-wider text-slate-400">Network Topology</th>
+                                                            <th class="px-6 py-4 text-[10px] font-bold uppercase tracking-wider text-slate-400">Catalog Node</th>
+                                                            <th class="px-6 py-4 text-[10px] font-bold uppercase tracking-wider text-slate-400 text-center">Status Audit</th>
+                                                            <th class="px-6 py-4 text-[10px] font-bold uppercase tracking-wider text-slate-400 text-right">Relay Control</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody class="divide-y divide-slate-50">
+                                                        {% for connection in group.connections %}
+                                                        <tr class="hover:bg-slate-50/30 transition-all group/row">
+                                                            <td class="px-6 py-4">
+                                                                <div class="flex items-center gap-4">
+                                                                    <div class="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center border border-slate-100 group-hover/row:scale-105 transition-transform">
+                                                                        <span class="material-symbols-outlined text-slate-400 group-hover/row:text-primary transition-colors text-xl">dns</span>
+                                                                    </div>
+                                                                    <div>
+                                                                        <a href="{% url 'connections:detail' connection.id %}" class="text-base font-bold text-slate-800 hover:text-primary transition-all no-underline block leading-tight font-headline">
+                                                                            {{ connection.name }}
+                                                                        </a>
+                                                                        <div class="flex items-center gap-2 mt-1">
+                                                                            <span class="text-[9px] font-bold uppercase tracking-wider text-slate-400">PID: {{ connection.id|stringformat:"i"|slice:":6" }}</span>
+                                                                            <div class="w-1 h-1 rounded-full bg-slate-200"></div>
+                                                                            <span class="text-[9px] font-bold uppercase tracking-wider text-primary">{{ group.type|upper }} NODE</span>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            </td>
+                                                            <td class="px-6 py-4">
+                                                                <div class="space-y-1">
+                                                                    <div class="flex items-center gap-2">
+                                                                        <span class="material-symbols-outlined text-slate-400 text-xs">router</span>
+                                                                        <span class="text-xs font-medium text-slate-600 truncate max-w-[180px]">{{ connection.host }}</span>
+                                                                    </div>
+                                                                    <div class="flex items-center gap-2">
+                                                                        <span class="material-symbols-outlined text-slate-400 text-xs">settings_ethernet</span>
+                                                                        <span class="text-[9px] font-bold uppercase tracking-widest text-slate-400">PORT {{ connection.port }}</span>
+                                                                    </div>
+                                                                </div>
+                                                            </td>
+                                                            <td class="px-6 py-4">
+                                                                <div class="flex items-center gap-2 px-3 py-1 bg-slate-50 rounded-lg border border-slate-100 w-fit">
+                                                                    <span class="material-symbols-outlined text-[14px] text-slate-400">inventory_2</span>
+                                                                    <span class="text-xs font-bold text-slate-700">{{ connection.database_name }}</span>
+                                                                </div>
+                                                            </td>
+                                                            <td class="px-6 py-4 text-center">
+                                                                <div class="flex flex-col items-center gap-1.5">
+                                                                    {% if connection.is_active %}
+                                                                        <div class="flex items-center gap-1.5 px-3 py-1 bg-emerald-50 rounded-lg border border-emerald-100">
+                                                                            <div class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                                                                            <span class="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">ACTIVE</span>
+                                                                        </div>
+                                                                    {% else %}
+                                                                        <div class="flex items-center gap-1.5 px-3 py-1 bg-slate-50 rounded-lg border border-slate-100">
+                                                                            <div class="w-1.5 h-1.5 rounded-full bg-slate-300"></div>
+                                                                            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">IDLE</span>
+                                                                        </div>
+                                                                    {% endif %}
+                                                                    
+                                                                    {% with last_test=connection.test_logs.first %}
+                                                                        {% if last_test %}
+                                                                            <span class="text-[8px] font-bold text-slate-400 tabular-nums uppercase">{% if last_test.status == 'success' %}OK{% else %}Fail{% endif %} · {{ last_test.tested_at|timesince }}</span>
+                                                                        {% endif %}
+                                                                    {% endwith %}
+                                                                </div>
+                                                            </td>
+                                                            <td class="px-6 py-4 text-right">
+                                                                <div class="flex items-center justify-end gap-2 translate-x-1">
+                                                                    <a href="{% url 'connections:detail' connection.id %}" 
+                                                                       class="w-9 h-9 rounded-lg flex items-center justify-center transition-all bg-slate-50 text-slate-600 border border-slate-100 hover:bg-slate-900 hover:text-white" 
+                                                                       title="Analysis">
+                                                                        <span class="material-symbols-outlined text-[18px]">analytics</span>
+                                                                    </a>
+                                                                    <a href="{% url 'connections:update' connection.id %}" 
+                                                                       class="w-9 h-9 rounded-lg flex items-center justify-center transition-all bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-600 hover:text-white" 
+                                                                       title="Configure">
+                                                                        <span class="material-symbols-outlined text-[18px]">tune</span>
+                                                                    </a>
+                                                                    <button type="button" 
+                                                                            class="w-9 h-9 rounded-lg flex items-center justify-center transition-all bg-emerald-50 text-emerald-600 border border-emerald-100 hover:bg-emerald-600 hover:text-white test-connection" 
+                                                                            data-connection-id="{{ connection.id }}" 
+                                                                            title="Test Relay">
+                                                                        <span class="material-symbols-outlined text-[18px]">settings_input_antenna</span>
+                                                                    </button>
+                                                                    <a href="{% url 'connections:delete' connection.id %}" 
+                                                                       class="w-9 h-9 rounded-lg flex items-center justify-center transition-all bg-rose-50 text-rose-600 border border-rose-100 hover:bg-rose-600 hover:text-white" 
+                                                                       title="Delete">
+                                                                        <span class="material-symbols-outlined text-[18px]">link_off</span>
+                                                                    </a>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                        {% endfor %}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="bg-white rounded-3xl border border-dashed border-slate-300 p-16 text-center bg-slate-50/30">
+                    <div class="w-20 h-20 bg-white rounded-2xl flex items-center justify-center mx-auto mb-6 text-slate-200 shadow-xl">
+                        <span class="material-symbols-outlined text-4xl text-slate-200">database</span>
+                    </div>
+                    <h3 class="text-2xl font-bold text-slate-800 tracking-tight font-headline">Zero Data Infrastructure Detected</h3>
+                    <p class="text-slate-500 max-w-md mx-auto mt-4 text-base font-medium leading-relaxed">Map your first enterprise database cluster to the SyncArchitect grid to enable advanced data orchestration.</p>
+                    {% if not user.userprofile.is_viewer %}
+                        <a href="{% url 'connections:create' %}" class="inline-flex items-center gap-3 px-8 py-3.5 bg-primary text-white rounded-xl font-bold uppercase tracking-wider text-xs shadow-xl shadow-primary/20 hover:scale-105 active:scale-95 transition-all mt-8 no-underline group">
+                            <span class="material-symbols-outlined text-xl">add_circle</span>
+                            Initialize First Node
+                        </a>
+                    {% endif %}
+                </div>
+            {% endif %}
+        </div>
+    </div>
 </div>
 {% endblock %}
 

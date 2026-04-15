@@ -8,58 +8,98 @@
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1>Add Connection</h1>
-        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="window.history.back();">
-            <i class="bi bi-arrow-left"></i> Back
-        </button>
+<div class="connection-hub-page min-h-screen bg-transparent pb-32">
+    <!-- Premium Header -->
+    <div class="px-8 pt-6 pb-8">
+        <div class="max-w-[1200px] mx-auto flex flex-col md:flex-row md:items-end justify-between gap-8">
+            <div class="space-y-4">
+                <div class="flex items-center gap-4">
+                    <div class="w-12 h-12 bg-primary rounded-2xl flex items-center justify-center shadow-xl shadow-primary/30 rotate-3 transition-transform hover:rotate-0">
+                        <span class="material-symbols-outlined text-2xl text-white filled">add_circle</span>
+                    </div>
+                    <div>
+                        <h1 class="text-3xl font-black text-slate-800 tracking-tight leading-none font-headline">Initialize Node</h1>
+                        <div class="flex items-center gap-3 mt-3">
+                            <span class="px-3 py-1 bg-primary/10 text-primary text-[10px] font-black uppercase tracking-widest rounded-full">Channel Selection</span>
+                            <div class="w-1.5 h-1.5 rounded-full bg-slate-300"></div>
+                            <span class="text-sm font-bold text-slate-500">Choose your data infrastructure pipe</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <a href="{% url 'connections:list' %}" class="flex items-center gap-2 px-5 py-2.5 bg-white text-slate-600 rounded-xl font-bold text-xs shadow-sm border border-slate-200 hover:bg-slate-50 transition-all no-underline">
+                <span class="material-symbols-outlined text-lg">arrow_back</span>
+                Return to Hub
+            </a>
+        </div>
     </div>
 
-    {% include 'connections/_connection_tabs.html' %}
+    <!-- Selection Grid -->
+    <div class="px-8">
+        <div class="max-w-[1200px] mx-auto grid grid-cols-1 md:grid-cols-3 gap-6">
+            <!-- Database Card -->
+            <a href="{% url 'connections:create' %}" class="group no-underline">
+                <div class="h-full bg-white rounded-3xl border border-slate-200 p-6 shadow-xl shadow-slate-200/40 hover:shadow-primary/10 hover:border-primary/20 hover:-translate-y-2 transition-all duration-500 relative overflow-hidden">
+                    <div class="absolute top-0 right-0 w-32 h-32 bg-primary/[0.03] rounded-bl-[5rem] -mr-8 -mt-8 group-hover:bg-primary/[0.05] transition-colors"></div>
+                    
+                    <div class="relative z-10">
+                        <div class="w-14 h-14 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600 mb-6 group-hover:scale-110 group-hover:rotate-6 transition-all">
+                            <span class="material-symbols-outlined text-2xl filled">database</span>
+                        </div>
+                        <h3 class="text-xl font-black text-slate-800 tracking-tight mb-3 font-headline">Database</h3>
+                        <p class="text-slate-500 text-xs font-medium leading-relaxed mb-6">
+                            PostgreSQL, SQL Server, ClickHouse, and Mongo clusters. Full topology mapping with schema auditing.
+                        </p>
+                        <div class="flex items-center gap-2 px-5 py-3 bg-slate-50 rounded-xl text-slate-600 font-black uppercase tracking-widest text-[9px] group-hover:bg-primary group-hover:text-white transition-all shadow-sm">
+                            Configure DB Node
+                            <span class="material-symbols-outlined text-sm ml-auto group-hover:translate-x-1 transition-transform">chevron_right</span>
+                        </div>
+                    </div>
+                </div>
+            </a>
 
-    <div class="card create-hub-card">
-        <div class="card-header">
-            <ul class="nav nav-tabs card-header-tabs" id="createConnectionTabs" role="tablist">
-                <li class="nav-item" role="presentation">
-                    <button class="nav-link active" id="db-create-tab" data-bs-toggle="tab" data-bs-target="#db-create-pane" type="button" role="tab">
-                        <i class="bi bi-database-add"></i> Database
-                    </button>
-                </li>
-                <li class="nav-item" role="presentation">
-                    <button class="nav-link" id="api-create-tab" data-bs-toggle="tab" data-bs-target="#api-create-pane" type="button" role="tab">
-                        <i class="bi bi-cloud-plus"></i> API
-                    </button>
-                </li>
-                <li class="nav-item" role="presentation">
-                    <button class="nav-link" id="file-create-tab" data-bs-toggle="tab" data-bs-target="#file-create-pane" type="button" role="tab">
-                        <i class="bi bi-file-earmark-plus"></i> Flat File
-                    </button>
-                </li>
-            </ul>
-        </div>
-        <div class="card-body tab-content p-4">
-            <div class="tab-pane fade show active" id="db-create-pane" role="tabpanel">
-                <h5 class="mb-2">Create Database Connection</h5>
-                <p class="text-muted mb-3">Use this for PostgreSQL, SQL Server, ClickHouse, MongoDB, and other database sources/targets.</p>
-                <a href="{% url 'connections:create' %}" class="btn btn-primary">
-                    <i class="bi bi-database-add"></i> Continue to Database Form
-                </a>
-            </div>
-            <div class="tab-pane fade" id="api-create-pane" role="tabpanel">
-                <h5 class="mb-2">Create API Connection</h5>
-                <p class="text-muted mb-3">Use this for API-based systems like Zoho CRM, SAP B1, and Azure DevOps.</p>
-                <a href="{% url 'connections:api_create' %}" class="btn btn-success">
-                    <i class="bi bi-cloud-plus"></i> Continue to API Form
-                </a>
-            </div>
-            <div class="tab-pane fade" id="file-create-pane" role="tabpanel">
-                <h5 class="mb-2">Create Flat File Source</h5>
-                <p class="text-muted mb-3">Use this for CSV and flat-file imports managed from your configured file source root.</p>
-                <a href="{% url 'connections:file_source_create' %}" class="btn btn-info text-white">
-                    <i class="bi bi-file-earmark-plus"></i> Continue to Flat File Form
-                </a>
-            </div>
+            <!-- API Card -->
+            <a href="{% url 'connections:api_create' %}" class="group no-underline">
+                <div class="h-full bg-white rounded-3xl border border-slate-200 p-6 shadow-xl shadow-slate-200/40 hover:shadow-emerald-500/10 hover:border-emerald-500/20 hover:-translate-y-2 transition-all duration-500 relative overflow-hidden">
+                    <div class="absolute top-0 right-0 w-32 h-32 bg-emerald-500/[0.03] rounded-bl-[5rem] -mr-8 -mt-8 group-hover:bg-emerald-500/[0.05] transition-colors"></div>
+                    
+                    <div class="relative z-10">
+                        <div class="w-14 h-14 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600 mb-6 group-hover:scale-110 group-hover:rotate-6 transition-all">
+                            <span class="material-symbols-outlined text-2xl filled">hub</span>
+                        </div>
+                        <h3 class="text-xl font-black text-slate-800 tracking-tight mb-3 font-headline">REST API</h3>
+                        <p class="text-slate-500 text-xs font-medium leading-relaxed mb-6">
+                            Zoho CRM, SAP B1, and Azure DevOps integration. Parallel fetch architecture with token management.
+                        </p>
+                        <div class="flex items-center gap-2 px-5 py-3 bg-slate-50 rounded-xl text-slate-600 font-black uppercase tracking-widest text-[9px] group-hover:bg-emerald-500 group-hover:text-white transition-all shadow-sm">
+                            Initialize API Pipe
+                            <span class="material-symbols-outlined text-sm ml-auto group-hover:translate-x-1 transition-transform">chevron_right</span>
+                        </div>
+                    </div>
+                </div>
+            </a>
+
+            <!-- Flat File Card -->
+            <a href="{% url 'connections:file_source_create' %}" class="group no-underline">
+                <div class="h-full bg-white rounded-3xl border border-slate-200 p-6 shadow-xl shadow-slate-200/40 hover:shadow-sky-500/10 hover:border-sky-500/20 hover:-translate-y-2 transition-all duration-500 relative overflow-hidden">
+                    <div class="absolute top-0 right-0 w-32 h-32 bg-sky-500/[0.03] rounded-bl-[5rem] -mr-8 -mt-8 group-hover:bg-sky-500/[0.05] transition-colors"></div>
+                    
+                    <div class="relative z-10">
+                        <div class="w-14 h-14 rounded-2xl bg-sky-50 flex items-center justify-center text-sky-600 mb-6 group-hover:scale-110 group-hover:rotate-6 transition-all">
+                            <span class="material-symbols-outlined text-2xl filled">description</span>
+                        </div>
+                        <h3 class="text-xl font-black text-slate-800 tracking-tight mb-3 font-headline">Flat File</h3>
+                        <p class="text-slate-500 text-xs font-medium leading-relaxed mb-6">
+                            CSV, XML, and local file storage monitors. Automated delimiter detection and encoding validation.
+                        </p>
+                        <div class="flex items-center gap-2 px-5 py-3 bg-slate-50 rounded-xl text-slate-600 font-black uppercase tracking-widest text-[9px] group-hover:bg-sky-500 group-hover:text-white transition-all shadow-sm">
+                            Map File Root
+                            <span class="material-symbols-outlined text-sm ml-auto group-hover:translate-x-1 transition-transform">chevron_right</span>
+                        </div>
+                    </div>
+                </div>
+            </a>
         </div>
     </div>
 </div>

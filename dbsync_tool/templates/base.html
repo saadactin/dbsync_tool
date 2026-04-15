@@ -42,7 +42,7 @@
     <style>
         :root {
             --primary-color: #0c56d0;
-            --sidebar-width: 224px;
+            --sidebar-width: 160px;
         }
         body {
             font-family: 'Plus Jakarta Sans', sans-serif;
@@ -78,67 +78,89 @@
 <body class="bg-gray-50 text-slate-900 antialiased">
     
     {% if user.is_authenticated %}
-    <!-- Modernized Sidebar - High Z-Index for absolute clickability -->
-    <nav class="fixed inset-y-0 left-0 z-[9999] w-56 bg-[#041b3c] shadow-2xl border-r border-white/5 flex flex-col transition-all duration-300 transform -translate-x-full md:translate-x-0 overflow-y-auto no-scrollbar pointer-events-auto">
-        <!-- Brand Header -->
-        <div class="px-4 py-8 border-b border-white/5 mb-6">
-            <div class="flex items-center gap-3">
-                <div class="w-8 h-8 rounded-lg bg-primary flex items-center justify-center shadow-lg shadow-primary/20">
-                    <span class="material-symbols-outlined text-white filled text-lg">sync_alt</span>
+    <!-- Premium Sidebar - Tactile High-Density Design -->
+    <nav class="fixed inset-y-0 left-0 z-[9999] w-64 bg-[#021021] shadow-2xl border-r border-white/5 flex flex-col transition-all duration-300 transform -translate-x-full md:translate-x-0 overflow-y-auto no-scrollbar pointer-events-auto">
+        <!-- Intelligent Brand Header -->
+        <div class="px-6 py-10 border-b border-white/5 mb-8 relative overflow-hidden group">
+            <div class="absolute inset-0 bg-gradient-to-br from-primary/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            <div class="flex items-center gap-4 relative z-10">
+                <div class="relative">
+                    <div class="w-10 h-10 rounded-2xl bg-primary flex items-center justify-center shadow-2xl shadow-primary/40 rotate-3 group-hover:rotate-12 transition-transform">
+                        <span class="material-symbols-outlined text-white filled text-xl">sync_alt</span>
+                    </div>
+                    <div class="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-emerald-500 border-2 border-[#021021] rounded-full animate-pulse"></div>
                 </div>
                 <div class="flex flex-col">
-                    <span class="text-base font-black text-white tracking-tighter leading-none font-headline">DB Sync</span>
+                    <span class="text-lg font-black text-white tracking-tighter leading-none font-headline">DB Sync</span>
+                    <span class="text-[9px] font-black uppercase tracking-[0.3em] text-primary mt-1 opacity-80">Orchestrator v2</span>
                 </div>
             </div>
         </div>
 
-        <!-- Navigation Links -->
-        <div class="flex-1 px-2.5 space-y-1">
+        <!-- Navigation Links - Floating Pill System -->
+        <div class="flex-1 px-4 space-y-1.5">
             {% url 'core:dashboard' as dashboard_url %}
-            <a href="{{ dashboard_url }}" class="flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all group no-underline
-                {% if request.resolver_match.url_name == 'dashboard' %}bg-primary text-white shadow-lg shadow-primary/20 active-nav{% else %}text-slate-400 hover:text-white hover:bg-white/5{% endif %}">
-                <span class="material-symbols-outlined text-[18px] {% if request.resolver_match.url_name == 'dashboard' %}filled{% endif %}">dashboard</span>
-                <span class="text-[13px] font-black tracking-wide whitespace-nowrap">Dashboard</span>
+            <a href="{{ dashboard_url }}" class="flex items-center gap-3.5 px-4 py-3 rounded-2xl transition-all group no-underline relative overflow-hidden
+                {% if request.resolver_match.app_name == 'core' and request.resolver_match.url_name == 'dashboard' %}bg-primary/10 text-primary active-nav{% else %}text-slate-500 hover:text-white hover:bg-white/5{% endif %}">
+                {% if request.resolver_match.app_name == 'core' and request.resolver_match.url_name == 'dashboard' %}
+                    <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-primary rounded-r-full"></div>
+                {% endif %}
+                <span class="material-symbols-outlined text-xl {% if request.resolver_match.app_name == 'core' and request.resolver_match.url_name == 'dashboard' %}filled{% endif %} transition-transform group-hover:scale-110">dashboard</span>
+                <span class="text-[14px] font-bold tracking-tight whitespace-nowrap">Dashboard</span>
             </a>
 
             {% if user.is_authenticated and user.userprofile %}
                 {% if user.userprofile.is_super_admin or user.userprofile.is_admin %}
                     {% url 'accounts:user_list' as user_list_url %}
-                    <a href="{{ user_list_url }}" class="flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all group no-underline
-                        {% if request.resolver_match.url_name == 'user_list' or request.resolver_match.url_name == 'user_create' or request.resolver_match.url_name == 'user_edit' %}bg-primary text-white shadow-lg shadow-primary/20 active-nav{% else %}text-slate-400 hover:text-white hover:bg-white/5{% endif %}">
-                        <span class="material-symbols-outlined text-[18px] {% if request.resolver_match.url_name == 'user_list' or request.resolver_match.url_name == 'user_create' or request.resolver_match.url_name == 'user_edit' %}filled{% endif %}">group</span>
-                        <span class="text-[13px] font-black tracking-wide whitespace-nowrap">User Management</span>
+                    <a href="{{ user_list_url }}" class="flex items-center gap-3.5 px-4 py-3 rounded-2xl transition-all group no-underline relative overflow-hidden
+                        {% if request.resolver_match.app_name == 'accounts' %}bg-primary/10 text-primary active-nav{% else %}text-slate-500 hover:text-white hover:bg-white/5{% endif %}">
+                        {% if request.resolver_match.app_name == 'accounts' %}
+                            <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-primary rounded-r-full"></div>
+                        {% endif %}
+                        <span class="material-symbols-outlined text-xl {% if request.resolver_match.app_name == 'accounts' %}filled{% endif %} transition-transform group-hover:scale-110">group</span>
+                        <span class="text-[14px] font-bold tracking-tight whitespace-nowrap">User Management</span>
                     </a>
                 {% endif %}
                 
                 {% if not user.userprofile.is_viewer %}
                     {% url 'connections:list' as connections_list_url %}
-                    <a href="{{ connections_list_url }}" class="flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all group no-underline
-                        {% if request.resolver_match.url_name == 'list' and request.resolver_match.app_name == 'connections' %}bg-primary text-white shadow-lg shadow-primary/20 active-nav{% else %}text-slate-400 hover:text-white hover:bg-white/5{% endif %}">
-                        <span class="material-symbols-outlined text-[18px] {% if request.resolver_match.url_name == 'list' and request.resolver_match.app_name == 'connections' %}filled{% endif %}">hub</span>
-                        <span class="text-[13px] font-black tracking-wide whitespace-nowrap">Connections</span>
+                    <a href="{{ connections_list_url }}" class="flex items-center gap-3.5 px-4 py-3 rounded-2xl transition-all group no-underline relative overflow-hidden
+                        {% if request.resolver_match.app_name == 'connections' %}bg-primary/10 text-primary active-nav{% else %}text-slate-500 hover:text-white hover:bg-white/5{% endif %}">
+                        {% if request.resolver_match.app_name == 'connections' %}
+                            <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-primary rounded-r-full"></div>
+                        {% endif %}
+                        <span class="material-symbols-outlined text-xl {% if request.resolver_match.app_name == 'connections' %}filled{% endif %} transition-transform group-hover:scale-110">hub</span>
+                        <span class="text-[14px] font-bold tracking-tight whitespace-nowrap">Connections</span>
                     </a>
 
                     {% url 'sync_jobs:list' as sync_jobs_list_url %}
-                    <a href="{{ sync_jobs_list_url }}" class="flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all group no-underline
-                        {% if request.resolver_match.url_name == 'list' and request.resolver_match.app_name == 'sync_jobs' %}bg-primary text-white shadow-lg shadow-primary/20 active-nav{% else %}text-slate-400 hover:text-white hover:bg-white/5{% endif %}">
-                        <span class="material-symbols-outlined text-[18px] {% if request.resolver_match.url_name == 'list' and request.resolver_match.app_name == 'sync_jobs' %}filled{% endif %}">sync_saved_locally</span>
-                        <span class="text-[13px] font-black tracking-wide whitespace-nowrap">Sync Jobs</span>
+                    <a href="{{ sync_jobs_list_url }}" class="flex items-center gap-3.5 px-4 py-3 rounded-2xl transition-all group no-underline relative overflow-hidden
+                        {% if request.resolver_match.app_name == 'sync_jobs' and request.resolver_match.url_name != 'dashboard' %}bg-primary/10 text-primary active-nav{% else %}text-slate-500 hover:text-white hover:bg-white/5{% endif %}">
+                        {% if request.resolver_match.app_name == 'sync_jobs' and request.resolver_match.url_name != 'dashboard' %}
+                            <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-primary rounded-r-full"></div>
+                        {% endif %}
+                        <span class="material-symbols-outlined text-xl {% if request.resolver_match.app_name == 'sync_jobs' and request.resolver_match.url_name != 'dashboard' %}filled{% endif %} transition-transform group-hover:scale-110">sync_saved_locally</span>
+                        <span class="text-[14px] font-bold tracking-tight whitespace-nowrap">Sync Jobs</span>
                     </a>
                 {% endif %}
             {% endif %}
         </div>
 
-        <!-- Footer Section (Profile & Logout) -->
-        <div class="p-2.5 mt-auto space-y-1 mb-4">
+        <!-- Premium Profile Footer -->
+        <div class="p-4 mt-auto border-t border-white/5 bg-white/[0.02]">
             {% url 'accounts:profile' as profile_url %}
-            <a href="{{ profile_url }}" class="flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all group no-underline
-                {% if request.resolver_match.url_name == 'profile' or request.resolver_match.url_name == 'change_password' %}bg-primary text-white shadow-lg shadow-primary/20 active-nav{% else %}text-slate-400 hover:text-white hover:bg-white/5{% endif %}">
-                <span class="material-symbols-outlined text-[18px] {% if request.resolver_match.url_name == 'profile' %}filled{% endif %}">account_circle</span>
+            <a href="{{ profile_url }}" class="flex items-center gap-3.5 px-4 py-3 rounded-2xl transition-all group no-underline mb-2 relative overflow-hidden
+                {% if request.resolver_match.url_name == 'profile' or request.resolver_match.url_name == 'change_password' %}bg-primary/10 text-primary active-nav{% else %}text-slate-500 hover:text-white hover:bg-white/5{% endif %}">
+                {% if request.resolver_match.url_name == 'profile' or request.resolver_match.url_name == 'change_password' %}
+                    <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-primary rounded-r-full"></div>
+                {% endif %}
+                <div class="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center text-primary group-hover:bg-primary/20 transition-colors">
+                    <span class="material-symbols-outlined text-lg {% if request.resolver_match.url_name == 'profile' %}filled{% endif %}">account_circle</span>
+                </div>
                 <div class="flex flex-col flex-1 min-w-0">
-                    <span class="text-[13px] font-black tracking-wide truncate">Profile</span>
+                    <span class="text-[13px] font-bold text-white tracking-tight truncate">{{ user.username|title }}</span>
                     {% if user.is_authenticated and user.userprofile %}
-                        <span class="text-[8px] font-black uppercase tracking-widest text-blue-300/80 leading-none mt-1">
+                        <span class="text-[9px] font-black uppercase tracking-[0.1em] text-blue-400/80 leading-none mt-1">
                             {% if user.userprofile.is_super_admin %}Super Admin
                             {% elif user.userprofile.is_admin %}Admin
                             {% elif user.userprofile.is_operator %}Operator
@@ -151,16 +173,16 @@
             <!-- Secure Logout Form -->
             <form action="{% url 'accounts:logout' %}" method="post" class="w-full">
                 {% csrf_token %}
-                <button type="submit" class="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all text-red-400 hover:text-white hover:bg-red-500/20 border-none outline-none bg-transparent cursor-pointer group pointer-events-auto">
-                    <span class="material-symbols-outlined text-[18px] group-hover:filled">logout</span>
-                    <span class="text-[13px] font-black tracking-wide">Logout</span>
+                <button type="submit" class="w-full flex items-center gap-3.5 px-4 py-3 rounded-2xl transition-all text-rose-500 hover:text-white hover:bg-rose-500/10 border-none outline-none bg-transparent cursor-pointer group pointer-events-auto">
+                    <span class="material-symbols-outlined text-lg group-hover:filled">logout</span>
+                    <span class="text-[14px] font-bold tracking-tight">Logout</span>
                 </button>
             </form>
         </div>
     </nav>
 
-    <!-- Main Content Area -->
-    <main class="flex-1 md:ml-56 min-h-screen flex flex-col transition-all duration-300 relative">
+    <!-- Main Content Area - Adjusted for Expanded Sidebar -->
+    <main class="flex-1 md:ml-64 min-h-screen flex flex-col transition-all duration-300 relative">
         <div class="flex-1 p-0">
             {% block content %}{% endblock %}
         </div>

@@ -4,85 +4,215 @@
 {% block title %}{% if object %}Edit{% else %}Create{% endif %} File Source - DB Sync Tool{% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <div class="row">
-        <div class="col-md-8 offset-md-2">
-            <div class="card">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h3>{% if object %}Edit{% else %}Create{% endif %} File Source</h3>
+<div class="file-source-form-page min-h-screen bg-transparent pb-32" x-data="{ 
+    activeTab: 'config',
+    uploadMode: false
+}">
+    <!-- Premium Header -->
+    <div class="px-8 pt-6 pb-8">
+        <div class="max-w-[1000px] mx-auto flex flex-col md:flex-row md:items-end justify-between gap-8">
+            <div class="space-y-4">
+                <div class="flex items-center gap-4">
+                    <div class="w-12 h-12 bg-primary rounded-2xl flex items-center justify-center shadow-xl shadow-primary/30 rotate-3 transition-transform hover:rotate-0">
+                        <span class="material-symbols-outlined text-2xl text-white filled">{% if object %}edit_note{% else %}draft_orders{% endif %}</span>
+                    </div>
                     <div>
-                        <button type="button" class="btn btn-outline-secondary btn-sm me-2" onclick="window.history.back();">
-                            <i class="bi bi-arrow-left"></i> Back
-                        </button>
-                        <a href="{% url 'connections:create_hub' %}" class="btn btn-outline-secondary btn-sm">
-                            <i class="bi bi-diagram-3"></i> Connection Type Hub
-                        </a>
+                        <h1 class="text-3xl font-black text-slate-800 tracking-tight leading-none font-headline">
+                            {% if object %}Edit Repository{% else %}New Data Stream{% endif %}
+                        </h1>
+                        <div class="flex items-center gap-3 mt-3">
+                            <span class="px-3 py-1 bg-emerald-100 text-emerald-700 text-[10px] font-black uppercase tracking-widest rounded-full">File Relay Ready</span>
+                            <div class="w-1.5 h-1.5 rounded-full bg-slate-300"></div>
+                            <span class="text-sm font-bold text-slate-500">{% if object %}Updating: {{ object.name }}{% else %}Mapping localized flat-file storage{% endif %}</span>
+                        </div>
                     </div>
                 </div>
-                <div class="card-body">
-                    <p class="text-muted">
-                        Path is relative to server <code>FILE_SYNC_ROOT</code>, not your browser machine.
-                    </p>
-                    <form method="post" enctype="multipart/form-data">
-                        {% csrf_token %}
-
-                        <div class="mb-3">
-                            <label for="{{ form.name.id_for_label }}" class="form-label">Name *</label>
-                            {{ form.name }}
-                            {% if form.name.errors %}<div class="text-danger small mt-1">{{ form.name.errors|join:", " }}</div>{% endif %}
-                        </div>
-
-                        <div class="mb-3">
-                            <label for="{{ form.relative_path.id_for_label }}" class="form-label">Relative Path *</label>
-                            {{ form.relative_path }}
-                            <div class="form-text">Example: <code>imports/customers.csv</code></div>
-                            {% if form.relative_path.errors %}<div class="text-danger small mt-1">{{ form.relative_path.errors|join:", " }}</div>{% endif %}
-                        </div>
-
-                        <div class="mb-3">
-                            <label for="{{ form.upload_file.id_for_label }}" class="form-label">Upload CSV from this device</label>
-                            {{ form.upload_file }}
-                            <div class="form-text">
-                                Optional: choose a CSV file to upload directly. It will be stored under server <code>FILE_SYNC_ROOT</code>.
-                                If Relative Path is empty, file is saved under <code>uploads/</code>.
-                            </div>
-                            {% if form.upload_file.errors %}<div class="text-danger small mt-1">{{ form.upload_file.errors|join:", " }}</div>{% endif %}
-                        </div>
-
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label for="{{ form.delimiter.id_for_label }}" class="form-label">Delimiter *</label>
-                                {{ form.delimiter }}
-                                {% if form.delimiter.errors %}<div class="text-danger small mt-1">{{ form.delimiter.errors|join:", " }}</div>{% endif %}
-                            </div>
-                            <div class="col-md-6 mb-3">
-                                <label for="{{ form.encoding.id_for_label }}" class="form-label">Encoding *</label>
-                                {{ form.encoding }}
-                                {% if form.encoding.errors %}<div class="text-danger small mt-1">{{ form.encoding.errors|join:", " }}</div>{% endif %}
-                            </div>
-                        </div>
-
-                        <div class="form-check mb-3">
-                            {{ form.has_header }}
-                            <label for="{{ form.has_header.id_for_label }}" class="form-check-label">First row contains headers</label>
-                        </div>
-
-                        <div class="form-check mb-4">
-                            {{ form.is_active }}
-                            <label for="{{ form.is_active.id_for_label }}" class="form-check-label">Active</label>
-                        </div>
-
-                        {% if form.non_field_errors %}
-                            <div class="alert alert-danger">{{ form.non_field_errors|join:", " }}</div>
-                        {% endif %}
-
-                        <button type="submit" class="btn btn-primary">
-                            {% if object %}Update File Source{% else %}Create File Source{% endif %}
-                        </button>
-                    </form>
-                </div>
+            </div>
+            
+            <div class="flex items-center gap-4">
+                <a href="{% url 'connections:list' %}" class="flex items-center gap-3 px-6 py-3 bg-white text-slate-600 border border-slate-200 rounded-xl font-black uppercase tracking-widest text-[10px] shadow-lg shadow-slate-200/50 hover:bg-slate-50 transition-all no-underline">
+                    <span class="material-symbols-outlined text-lg">arrow_back</span>
+                    Abort
+                </a>
             </div>
         </div>
     </div>
-</div>
+
+    <div class="px-8">
+        <div class="max-w-[1000px] mx-auto">
+            <form method="post" enctype="multipart/form-data" class="space-y-10">
+                {% csrf_token %}
+                
+                <!-- Main Configuration Card -->
+                <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-200/40 overflow-hidden">
+                    <div class="p-8 space-y-8">
+                        
+                        <!-- Section: Primary Identity -->
+                        <div class="space-y-6">
+                            <div class="flex items-center gap-4">
+                                <div class="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+                                    <span class="material-symbols-outlined filled text-[18px]">folder_shared</span>
+                                </div>
+                                <div>
+                                    <h2 class="text-lg font-black text-slate-800 tracking-tight font-headline">Resource Topology Mapper</h2>
+                                    <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Paths are relative to server-side infrastructure</p>
+                                </div>
+                            </div>
+                            
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                <div class="space-y-2">
+                                    <label for="{{ form.name.id_for_label }}" class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Friendly Identifier</label>
+                                    <input type="text" name="{{ form.name.name }}" id="{{ form.name.id_for_label }}" value="{{ form.name.value|default:'' }}" 
+                                           class="w-full px-6 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-primary focus:ring-4 focus:ring-primary/5 transition-all outline-none text-sm shadow-sm"
+                                           placeholder="e.g. Daily Sales CSV" required>
+                                    {% if form.name.errors %}
+                                        <p class="text-rose-500 text-[10px] font-black uppercase mt-2 ml-2">{{ form.name.errors.0 }}</p>
+                                    {% endif %}
+                                </div>
+
+                                <div class="space-y-2">
+                                    <label for="{{ form.relative_path.id_for_label }}" class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Relative Infrastructure Path</label>
+                                    <div class="relative">
+                                        <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                                            <span class="material-symbols-outlined text-slate-400 text-sm">terminal</span>
+                                        </div>
+                                        <input type="text" name="{{ form.relative_path.name }}" id="{{ form.relative_path.id_for_label }}" value="{{ form.relative_path.value|default:'' }}" 
+                                               class="w-full pl-12 pr-6 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-mono font-bold focus:border-primary focus:ring-4 focus:ring-primary/5 transition-all outline-none text-sm shadow-sm"
+                                               placeholder="imports/data.csv" required>
+                                    </div>
+                                    <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-2 ml-2">Example: <span class="bg-slate-100 px-1 rounded">exports/2024/revenue.json</span></p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="w-full h-px bg-slate-100"></div>
+
+                        <!-- Section: Data Protocol -->
+                        <div class="space-y-6">
+                            <div class="flex items-center gap-4">
+                                <div class="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600">
+                                    <span class="material-symbols-outlined filled text-[18px]">settings_input_component</span>
+                                </div>
+                                <div>
+                                    <h2 class="text-lg font-black text-slate-800 tracking-tight font-headline">Ingestion Protocol</h2>
+                                    <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Define structural rules for the parser engine</p>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                <div class="space-y-4">
+                                    <div class="grid grid-cols-2 gap-6">
+                                        <div class="space-y-2">
+                                            <label for="{{ form.delimiter.id_for_label }}" class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Delimiter</label>
+                                            <div class="relative">
+                                                <select name="{{ form.delimiter.name }}" id="{{ form.delimiter.id_for_label }}" 
+                                                        class="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-indigo-500 transition-all outline-none appearance-none text-sm shadow-sm">
+                                                    {% for value, text in form.delimiter.field.choices %}
+                                                        <option value="{{ value }}" {% if form.delimiter.value == value %}selected{% endif %}>{{ text }}</option>
+                                                    {% endfor %}
+                                                </select>
+                                                <div class="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
+                                                    <span class="material-symbols-outlined text-slate-400">expand_more</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="space-y-2">
+                                            <label for="{{ form.encoding.id_for_label }}" class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Encoding</label>
+                                            <div class="relative">
+                                                <select name="{{ form.encoding.name }}" id="{{ form.encoding.id_for_label }}" 
+                                                        class="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-indigo-500 transition-all outline-none appearance-none text-sm shadow-sm">
+                                                    {% for value, text in form.encoding.field.choices %}
+                                                        <option value="{{ value }}" {% if form.encoding.value == value %}selected{% endif %}>{{ text }}</option>
+                                                    {% endfor %}
+                                                </select>
+                                                <div class="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
+                                                    <span class="material-symbols-outlined text-slate-400">expand_more</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="flex items-center justify-between p-5 bg-slate-50 rounded-2xl border border-slate-100">
+                                        <div class="flex items-center gap-4">
+                                            <span class="material-symbols-outlined text-slate-400 text-lg">table_rows_narrow</span>
+                                            <span class="text-[10px] font-black text-slate-700 uppercase tracking-widest">Metadata Header</span>
+                                        </div>
+                                        <label class="relative inline-flex items-center cursor-pointer">
+                                            <input type="checkbox" name="{{ form.has_header.name }}" id="{{ form.has_header.id_for_label }}" class="sr-only peer" {% if form.has_header.value %}checked{% endif %}>
+                                            <div class="w-12 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-5 after:transition-all peer-checked:bg-indigo-500"></div>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="space-y-4">
+                                <div class="space-y-3">
+                                    <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Edge Upload Relay</label>
+                                    <div class="relative group h-full min-h-[100px]">
+                                        <div class="absolute inset-0 bg-slate-50 border-2 border-slate-100 border-dashed rounded-xl group-hover:bg-slate-100/50 group-hover:border-indigo-200 transition-all flex flex-col items-center justify-center gap-2 p-4 text-center">
+                                            <div class="w-10 h-10 rounded-full bg-white flex items-center justify-center text-slate-300 group-hover:text-indigo-400 group-hover:scale-110 transition-all shadow-sm">
+                                                <span class="material-symbols-outlined text-lg">cloud_upload</span>
+                                            </div>
+                                            <div>
+                                                <p class="text-[9px] font-black text-slate-500 uppercase tracking-widest leading-none">Drop CSV to register</p>
+                                            </div>
+                                        </div>
+                                        <input type="file" name="{{ form.upload_file.name }}" id="{{ form.upload_file.id_for_label }}" 
+                                               class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10">
+                                    </div>
+                                </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="w-full h-px bg-slate-100"></div>
+
+                        <!-- Section: Power Node -->
+                        <div class="flex items-center justify-between p-6 bg-slate-900 rounded-2xl shadow-xl shadow-slate-900/20">
+                            <div class="flex items-center gap-5">
+                                <div class="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center text-slate-400">
+                                    <span class="material-symbols-outlined text-2xl filled">bolt</span>
+                                </div>
+                                <div>
+                                    <h3 class="text-base font-black text-white tracking-tight leading-none mb-1">Grid Synchronization</h3>
+                                    <p class="text-[10px] font-bold text-slate-400">Initialize this node within the active data mesh</p>
+                                </div>
+                            </div>
+                            
+                            <label class="relative inline-flex items-center cursor-pointer group">
+                                <input type="checkbox" name="{{ form.is_active.name }}" id="{{ form.is_active.id_for_label }}" class="sr-only peer" {% if form.is_active.value %}checked{% endif %}>
+                                <div class="w-16 h-8 bg-slate-800 peer-focus:outline-none ring-4 ring-transparent transition-all rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-6 after:w-7 after:transition-all peer-checked:bg-emerald-500 shadow-inner group-active:scale-95"></div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Premium Form Actions -->
+                    <div class="p-6 px-8 bg-slate-50 border-t border-slate-100 flex flex-col md:flex-row items-center justify-between gap-6">
+                        <div class="flex items-center gap-4">
+                            <div class="w-10 h-10 rounded-xl bg-white flex items-center justify-center text-slate-300 shadow-sm border border-slate-100">
+                                <span class="material-symbols-outlined text-lg">data_object</span>
+                            </div>
+                            <p class="text-[9px] font-black uppercase tracking-widest text-slate-400 max-w-[200px]">Lossless structural parsing enabled for CSV/JSON relays</p>
+                        </div>
+                        
+                        <div class="flex items-center gap-4 w-full md:w-auto">
+                            <a href="{% url 'connections:list' %}" class="flex-1 md:flex-none text-center px-8 py-3.5 text-slate-400 hover:text-slate-600 font-black uppercase tracking-widest text-[10px] transition-colors no-underline">
+                                Cancel Operation
+                            </a>
+                            <button type="submit" class="flex-1 md:flex-none flex items-center justify-center gap-3 px-10 py-3.5 bg-primary text-white rounded-xl font-black uppercase tracking-widest text-[10px] shadow-xl shadow-primary/40 hover:scale-105 active:scale-95 transition-all group">
+                                <span class="material-symbols-outlined text-lg group-hover:rotate-12 transition-transform">rocket_launch</span>
+                                {% if object %}Audit & Commit Changes{% else %}Register Relay Node{% endif %}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                {% if form.non_field_errors %}
+                    <div class="bg-rose-50 border border-rose-100 p-8 rounded-[2.5rem] flex items-center gap-4">
+                        <span class="material-symbols-outlined text-rose-500 text-3xl">error</span>
+                        <p class="text-sm font-black text-rose-700 uppercase tracking-widest">{{ form.non_field_errors|join:", " }}</p>
+                    </div>
+                {% endif %}
+            </form>
+        </div>
+    </div>
 {% endblock %}

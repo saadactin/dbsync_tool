@@ -8,128 +8,161 @@
 {% endblock %}
 
 {% block content %}
-<div class="file-sources-page pb-24">
-    <!-- Header Section -->
-    <div class="flex items-center justify-between mb-12 px-2">
-        <div>
-            <h1 class="text-4xl font-black text-slate-800 tracking-tight flex items-center gap-4">
-                <div class="w-14 h-14 bg-primary/10 rounded-2xl flex items-center justify-center">
-                    <span class="material-symbols-outlined text-4xl text-primary filled">description</span>
+<div class="file-sources-page min-h-screen bg-transparent pb-32">
+    <!-- Premium Header -->
+    <div class="px-8 pt-6 pb-8">
+        <div class="max-w-[1600px] mx-auto flex flex-col md:flex-row md:items-end justify-between gap-6">
+            <div class="space-y-3">
+                <div class="flex items-center gap-3">
+                    <div class="w-12 h-12 bg-primary rounded-2xl flex items-center justify-center shadow-lg shadow-primary/20 rotate-3">
+                        <span class="material-symbols-outlined text-2xl text-white filled">description</span>
+                    </div>
+                    <div>
+                        <h1 class="text-3xl font-extrabold text-slate-800 tracking-tight leading-tight font-headline">Enterprise Files</h1>
+                        <div class="flex items-center gap-3 mt-1">
+                            <span class="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[9px] font-black uppercase tracking-wider rounded-md">FileSystem Relay Ready</span>
+                            <div class="w-1 h-1 rounded-full bg-slate-300"></div>
+                            <span class="text-xs font-bold text-slate-500">{{ file_sources|length }} Tracked Resources</span>
+                        </div>
+                    </div>
                 </div>
-                Flat File Sources
-            </h1>
-            <p class="text-slate-500 font-bold mt-2 ml-18">Map local and shared enterprise data repositories to the sync grid</p>
+            </div>
+            
+            {% if not user.userprofile.is_viewer %}
+            <div class="flex items-center gap-3">
+                <a href="{% url 'connections:file_source_create' %}" class="flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-xl font-bold uppercase tracking-wider text-[11px] shadow-lg shadow-primary/20 hover:scale-105 active:scale-95 transition-all no-underline group">
+                    <span class="material-symbols-outlined text-lg group-hover:rotate-90 transition-transform">add_circle</span>
+                    Register Source Node
+                </a>
+            </div>
+            {% endif %}
         </div>
     </div>
 
-    <div class="px-2">
-        {% include 'connections/_connection_tabs.html' with active_tab='flatfiles' %}
+    <!-- Navigation Tabs -->
+    <div class="px-8 mb-6">
+        <div class="max-w-[1600px] mx-auto">
+            {% include 'connections/_connection_tabs.html' with active_tab='flatfiles' %}
+        </div>
     </div>
 
-    <div class="bg-white rounded-[32px] border border-slate-200 shadow-2xl shadow-slate-200/50 overflow-hidden mx-2 transition-all duration-500">
-        <div class="p-0">
+    <div class="px-8">
+        <div class="max-w-[1600px] mx-auto">
             {% if file_sources %}
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left border-collapse">
-                        <thead>
-                            <tr class="border-b border-slate-100 bg-slate-50/50">
-                                <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500">Resource Identifier</th>
-                                <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500">Infrastructure Path</th>
-                                <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500">Separator</th>
-                                <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500">Metadata</th>
-                                <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500 text-center">Availability</th>
-                                <th class="px-10 py-6 text-xs font-black uppercase tracking-[0.15em] text-slate-500 text-right">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-slate-50">
-                            {% for source in file_sources %}
-                            <tr class="hover:bg-slate-50/80 transition-all group/row">
-                                <td class="px-10 py-10">
-                                    <a href="{% url 'connections:file_source_detail' source.id %}" class="text-lg font-black text-primary hover:text-black hover:underline decoration-black decoration-2 underline-offset-4 transition-all no-underline block leading-tight">
-                                        {{ source.name }}
-                                    </a>
-                                    <span class="text-[10px] font-black uppercase text-slate-400 mt-1 block tracking-tighter">{{ source.encoding|default:"UTF-8"|upper }} DATA ENCODING</span>
-                                </td>
-                                <td class="px-10 py-10">
-                                    <div class="flex items-center gap-2">
-                                        <span class="material-symbols-outlined text-[18px] text-slate-400">folder_zip</span>
-                                        <code class="text-sm font-bold text-slate-500 bg-slate-100 px-3 py-1 rounded-lg border border-slate-200/50">{{ source.relative_path }}</code>
-                                    </div>
-                                </td>
-                                <td class="px-10 py-10">
-                                    <code class="text-sm font-black text-slate-700 bg-white w-10 h-10 flex items-center justify-center rounded-xl border-2 border-slate-100 shadow-sm">
-                                        {{ source.delimiter|default:"," }}
-                                    </code>
-                                </td>
-                                <td class="px-10 py-10">
-                                    {% if source.has_header %}
-                                        <div class="flex items-center gap-2 text-emerald-600">
-                                            <span class="material-symbols-outlined text-[18px] filled">inventory_2</span>
-                                            <span class="text-xs font-black uppercase tracking-wider">Header Tracked</span>
+                <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-200/40 overflow-hidden transition-all duration-300">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-slate-50/50 border-b border-slate-100">
+                                    <th class="px-6 py-4 text-[10px] font-bold uppercase tracking-wider text-slate-400">Resource Identifier</th>
+                                    <th class="px-6 py-4 text-[10px] font-bold uppercase tracking-wider text-slate-400">Topology</th>
+                                    <th class="px-6 py-4 text-[10px] font-bold uppercase tracking-wider text-slate-400 text-center">Rules</th>
+                                    <th class="px-6 py-4 text-[10px] font-bold uppercase tracking-wider text-slate-400 text-center">Sync Health</th>
+                                    <th class="px-6 py-4 text-[10px] font-bold uppercase tracking-wider text-slate-400 text-right">Relay Controls</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-50">
+                                {% for source in file_sources %}
+                                <tr class="hover:bg-slate-50/30 transition-all group/row">
+                                    <td class="px-6 py-4">
+                                        <div class="flex items-center gap-4">
+                                            <div class="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center border border-slate-100 group-hover/row:scale-105 transition-transform">
+                                                <span class="material-symbols-outlined text-slate-400 group-hover/row:text-primary transition-colors text-xl">description</span>
+                                            </div>
+                                            <div>
+                                                <a href="{% url 'connections:file_source_detail' source.id %}" class="text-base font-bold text-slate-800 hover:text-primary transition-all no-underline block leading-tight font-headline">
+                                                    {{ source.name }}
+                                                </a>
+                                                <div class="flex items-center gap-2 mt-1">
+                                                    <span class="text-[9px] font-bold uppercase tracking-wider text-slate-400">ID: {{ source.id|stringformat:"i"|slice:":8" }}</span>
+                                                    <div class="w-1 h-1 rounded-full bg-slate-200"></div>
+                                                    <span class="text-[9px] font-bold uppercase tracking-wider text-primary">{{ source.encoding|default:"UTF-8"|upper }} CHANNEL</span>
+                                                </div>
+                                            </div>
                                         </div>
-                                    {% else %}
-                                        <div class="flex items-center gap-2 text-slate-300">
-                                            <span class="material-symbols-outlined text-[18px]">tab_unselected</span>
-                                            <span class="text-xs font-black uppercase tracking-wider italic">Raw Stream</span>
+                                    </td>
+                                    <td class="px-6 py-4">
+                                        <div class="flex items-center gap-2 px-3 py-1.5 bg-slate-900 rounded-lg border border-slate-800 w-fit group-hover/row:bg-slate-800 transition-colors shadow-lg">
+                                            <span class="material-symbols-outlined text-[12px] text-primary">folder_open</span>
+                                            <code class="text-[10px] font-bold text-slate-300 tracking-tight">{{ source.relative_path }}</code>
                                         </div>
-                                    {% endif %}
-                                </td>
-                                <td class="px-10 py-10 text-center">
-                                    {% if source.is_active %}
-                                        <span class="px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-600 border border-emerald-100">Synchronized</span>
-                                    {% else %}
-                                        <span class="px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-slate-100 text-slate-400 border border-slate-200">Offline</span>
-                                    {% endif %}
-                                </td>
-                                <td class="px-10 py-10 text-right">
-                                    <div class="flex items-center justify-end gap-3 translate-x-4">
-                                        <a href="{% url 'connections:file_source_detail' source.id %}" 
-                                           class="w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-sky-50 text-sky-600 border border-sky-100 hover:bg-sky-600 hover:text-white hover:shadow-lg hover:shadow-sky-600/20" 
-                                           title="Inspect Data Source">
-                                            <span class="material-symbols-outlined text-[20px] filled">visibility</span>
-                                        </a>
-                                        {% if not user.userprofile.is_viewer %}
-                                            <a href="{% url 'connections:file_source_update' source.id %}" 
-                                               class="w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-600 hover:text-white hover:shadow-lg hover:shadow-indigo-600/20" 
-                                               title="Modify Path & Rules">
-                                                <span class="material-symbols-outlined text-[20px] filled">settings</span>
+                                    </td>
+                                    <td class="px-6 py-4">
+                                        <div class="flex flex-col items-center gap-1">
+                                            <div class="flex items-center gap-1.5 px-2 py-0.5 bg-indigo-50 rounded-md border border-indigo-100">
+                                                <span class="text-[9px] font-bold text-indigo-700 uppercase tracking-wider">DELIM: {{ source.delimiter|default:"," }}</span>
+                                            </div>
+                                            {% if source.has_header %}
+                                                <span class="text-[8px] font-bold text-slate-400 uppercase tracking-widest">HEADERS</span>
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                    <td class="px-6 py-4 text-center">
+                                        <div class="flex flex-col items-center gap-1.5">
+                                            {% if source.is_active %}
+                                                <div class="flex items-center gap-1.5 px-3 py-1 bg-emerald-50 rounded-lg border border-emerald-100">
+                                                    <div class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                                                    <span class="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">ACTIVE</span>
+                                                </div>
+                                            {% else %}
+                                                <div class="flex items-center gap-1.5 px-3 py-1 bg-rose-50 rounded-lg border border-rose-100">
+                                                    <div class="w-1.5 h-1.5 rounded-full bg-rose-500"></div>
+                                                    <span class="text-[10px] font-bold text-rose-700 uppercase tracking-wider">HALTED</span>
+                                                </div>
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                    <td class="px-6 py-4 text-right">
+                                        <div class="flex items-center justify-end gap-2 translate-x-1">
+                                            <a href="{% url 'connections:file_source_detail' source.id %}" 
+                                               class="w-9 h-9 rounded-lg flex items-center justify-center transition-all bg-slate-50 text-slate-600 border border-slate-100 hover:bg-slate-900 hover:text-white" 
+                                               title="Inspect">
+                                                <span class="material-symbols-outlined text-[18px]">analytics</span>
                                             </a>
-                                            <button type="button" 
-                                                    class="w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-emerald-50 text-emerald-600 border border-emerald-100 hover:bg-emerald-600 hover:text-white hover:shadow-lg hover:shadow-emerald-600/20 test-file-source" 
-                                                    data-source-id="{{ source.id }}" 
-                                                    title="Verify Source Access">
-                                                <span class="material-symbols-outlined text-[20px] filled">quick_reference_all</span>
-                                            </button>
-                                            <a href="{% url 'connections:file_source_delete' source.id %}" 
-                                               class="w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-rose-50 text-rose-600 border border-rose-100 hover:bg-rose-600 hover:text-white hover:shadow-lg hover:shadow-rose-600/20" 
-                                               title="Remove Resource">
-                                                <span class="material-symbols-outlined text-[20px] filled">delete</span>
-                                            </a>
-                                        {% endif %}
-                                    </div>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                                            {% if not user.userprofile.is_viewer %}
+                                                <a href="{% url 'connections:file_source_update' source.id %}" 
+                                                   class="w-9 h-9 rounded-lg flex items-center justify-center transition-all bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-600 hover:text-white" 
+                                                   title="Tune">
+                                                    <span class="material-symbols-outlined text-[18px]">tune</span>
+                                                </a>
+                                                <button type="button" 
+                                                        class="w-9 h-9 rounded-lg flex items-center justify-center transition-all bg-emerald-50 text-emerald-600 border border-emerald-100 hover:bg-emerald-600 hover:text-white test-file-source" 
+                                                        data-source-id="{{ source.id }}" 
+                                                        title="Verify">
+                                                    <span class="material-symbols-outlined text-[18px]">settings_input_antenna</span>
+                                                </button>
+                                                <a href="{% url 'connections:file_source_delete' source.id %}" 
+                                                   class="w-9 h-9 rounded-lg flex items-center justify-center transition-all bg-rose-50 text-rose-600 border border-rose-100 hover:bg-rose-600 hover:text-white" 
+                                                   title="Delete">
+                                                    <span class="material-symbols-outlined text-[18px]">link_off</span>
+                                                </a>
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             {% else %}
-                <div class="p-24 text-center bg-slate-50/50">
-                    <div class="w-28 h-28 bg-white rounded-full flex items-center justify-center mx-auto mb-8 text-slate-200 shadow-xl">
-                        <span class="material-symbols-outlined text-7xl">folder_off</span>
+                <div class="bg-white rounded-3xl border border-dashed border-slate-300 p-16 text-center bg-slate-50/30">
+                    <div class="w-20 h-20 bg-white rounded-2xl flex items-center justify-center mx-auto mb-6 text-slate-100 shadow-xl">
+                        <span class="material-symbols-outlined text-4xl text-slate-200">description</span>
                     </div>
-                    <h3 class="text-3xl font-black text-slate-800 tracking-tight">Zero Data Files Configured</h3>
-                    <p class="text-slate-500 max-w-md mx-auto mt-4 text-lg font-medium leading-relaxed">Map enterprise CSV or JSON repositories to the SyncArchitect grid to enable seamless multi-source data ingestion.</p>
+                    <h3 class="text-2xl font-bold text-slate-800 tracking-tight font-headline">Zero Repository Nodes Established</h3>
+                    <p class="text-slate-500 max-w-md mx-auto mt-4 text-base font-medium leading-relaxed">Map enterprise flat-file repositories to the SyncArchitect grid to enabling localized data flow.</p>
                     {% if not user.userprofile.is_viewer %}
-                        <a href="{% url 'connections:file_source_create' %}" class="inline-flex items-center gap-3 px-10 py-5 bg-primary text-white rounded-[24px] font-black uppercase tracking-widest text-sm shadow-2xl shadow-primary/30 hover:scale-105 transition-all mt-10 no-underline">
+                        <a href="{% url 'connections:file_source_create' %}" class="inline-flex items-center gap-3 px-8 py-3.5 bg-primary text-white rounded-xl font-bold uppercase tracking-wider text-xs shadow-xl shadow-primary/20 hover:scale-105 active:scale-95 transition-all mt-8 no-underline group">
                             <span class="material-symbols-outlined text-xl">add_circle</span>
-                            Register Data File
+                            Register First Resource
                         </a>
                     {% endif %}
                 </div>
             {% endif %}
         </div>
     </div>
+</div>
 </div>
 {% endblock %}
 

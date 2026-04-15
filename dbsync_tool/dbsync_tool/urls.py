@@ -16,6 +16,7 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from django.views.generic import RedirectView
 from rest_framework.routers import DefaultRouter
 from sync_jobs.api_views import SyncJobViewSet
 
@@ -23,6 +24,7 @@ router = DefaultRouter()
 router.register(r'jobs', SyncJobViewSet, basename='job')
 
 urlpatterns = [
+    path('login/', RedirectView.as_view(url='/accounts/login/', permanent=True)),
     path('admin/', admin.site.urls),
     path('accounts/', include('accounts.urls')),
     path('connections/', include('connections.urls')),

@@ -16,148 +16,271 @@
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <div class="row">
-        <div class="col-md-8 offset-md-2">
-            <div class="card">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h3>{% if object %}Edit{% else %}Create{% endif %} Database Connection</h3>
+<div class="connection-form-page min-h-screen bg-transparent pb-32" x-data="{ 
+    showPassword: false, 
+    activeTab: 'config',
+    connectionReady: false
+}">
+    <!-- Premium Header -->
+    <div class="px-8 pt-6 pb-8">
+        <div class="max-w-[1200px] mx-auto flex flex-col md:flex-row md:items-end justify-between gap-8">
+            <div class="space-y-4">
+                <div class="flex items-center gap-4">
+                    <div class="w-12 h-12 bg-primary rounded-2xl flex items-center justify-center shadow-xl shadow-primary/30 rotate-3 transition-transform hover:rotate-0">
+                        <span class="material-symbols-outlined text-2xl text-white filled">{% if object %}edit_square{% else %}add_circle{% endif %}</span>
+                    </div>
                     <div>
-                        <button type="button" class="btn btn-outline-secondary btn-sm me-2" onclick="window.history.back();">
-                            <i class="bi bi-arrow-left"></i> Back
-                        </button>
-                        <a href="{% url 'connections:create_hub' %}" class="btn btn-outline-success btn-sm">
-                            <i class="bi bi-diagram-3"></i> Connection Type Hub
-                        </a>
+                        <h1 class="text-3xl font-black text-slate-800 tracking-tight leading-none font-headline">
+                            {% if object %}Configure Node{% else %}New Data Node{% endif %}
+                        </h1>
+                        <div class="flex items-center gap-3 mt-3">
+                            <span class="px-3 py-1 bg-indigo-100 text-indigo-700 text-[10px] font-black uppercase tracking-widest rounded-full">Infrastructure Genesis</span>
+                            <div class="w-1.5 h-1.5 rounded-full bg-slate-300"></div>
+                            <span class="text-sm font-bold text-slate-500">{% if object %}Updating node: {{ object.name }}{% else %}Registering new database instance{% endif %}</span>
+                        </div>
                     </div>
                 </div>
-                <div class="card-body">
-                    {% if messages %}
-                        {% for message in messages %}
-                            <div class="alert alert-{{ message.tags }} alert-dismissible fade show">
-                                {{ message }}
-                                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                            </div>
-                        {% endfor %}
-                    {% endif %}
-
-                    <form method="post">
-                        {% csrf_token %}
-                        
-                        <div class="mb-3">
-                            <label for="{{ form.name.id_for_label }}" class="form-label">Connection Name *</label>
-                            {{ form.name }}
-                            {% if form.name.errors %}
-                                <div class="text-danger small">{{ form.name.errors }}</div>
-                            {% endif %}
-                            <small class="form-text text-muted">A friendly name to identify this connection</small>
-                        </div>
-
-                        <div class="mb-3">
-                            <label for="{{ form.db_type.id_for_label }}" class="form-label">Database Type *</label>
-                            {{ form.db_type }}
-                            {% if form.db_type.errors %}
-                                <div class="text-danger small">{{ form.db_type.errors }}</div>
-                            {% endif %}
-                        </div>
-
-                        <div class="alert alert-info py-2 small mb-3" id="oracle-adw-hint" style="display: none;">
-                            Connects to Oracle Autonomous Data Warehouse using JDBC-like host, port, service name,
-                            username, and password. Supports full and incremental sync as source or target with lossless type mapping.
-                        </div>
-
-                        <div class="row">
-                            <div class="col-md-8 mb-3">
-                                <label for="{{ form.host.id_for_label }}" class="form-label">Host *</label>
-                                {{ form.host }}
-                                {% if form.host.errors %}
-                                    <div class="text-danger small">{{ form.host.errors }}</div>
-                                {% endif %}
-                            </div>
-                            <div class="col-md-4 mb-3">
-                                <label for="{{ form.port.id_for_label }}" class="form-label">Port *</label>
-                                {{ form.port }}
-                                {% if form.port.errors %}
-                                    <div class="text-danger small">{{ form.port.errors }}</div>
-                                {% endif %}
-                            </div>
-                        </div>
-
-                        <div class="mb-3" id="database-name-field"{% if not object %} data-create-form="true"{% endif %}>
-                            <label for="{{ form.database_name.id_for_label }}" class="form-label" id="database-name-label">Database Name *</label>
-                            {{ form.database_name }}
-                            {% if form.database_name.errors %}
-                                <div class="text-danger small">{{ form.database_name.errors }}</div>
-                            {% endif %}
-                            {% if not object %}
-                            <small class="form-text text-muted" id="database-name-help">
-                                Select a database from the list below after testing connection
-                            </small>
-                            {% endif %}
-                        </div>
-
-                        <div class="mb-3">
-                            <label for="{{ form.username.id_for_label }}" class="form-label">Username *</label>
-                            {{ form.username }}
-                            {% if form.username.errors %}
-                                <div class="text-danger small">{{ form.username.errors }}</div>
-                            {% endif %}
-                        </div>
-
-                        <div class="mb-3">
-                            <label for="{{ form.password.id_for_label }}" class="form-label">Password {% if not object %}*{% endif %}</label>
-                            {{ form.password }}
-                            {% if form.password.errors %}
-                                <div class="text-danger small">{{ form.password.errors }}</div>
-                            {% endif %}
-                            <small class="form-text text-muted">{{ form.password.help_text }}</small>
-                        </div>
-
-                        {% if not object %}
-                        <div class="mb-3" id="test-connection-section">
-                            <button type="button" id="test-connection-btn" class="btn btn-info">
-                                <span id="test-connection-text">Test Connection</span>
-                                <span id="test-connection-spinner" class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
-                            </button>
-                            <div id="test-connection-message" class="mt-2"></div>
-                        </div>
-
-                        <div class="mb-3" id="database-selection-section" style="display: none;">
-                            <label for="database-select" class="form-label">Select Database *</label>
-                            <select id="database-select" class="form-select" required>
-                                <option value="">-- Select a database --</option>
-                            </select>
-                            <small class="form-text text-muted">Choose a database from the list above</small>
-                            <div id="database-selection-error" class="text-danger small mt-1" style="display: none;"></div>
-                        </div>
-                        {% else %}
-                        <div class="mb-3" id="test-connection-section-edit">
-                            <button type="button" id="test-connection-btn-edit" class="btn btn-info">
-                                <span id="test-connection-text-edit">Test Connection</span>
-                                <span id="test-connection-spinner-edit" class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
-                            </button>
-                            <div id="test-connection-message-edit" class="mt-2"></div>
-                            <small class="form-text text-muted">Test the connection with the current credentials</small>
-                        </div>
-                        {% endif %}
-
-                        <div class="mb-3 form-check">
-                            {{ form.is_active }}
-                            <label class="form-check-label" for="{{ form.is_active.id_for_label }}">
-                                Active
-                            </label>
-                            {% if form.is_active.errors %}
-                                <div class="text-danger small">{{ form.is_active.errors }}</div>
-                            {% endif %}
-                        </div>
-
-                        <div class="d-flex justify-content-between">
-                            <a href="{% url 'connections:list' %}" class="btn btn-secondary">Cancel</a>
-                            <button type="submit" class="btn btn-primary">{% if object %}Update{% else %}Create{% endif %} Connection</button>
-                        </div>
-                    </form>
-                </div>
             </div>
+            
+            <div class="flex items-center gap-4">
+                <a href="{% url 'connections:list' %}" class="flex items-center gap-3 px-6 py-3 bg-white text-slate-600 border border-slate-200 rounded-xl font-black uppercase tracking-widest text-[10px] shadow-lg shadow-slate-200/50 hover:bg-slate-50 transition-all no-underline">
+                    <span class="material-symbols-outlined text-lg">arrow_back</span>
+                    Abort
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="px-8">
+        <div class="max-w-[1200px] mx-auto">
+            <form method="post" class="space-y-10">
+                {% csrf_token %}
+                
+                <!-- Main Configuration Card -->
+                <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-200/40 overflow-hidden">
+                    <div class="p-8 space-y-8">
+                        
+                        <!-- Section: Primary Identity -->
+                            <div class="space-y-6">
+                                <div class="flex items-center gap-3 mb-2">
+                                    <div class="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+                                        <span class="material-symbols-outlined filled text-[18px]">fingerprint</span>
+                                    </div>
+                                    <h2 class="text-lg font-black text-slate-800 tracking-tight font-headline">Node Identity</h2>
+                                </div>
+                                
+                                <div class="space-y-2">
+                                    <label for="{{ form.name.id_for_label }}" class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Logical Name</label>
+                                    <div class="relative group">
+                                        <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                                            <span class="material-symbols-outlined text-slate-400 group-focus-within:text-primary transition-colors text-[20px]">label</span>
+                                        </div>
+                                        <input type="text" name="{{ form.name.name }}" id="{{ form.name.id_for_label }}" value="{{ form.name.value|default:'' }}" 
+                                               class="w-full pl-12 pr-6 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-primary focus:ring-4 focus:ring-primary/5 transition-all outline-none text-base shadow-sm"
+                                               placeholder="e.g. Production Cluster A" required>
+                                    </div>
+                                    {% if form.name.errors %}
+                                        <p class="text-rose-500 text-xs font-bold mt-2 ml-2">{{ form.name.errors.0 }}</p>
+                                    {% endif %}
+                                </div>
+
+                                <div class="space-y-2">
+                                    <label for="{{ form.db_type.id_for_label }}" class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Technology Stack</label>
+                                    <div class="relative group">
+                                        <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                                            <span class="material-symbols-outlined text-slate-400 group-focus-within:text-primary transition-colors text-[20px]">database</span>
+                                        </div>
+                                        <select name="{{ form.db_type.name }}" id="{{ form.db_type.id_for_label }}" 
+                                                class="w-full pl-12 pr-6 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-primary focus:ring-4 focus:ring-primary/5 transition-all outline-none text-base appearance-none shadow-sm" required>
+                                            {% for value, text in form.db_type.field.choices %}
+                                                <option value="{{ value }}" {% if form.db_type.value == value %}selected{% endif %}>{{ text }}</option>
+                                            {% endfor %}
+                                        </select>
+                                        <div class="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
+                                            <span class="material-symbols-outlined text-slate-400">expand_more</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="space-y-6">
+                                <div class="flex items-center gap-3 mb-2">
+                                    <div class="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600">
+                                        <span class="material-symbols-outlined filled text-[18px]">dns</span>
+                                    </div>
+                                    <h2 class="text-lg font-black text-slate-800 tracking-tight font-headline">Network Topology</h2>
+                                </div>
+
+                                <div class="grid grid-cols-3 gap-6">
+                                    <div class="col-span-2 space-y-2">
+                                        <label for="{{ form.host.id_for_label }}" class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Host / IP</label>
+                                        <input type="text" name="{{ form.host.name }}" id="{{ form.host.id_for_label }}" value="{{ form.host.value|default:'' }}" 
+                                               class="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-primary focus:ring-4 focus:ring-primary/5 transition-all outline-none text-base shadow-sm"
+                                               placeholder="127.0.0.1 or host.internal" required>
+                                    </div>
+                                    <div class="space-y-2">
+                                        <label for="{{ form.port.id_for_label }}" class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Port</label>
+                                        <input type="number" name="{{ form.port.name }}" id="{{ form.port.id_for_label }}" value="{{ form.port.value|default:'' }}" 
+                                               class="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-primary focus:ring-4 focus:ring-primary/5 transition-all outline-none text-base shadow-sm"
+                                               placeholder="5432" required>
+                                    </div>
+                                </div>
+
+                                <div class="bg-indigo-50/50 rounded-[1.5rem] p-6 border border-indigo-100 hidden" id="oracle-adw-hint">
+                                    <div class="flex items-start gap-3">
+                                        <span class="material-symbols-outlined text-indigo-600 mt-0.5">info</span>
+                                        <p class="text-xs font-bold text-indigo-700 leading-relaxed">Oracle ADW requires host, port, and service name from your JDBC connection string. Default port is usually 1522.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="w-full h-px bg-slate-100"></div>
+
+                        <!-- Section: Authentication -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-12">
+                            <div class="space-y-6">
+                                <div class="flex items-center gap-3 mb-2">
+                                    <div class="w-9 h-9 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600">
+                                        <span class="material-symbols-outlined filled text-[18px]">key</span>
+                                    </div>
+                                    <h2 class="text-lg font-black text-slate-800 tracking-tight font-headline">Access Credentials</h2>
+                                </div>
+
+                                <div class="space-y-6">
+                                    <div class="space-y-2">
+                                        <label for="{{ form.username.id_for_label }}" class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Infrastructure Username</label>
+                                        <div class="relative group">
+                                            <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                                                <span class="material-symbols-outlined text-slate-400 group-focus-within:text-emerald-500 transition-colors text-[20px]">person</span>
+                                            </div>
+                                            <input type="text" name="{{ form.username.name }}" id="{{ form.username.id_for_label }}" value="{{ form.username.value|default:'' }}" 
+                                                   class="w-full pl-12 pr-6 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/5 transition-all outline-none text-base shadow-sm"
+                                                   placeholder="db_admin" required>
+                                        </div>
+                                    </div>
+
+                                    <div class="space-y-2">
+                                        <label for="{{ form.password.id_for_label }}" class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Protocol Secret</label>
+                                        <div class="relative group">
+                                            <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                                                <span class="material-symbols-outlined text-slate-400 group-focus-within:text-emerald-500 transition-colors text-[20px]">lock</span>
+                                            </div>
+                                            <input :type="showPassword ? 'text' : 'password'" name="{{ form.password.name }}" id="{{ form.password.id_for_label }}" 
+                                                   class="w-full pl-12 pr-12 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/5 transition-all outline-none text-base shadow-sm"
+                                                   placeholder="••••••••••••" {% if not object %}required{% endif %}>
+                                            <button type="button" @click="showPassword = !showPassword" class="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-400 hover:text-slate-600 transition-colors">
+                                                <span class="material-symbols-outlined text-[20px]" x-text="showPassword ? 'visibility_off' : 'visibility'">visibility</span>
+                                            </button>
+                                        </div>
+                                        <p class="text-[10px] font-bold text-slate-400 mt-1 ml-2">{{ form.password.help_text|default:"Secrets are encrypted with AES-256 for vault security" }}</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="space-y-6">
+                                <div class="flex items-center gap-3 mb-2">
+                                    <div class="w-9 h-9 rounded-xl bg-sky-50 flex items-center justify-center text-sky-600">
+                                        <span class="material-symbols-outlined filled text-[18px]">verified_user</span>
+                                    </div>
+                                    <h2 class="text-lg font-black text-slate-800 tracking-tight font-headline">Verification & Scope</h2>
+                                </div>
+
+                                {% if not object %}
+                                <div class="space-y-4">
+                                    <div class="hidden md:block h-[18px]"></div> <!-- Vertical Alignment Spacer -->
+                                    <button type="button" id="test-connection-btn" class="w-full flex items-center justify-center gap-3 px-8 py-4 bg-slate-900 text-white rounded-xl font-black uppercase tracking-widest text-[10px] shadow-xl shadow-slate-900/40 hover:scale-[1.02] active:scale-95 transition-all group overflow-hidden relative">
+                                        <div class="absolute inset-0 bg-gradient-to-r from-emerald-500 to-sky-500 opacity-0 group-hover:opacity-10 transition-opacity"></div>
+                                        <span id="test-connection-spinner" class="spinner-border spinner-border-sm d-none" role="status"></span>
+                                        <span class="material-symbols-outlined group-hover:animate-pulse text-lg" id="test-icon">analytics</span>
+                                        <span id="test-connection-text">Verify Node & Discover Catalogs</span>
+                                    </button>
+                                    <div id="test-connection-message" class="transition-all duration-500"></div>
+                                </div>
+
+                                <div class="space-y-2 mt-6" id="database-selection-section" style="display: none;">
+                                    <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Select Catalog Node</label>
+                                    <div class="relative">
+                                        <select id="database-select" class="w-full px-5 py-3.5 bg-white border-2 border-primary/30 rounded-xl text-slate-800 font-bold focus:ring-4 focus:ring-primary/5 transition-all outline-none appearance-none shadow-lg shadow-primary/5" required>
+                                            <option value="">-- Discovered Catalogs --</option>
+                                        </select>
+                                        <div class="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
+                                            <span class="material-symbols-outlined text-primary">expand_more</span>
+                                        </div>
+                                    </div>
+                                    <div id="database-selection-error" class="text-rose-500 text-[10px] font-black uppercase mt-1 ml-2" style="display: none;"></div>
+                                </div>
+                                {% else %}
+                                <div class="space-y-4">
+                                    <div class="hidden md:block h-[18px]"></div> <!-- Vertical Alignment Spacer -->
+                                    <button type="button" id="test-connection-btn-edit" class="w-full flex items-center justify-center gap-3 px-8 py-4 bg-slate-900 text-white rounded-xl font-black uppercase tracking-widest text-[10px] shadow-xl shadow-slate-900/40 hover:scale-[1.02] active:scale-95 transition-all group overflow-hidden relative">
+                                        <div class="absolute inset-0 bg-gradient-to-r from-emerald-500 to-sky-500 opacity-0 group-hover:opacity-10 transition-opacity"></div>
+                                        <span id="test-connection-spinner-edit" class="spinner-border spinner-border-sm d-none" role="status"></span>
+                                        <span class="material-symbols-outlined group-hover:animate-pulse text-lg">settings_input_antenna</span>
+                                        <span id="test-connection-text-edit">Verification Audit</span>
+                                    </button>
+                                    <div id="test-connection-message-edit" class="transition-all duration-500"></div>
+                                    <p class="text-center text-[9px] font-black text-slate-400 uppercase tracking-widest mt-2">Audit node accessibility with connection secrets</p>
+                                </div>
+                                {% endif %}
+
+                                <div class="hidden" id="database-name-field" {% if not object %}data-create-form="true"{% endif %}>
+                                    <label for="{{ form.database_name.id_for_label }}" class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1 mb-2" id="database-name-label">Primary Catalog</label>
+                                    <div class="relative group">
+                                        <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                                            <span class="material-symbols-outlined text-slate-400 group-focus-within:text-primary transition-colors text-[20px]">inventory_2</span>
+                                        </div>
+                                        <input type="text" name="{{ form.database_name.name }}" id="{{ form.database_name.id_for_label }}" value="{{ form.database_name.value|default:'' }}" 
+                                               class="w-full pl-12 pr-6 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-primary focus:ring-4 focus:ring-primary/5 transition-all outline-none text-base shadow-sm"
+                                               required readonly>
+                                    </div>
+                                    <p class="text-[10px] font-bold text-slate-400 mt-2 ml-2" id="database-name-help">This node will be used as the primary data source</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="w-full h-px bg-slate-100"></div>
+
+                        <!-- Section: Status & Logic -->
+                        <div class="flex items-center justify-between p-6 bg-slate-50 rounded-2xl border border-slate-100">
+                            <div class="flex items-center gap-5">
+                                <div class="w-12 h-12 rounded-xl bg-white flex items-center justify-center border border-slate-100 text-slate-400">
+                                    <span class="material-symbols-outlined text-2xl filled">power_settings_new</span>
+                                </div>
+                                <div>
+                                    <h3 class="text-base font-black text-slate-800 tracking-tight leading-none mb-1">Node Relay Status</h3>
+                                    <p class="text-[11px] font-bold text-slate-500">Enable or disable this node from the grid</p>
+                                </div>
+                            </div>
+                            
+                            <label class="relative inline-flex items-center cursor-pointer group">
+                                <input type="checkbox" name="{{ form.is_active.name }}" id="{{ form.is_active.id_for_label }}" class="sr-only peer" {% if form.is_active.value %}checked{% endif %}>
+                                <div class="w-16 h-8 bg-slate-200 peer-focus:outline-none ring-4 ring-transparent transition-all rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-6 after:w-7 after:transition-all peer-checked:bg-emerald-500 shadow-inner group-active:scale-95"></div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Premium Form Actions -->
+                    <div class="p-6 px-8 bg-slate-900 border-t border-slate-800 flex flex-col md:flex-row items-center justify-between gap-6">
+                        <div class="flex items-center gap-4">
+                            <div class="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center text-slate-400">
+                                <span class="material-symbols-outlined text-lg">shield</span>
+                            </div>
+                            <p class="text-[9px] font-black uppercase tracking-widest text-slate-500 max-w-[200px]">End-to-End Encryption Enabled for all node secrets</p>
+                        </div>
+                        
+                        <div class="flex items-center gap-4 w-full md:w-auto">
+                            <a href="{% url 'connections:list' %}" class="flex-1 md:flex-none text-center px-8 py-3.5 text-slate-400 hover:text-white font-black uppercase tracking-widest text-[9px] transition-colors no-underline">
+                                Cancel Operation
+                            </a>
+                            <button type="submit" class="flex-1 md:flex-none flex items-center justify-center gap-3 px-10 py-3.5 bg-primary text-white rounded-xl font-black uppercase tracking-widest text-[10px] shadow-xl shadow-primary/40 hover:scale-105 active:scale-95 transition-all group">
+                                <span class="material-symbols-outlined text-lg group-hover:rotate-12 transition-transform">rocket_launch</span>
+                                {% if object %}Audit & Commit Changes{% else %}Initialize Node Relay{% endif %}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </form>
         </div>
     </div>
 </div>

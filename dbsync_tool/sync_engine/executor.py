@@ -15,6 +15,7 @@ from sync_engine.api_sync import APISyncExecutor
 from sync_engine.sap_sync import SAPSyncExecutor
 from sync_engine.zoho_runner import run_zoho_sync
 from sync_engine.azure_devops_runner import run_azure_devops_sync
+from sync_engine.sap_b1_runner import run_sap_b1_sync
 from sync_engine.flat_file_sync import FlatFileSyncExecutor
 from sync_engine.exceptions import SyncExecutionError, TableSyncError
 import logging
@@ -105,18 +106,11 @@ class SyncExecutor:
                         )
                         executor.execute()
                     elif api_connection.api_type == "sap_b1":
-                        executor = SAPSyncExecutor(
+                        run_sap_b1_sync(
                             job=self.job,
                             execution=execution,
-                            api_connector=api_connector,
-                            target_connector=target_connector,
+                            mode=self.job.sync_type or "full",
                         )
-                        executor.execute()
-                        if hasattr(api_connector, "logout"):
-                            try:
-                                api_connector.logout()
-                            except Exception as e:
-                                logger.warning("SAP logout failed: %s", e)
                     else:
                         raise SyncExecutionError(f"Unsupported API type: {api_connection.api_type}")
 
