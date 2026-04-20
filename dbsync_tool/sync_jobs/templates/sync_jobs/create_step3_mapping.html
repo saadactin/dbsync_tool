@@ -30,6 +30,14 @@
         padding: 0.15rem 0.4rem;
         margin-left: 0.5rem;
     }
+    .jump-bottom-btn {
+        position: fixed;
+        right: 108px;
+        bottom: 24px;
+        z-index: 1080;
+        border-radius: 9999px;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+    }
 </style>
 {% endblock %}
 
@@ -192,5 +200,18 @@
         </div>
     </div>
 </div>
+<button type="button" id="jump-bottom-btn-step4" class="btn btn-primary jump-bottom-btn" title="Jump to bottom">
+    ↓ Bottom
+</button>
+<script>
+(function () {
+    var jumpBtn = document.getElementById('jump-bottom-btn-step4');
+    if (jumpBtn) {
+        jumpBtn.addEventListener('click', function () {
+            window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+        });
+    }
+})();
+</script>
 {% endblock %}
 

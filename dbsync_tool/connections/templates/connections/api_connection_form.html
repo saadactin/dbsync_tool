@@ -4,18 +4,26 @@
 {% block title %}{% if object %}Edit{% else %}Create{% endif %} API Connection - DB Sync Tool{% endblock %}
 
 {% block extra_js %}
+<script id="api-connection-config" type="application/json">
+{
+  "testConnectionUrl": "{% if object %}{% url 'connections:api_test' object.pk %}{% else %}{% url 'connections:api_test_new' %}{% endif %}",
+  "modulesUrl": "{% if object %}{% url 'connections:api_modules' object.pk %}{% else %}{% endif %}",
+  "isEditMode": {% if object %}true{% else %}false{% endif %},
+  "sapDocumentTypes": {{ sap_document_types|default:"[]"|safe }}
+}
+</script>
 <script>
-    // Pass URLs to JavaScript
-    {% if object %}
-    const TEST_CONNECTION_URL = "{% url 'connections:api_test' object.pk %}";
-    const MODULES_URL = "{% url 'connections:api_modules' object.pk %}";
-    const IS_EDIT_MODE = true;
-    {% else %}
-    const TEST_CONNECTION_URL = "{% url 'connections:api_test_new' %}";
-    const IS_EDIT_MODE = false;
-    {% endif %}
-    // SAP document types for endpoint selection (static list / fallback)
-    const SAP_DOCUMENT_TYPES = {{ sap_document_types|default:"[]"|safe }};
+    // Linter-friendly: read Django-rendered config from JSON script block.
+    const configElement = document.getElementById("api-connection-config");
+    const apiConnectionConfig = configElement ? JSON.parse(configElement.textContent || "{}") : {};
+
+    // Keep global names expected by api_connection_form.js
+    window.TEST_CONNECTION_URL = apiConnectionConfig.testConnectionUrl || "";
+    window.MODULES_URL = apiConnectionConfig.modulesUrl || "";
+    window.IS_EDIT_MODE = Boolean(apiConnectionConfig.isEditMode);
+    window.SAP_DOCUMENT_TYPES = Array.isArray(apiConnectionConfig.sapDocumentTypes)
+        ? apiConnectionConfig.sapDocumentTypes
+        : [];
 </script>
 <script src="{% static 'js/connection_test_alert.js' %}"></script>
 <script src="{% static 'js/api_connection_form.js' %}"></script>
@@ -50,17 +58,6 @@
 
     <div class="px-8">
         <div class="max-w-[1000px] mx-auto">
-            {% if messages %}
-                <div class="mb-8 space-y-4">
-                    {% for message in messages %}
-                        <div class="p-6 rounded-[2rem] {% if message.tags == 'success' %}bg-emerald-50 text-emerald-700 border border-emerald-100{% else %}bg-rose-50 text-rose-700 border border-rose-100{% endif %} flex items-center gap-4 shadow-sm animate-in fade-in slide-in-from-top-4 duration-500">
-                            <span class="material-symbols-outlined text-2xl">{% if message.tags == 'success' %}check_circle{% else %}error{% endif %}</span>
-                            <span class="font-bold text-sm">{{ message }}</span>
-                        </div>
-                    {% endfor %}
-                </div>
-            {% endif %}
-
             <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-200/40 overflow-hidden relative">
                 <div class="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-primary to-indigo-500"></div>
                 
@@ -283,17 +280,52 @@
 <style>
     /* Styling for dynamic form controls injected by Django/Alpine */
     input[type="text"], input[type="password"], input[type="url"], input[type="email"], select, textarea {
-        @apply w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all placeholder:text-slate-300 text-sm shadow-sm;
+        width: 100%;
+        padding: 0.875rem 1.25rem;
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 0.75rem;
+        font-weight: 700;
+        color: #1e293b;
+        font-size: 0.875rem;
+        line-height: 1.25rem;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+        transition: all 150ms ease;
+    }
+
+    input[type="text"]::placeholder,
+    input[type="password"]::placeholder,
+    input[type="url"]::placeholder,
+    input[type="email"]::placeholder,
+    textarea::placeholder {
+        color: #cbd5e1;
+    }
+
+    input[type="text"]:focus,
+    input[type="password"]:focus,
+    input[type="url"]:focus,
+    input[type="email"]:focus,
+    select:focus,
+    textarea:focus {
+        outline: none;
+        border-color: #0ea5e9;
+        box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.1);
     }
     
     .custom-scrollbar::-webkit-scrollbar {
         width: 6px;
     }
     .custom-scrollbar::-webkit-scrollbar-track {
-        @apply bg-transparent;
+        background: transparent;
     }
     .custom-scrollbar::-webkit-scrollbar-thumb {
-        @apply bg-slate-200 rounded-full hover:bg-slate-300 transition-colors;
+        background: #e2e8f0;
+        border-radius: 9999px;
+        transition: background-color 150ms ease;
+    }
+
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+        background: #cbd5e1;
     }
 </style>
 {% endblock %}

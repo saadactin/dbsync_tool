@@ -200,6 +200,11 @@ class SyncExecutor:
                 except Exception as e:
                     logger.warning(f"Error updating next_run_at after execution: {str(e)}")
                 logger.info(f"Successfully completed execution {execution.id} for job {self.job.id}")
+                try:
+                    from sync_engine.size_collector import collect_and_persist_sizes
+                    collect_and_persist_sizes(self.job, execution)
+                except Exception as e:
+                    logger.warning(f"Size collection failed for execution {execution.id}: {e}")
                 self._send_summary_email(execution)
             
         except TableSyncError as e:

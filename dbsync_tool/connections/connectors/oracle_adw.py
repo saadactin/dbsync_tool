@@ -379,6 +379,74 @@ class OracleADWConnector(DBConnector):
                 f"Failed to get row count for table {schema}.{table}: {e}"
             )
 
+    def get_database_size_bytes(self) -> Optional[int]:
+        """
+        Return total segment bytes visible to the current user. Tries dba_segments
+        first (requires privilege), falls back to user_segments.
+        """
+        def _do():
+            if not self._connection:
+                self.connect()
+            with self._connection.cursor() as cursor:  # type: ignore[union-attr]
+                try:
+                    cursor.execute("SELECT NVL(SUM(bytes), 0) FROM dba_segments")
+                    row = cursor.fetchone()
+                    if row and row[0] is not None:
+                        return int(row[0])
+                except Exception:
+                    pass
+                cursor.execute("SELECT NVL(SUM(bytes), 0) FROM user_segments")
+                row = cursor.fetchone()
+                return int(row[0]) if row and row[0] is not None else None
+
+        try:
+            return self._with_connection_retry(_do)
+        except Exception as e:
+            logger.warning(f"Failed to get Oracle database size: {str(e)}")
+            return None
+
+    def get_table_size_bytes(self, schema: str, table: str) -> Optional[int]:
+        """Return sum of bytes for all segments backing a specific Oracle table."""
+        owner = (schema or "").upper()
+        table_name = (table or "").upper()
+
+        def _do():
+            if not self._connection:
+                self.connect()
+            with self._connection.cursor() as cursor:  # type: ignore[union-attr]
+                try:
+                    cursor.execute(
+                        """
+                        SELECT NVL(SUM(bytes), 0)
+                        FROM dba_segments
+                        WHERE owner = :owner AND segment_name = :tbl
+                        """,
+                        {"owner": owner, "tbl": table_name},
+                    )
+                    row = cursor.fetchone()
+                    if row and row[0] is not None and int(row[0]) > 0:
+                        return int(row[0])
+                except Exception:
+                    pass
+                cursor.execute(
+                    """
+                    SELECT NVL(SUM(bytes), 0)
+                    FROM user_segments
+                    WHERE segment_name = :tbl
+                    """,
+                    {"tbl": table_name},
+                )
+                row = cursor.fetchone()
+                return int(row[0]) if row and row[0] is not None else None
+
+        try:
+            return self._with_connection_retry(_do)
+        except Exception as e:
+            logger.warning(
+                f"Failed to get Oracle table size for {schema}.{table}: {str(e)}"
+            )
+            return None
+
     def fetch_batch(
         self,
         query: str,

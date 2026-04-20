@@ -148,6 +148,76 @@ class IncrementalSyncExecutor:
         except Exception:
             return None
 
+    def _identifier_sql(self, db_type: str, name: str) -> str:
+        db = (db_type or "").lower()
+        if db == "sqlserver":
+            return f"[{name}]"
+        if db == "mysql":
+            return f"`{name}`"
+        return f'"{name}"'
+
+    def _schema_table_sql(self, db_type: str, schema: str, table: str) -> str:
+        db = (db_type or "").lower()
+        if db == "sqlserver":
+            return f"[{schema}].[{table}]"
+        if db == "mysql":
+            return f"`{schema}`.`{table}`"
+        return f'"{schema}"."{table}"'
+
+    def _get_source_max_incremental_value(
+        self,
+        *,
+        schema: str,
+        table: str,
+        incremental_column: str,
+    ) -> Any:
+        source_db = self.query_builder.get_db_type(self.source_connector)
+        table_sql = self._schema_table_sql(source_db, schema, table)
+        col_sql = self._identifier_sql(source_db, incremental_column)
+        query = f"SELECT MAX({col_sql}) FROM {table_sql}"
+        rows = self.source_connector.execute_query_fetchall(query)
+        if rows and len(rows[0]) > 0:
+            return rows[0][0]
+        return None
+
+    def _target_table_has_rows(self, *, schema: str, table: str) -> bool:
+        try:
+            if not self.target_connector.table_exists(schema, table):
+                return False
+        except Exception:
+            return False
+        target_db = self.query_builder.get_db_type(self.target_connector)
+        table_sql = self._schema_table_sql(target_db, schema, table)
+        query = f"SELECT COUNT(*) FROM {table_sql}"
+        rows = self.target_connector.execute_query_fetchall(query)
+        return bool(rows and len(rows[0]) > 0 and int(rows[0][0] or 0) > 0)
+
+    def _count_rows_newer_than_checkpoint(
+        self,
+        rows: List[tuple],
+        incremental_col_index: int,
+        checkpoint_value: Any,
+    ) -> int:
+        """
+        Count rows with incremental value strictly greater than the previous checkpoint.
+        This keeps overlap-safe reprocessing while reporting true net-new progress in UI.
+        """
+        if checkpoint_value is None:
+            return int(len(rows or []))
+        newer = 0
+        for row in (rows or []):
+            try:
+                row_value = row[incremental_col_index]
+            except Exception:
+                continue
+            try:
+                if self._compare_incremental_values(row_value, checkpoint_value):
+                    newer += 1
+            except Exception:
+                # Defensive fallback: if comparison fails, treat as non-new for metrics.
+                continue
+        return newer
+
     def _build_checkpoint_diagnostics(
         self,
         *,
@@ -1214,8 +1284,43 @@ class IncrementalSyncExecutor:
                     f"Using checkpoint value for {schema}.{table}: {checkpoint_value}"
                 )
             else:
-                logger.info(f"No checkpoint found for {schema}.{table} - performing first sync")
+                logger.info(f"No checkpoint found for {schema}.{table}.")
                 effective_checkpoint_value = None
+                # If this table already has data in target (e.g., user switched full -> incremental),
+                # bootstrap checkpoint from source max incremental value to prevent full re-load.
+                try:
+                    if self._target_table_has_rows(schema=target_schema, table=target_table):
+                        source_max = self._get_source_max_incremental_value(
+                            schema=schema,
+                            table=table,
+                            incremental_column=incremental_column,
+                        )
+                        if source_max is not None:
+                            self.checkpoint_manager.create_or_update_checkpoint(
+                                schema_name=schema,
+                                table_name=table,
+                                value=source_max,
+                            )
+                            checkpoint_value_raw = source_max
+                            checkpoint_value = source_max
+                            effective_checkpoint_value = self._apply_incremental_overlap(
+                                checkpoint_value,
+                                inc_type_l,
+                            )
+                            logger.info(
+                                "Bootstrapped incremental checkpoint for %s.%s from source max value %s "
+                                "because target already had rows.",
+                                schema,
+                                table,
+                                source_max,
+                            )
+                except Exception as bootstrap_error:
+                    logger.warning(
+                        "Checkpoint bootstrap skipped for %s.%s: %s. Continuing with first incremental sync.",
+                        schema,
+                        table,
+                        str(bootstrap_error),
+                    )
             
             # Get column information
             try:
@@ -1316,6 +1421,7 @@ class IncrementalSyncExecutor:
             batch_number = 0
             total_rows_fetched = 0
             total_rows_inserted = 0
+            total_rows_net_new = 0
             current_checkpoint = effective_checkpoint_value  # Track current position for keyset
             last_pk_values = None
             max_incremental_value = checkpoint_value
@@ -1414,6 +1520,12 @@ class IncrementalSyncExecutor:
                         ),
                     )
                     total_rows_inserted += inserted
+                    net_new_in_batch = self._count_rows_newer_than_checkpoint(
+                        rows=batch,
+                        incremental_col_index=incremental_col_index,
+                        checkpoint_value=checkpoint_value,
+                    )
+                    total_rows_net_new += net_new_in_batch
                 except Exception as e:
                     error_msg = f"Failed to upsert batch {batch_number} for {schema}.{table}: {str(e)}"
                     logger.error(error_msg, exc_info=True)
@@ -1423,7 +1535,8 @@ class IncrementalSyncExecutor:
                 # Update log
                 log.batch_number = batch_number
                 log.rows_fetched = total_rows_fetched
-                log.rows_inserted = total_rows_inserted
+                # Report net-new rows for incremental dashboards.
+                log.rows_inserted = total_rows_net_new
                 log.save()
                 
                 # Update execution progress
@@ -1519,9 +1632,14 @@ class IncrementalSyncExecutor:
                 parts.append("Perfect accuracy: Yes" if perfect else "Perfect accuracy: No")
                 if mismatched > 0:
                     parts.append(f"Mismatched rows: {mismatched}")
+                parts.append(f"Rows upserted: {total_rows_inserted}")
+                parts.append(f"Net new rows: {total_rows_net_new}")
                 log.verification_summary = f"{'; '.join(parts)}; {checkpoint_decision_text}{schema_drift_suffix}"
             else:
-                log.verification_summary = f"{checkpoint_decision_text}{schema_drift_suffix}"
+                log.verification_summary = (
+                    f"Rows upserted={total_rows_inserted}; net_new_rows={total_rows_net_new}; "
+                    f"{checkpoint_decision_text}{schema_drift_suffix}"
+                )
             
             # Mark log as completed
             log.status = 'completed'
@@ -1530,7 +1648,8 @@ class IncrementalSyncExecutor:
             
             logger.info(
                 f"Successfully synced table {schema}.{table} incrementally: "
-                f"{total_rows_inserted} rows in {batch_number} batches"
+                f"upserted={total_rows_inserted}, net_new={total_rows_net_new} "
+                f"in {batch_number} batches"
             )
 
             # NEW: Reconcile deletes (Perfect Sync)
@@ -2173,12 +2292,22 @@ class IncrementalSyncExecutor:
         except TypeError:
             # Some pandas dtypes can raise on isna; keep original behavior and attempt upsert.
             pass
-        self.target_connector.upsert_dataframe(
-            schema=schema,
-            table=table,
-            df=df,
-            key_column=key_column,
-        )
+        try:
+            self.target_connector.upsert_dataframe(
+                schema=schema,
+                table=table,
+                df=df,
+                key_column=key_column,
+                key_columns=key_columns,
+            )
+        except TypeError:
+            # Backward compatibility for connectors that only support single-key upsert.
+            self.target_connector.upsert_dataframe(
+                schema=schema,
+                table=table,
+                df=df,
+                key_column=key_column,
+            )
         return int(len(df))
 
     def reconcile_deletes(self, job_table: SyncJobTable, target_schema: str, target_table: Optional[str] = None):

@@ -298,6 +298,86 @@ class SQLServerConnector(DBConnector):
         cursor.close()
         return count
     
+    def get_database_size_bytes(self) -> Optional[int]:
+        """
+        Return allocated DB size in bytes by summing sys.database_files
+        (page size = 8 KB). Falls back to sys.master_files when permissions
+        restrict sys.database_files access.
+        """
+        try:
+            if not self._connection:
+                self.connect()
+            cursor = self._connection.cursor()
+            try:
+                cursor.execute("SELECT COALESCE(SUM(CAST(size AS BIGINT)), 0) * 8 * 1024 FROM sys.database_files")
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    cursor.close()
+                    return int(row[0])
+            except Exception:
+                pass
+            db_name = self.database_name
+            if db_name:
+                cursor.execute(
+                    "SELECT COALESCE(SUM(CAST(size AS BIGINT)), 0) * 8 * 1024 FROM sys.master_files WHERE database_id = DB_ID(?)",
+                    (db_name,),
+                )
+                row = cursor.fetchone()
+                cursor.close()
+                return int(row[0]) if row and row[0] is not None else None
+            cursor.close()
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to get SQL Server database size: {str(e)}")
+            return None
+
+    def get_table_size_bytes(self, schema: str, table: str) -> Optional[int]:
+        """Return sum of used_page_count * 8KB for a SQL Server table (includes indexes)."""
+        try:
+            if not self._connection:
+                self.connect()
+            cursor = self._connection.cursor()
+            try:
+                cursor.execute(
+                    """
+                    SELECT COALESCE(SUM(CAST(ps.used_page_count AS BIGINT)), 0) * 8 * 1024
+                    FROM sys.dm_db_partition_stats ps
+                    JOIN sys.tables t ON ps.object_id = t.object_id
+                    JOIN sys.schemas s ON t.schema_id = s.schema_id
+                    WHERE s.name = ? AND t.name = ?
+                    """,
+                    (schema, table),
+                )
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    value = int(row[0])
+                    if value > 0:
+                        cursor.close()
+                        return value
+            except Exception:
+                # Fallback below covers cases where DMV permissions are restricted.
+                pass
+
+            # Fallback: OBJECT_ID + total pages from sys.allocation_units path.
+            object_name = f"[{schema}].[{table}]"
+            cursor.execute(
+                """
+                SELECT COALESCE(SUM(CAST(a.total_pages AS BIGINT)), 0) * 8 * 1024
+                FROM sys.partitions p
+                JOIN sys.allocation_units a ON p.partition_id = a.container_id
+                WHERE p.object_id = OBJECT_ID(?)
+                """,
+                (object_name,),
+            )
+            row = cursor.fetchone()
+            cursor.close()
+            return int(row[0]) if row and row[0] is not None else None
+        except Exception as e:
+            logger.warning(
+                f"Failed to get SQL Server table size for {schema}.{table}: {str(e)}"
+            )
+            return None
+
     def get_approximate_row_count(self, schema: str, table: str) -> Optional[int]:
         """
         Get approximate row count using sys.dm_db_partition_stats (safe, no table scan)

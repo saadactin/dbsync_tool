@@ -111,6 +111,38 @@ class MongoDBConnector(DBConnector):
         """MongoDB has databases; we expose them as schemas for UI consistency."""
         return self.list_databases()
 
+    def get_database_size_bytes(self) -> Optional[int]:
+        """Return dataSize from dbStats for the configured database."""
+        try:
+            if not self._client:
+                self.connect()
+            db_name = self.database_name
+            if not db_name:
+                return None
+            stats = self._client[db_name].command("dbStats")
+            value = stats.get("dataSize")
+            return int(value) if value is not None else None
+        except Exception as e:
+            logger.warning(f"Failed to get MongoDB database size: {str(e)}")
+            return None
+
+    def get_table_size_bytes(self, schema: str, table: str) -> Optional[int]:
+        """Return size (logical BSON bytes) from collStats for a MongoDB collection."""
+        try:
+            if not self._client:
+                self.connect()
+            db_name = schema or self.database_name
+            if not db_name:
+                return None
+            stats = self._client[db_name].command("collStats", table)
+            value = stats.get("size")
+            return int(value) if value is not None else None
+        except Exception as e:
+            logger.warning(
+                f"Failed to get MongoDB collection size for {schema}.{table}: {str(e)}"
+            )
+            return None
+
     def get_tables(self, schema: str) -> List[str]:
         """List collections in the given database (schema). Day 1: minimal."""
         if not self._client:

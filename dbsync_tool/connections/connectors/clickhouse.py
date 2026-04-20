@@ -221,6 +221,44 @@ class ClickHouseConnector(DBConnector):
         count = result.result_rows[0][0]
         return int(count)
     
+    def get_database_size_bytes(self) -> Optional[int]:
+        """Return total compressed bytes for all tables in the connected ClickHouse database."""
+        try:
+            if not self._connection:
+                self.connect()
+            db = self.database_name or "default"
+            query = (
+                "SELECT COALESCE(SUM(total_bytes), 0) FROM system.tables "
+                "WHERE database = {db:String}"
+            )
+            result = self._connection.query(query, parameters={"db": db})
+            if result.result_rows and result.result_rows[0][0] is not None:
+                return int(result.result_rows[0][0])
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to get ClickHouse database size: {str(e)}")
+            return None
+
+    def get_table_size_bytes(self, schema: str, table: str) -> Optional[int]:
+        """Return total_bytes from system.tables for a ClickHouse table (bytes on disk)."""
+        try:
+            if not self._connection:
+                self.connect()
+            db = schema or self.database_name or "default"
+            query = (
+                "SELECT total_bytes FROM system.tables "
+                "WHERE database = {db:String} AND name = {tbl:String}"
+            )
+            result = self._connection.query(query, parameters={"db": db, "tbl": table})
+            if result.result_rows and result.result_rows[0][0] is not None:
+                return int(result.result_rows[0][0])
+            return None
+        except Exception as e:
+            logger.warning(
+                f"Failed to get ClickHouse table size for {schema}.{table}: {str(e)}"
+            )
+            return None
+
     def fetch_batch(self, query: str, batch_size: int, offset: int = 0, order_by: Optional[str] = None) -> List[Tuple]:
         """Fetch batch with proper ordering"""
         if not self._connection:
@@ -394,15 +432,17 @@ class ClickHouseConnector(DBConnector):
             
             order_by_clause = ', '.join(order_by_cols)
             
-            # Create table with MergeTree or ReplacingMergeTree engine
-            # ReplacingMergeTree allows for upserts/deduplication based on the version
+            # Create table with MergeTree or ReplacingMergeTree engine.
+            # Use ReplacingMergeTree only when a version/incremental column is provided.
+            # Plain full-load tables should use MergeTree to avoid accidental row collapse
+            # when ORDER BY keys are low-cardinality (e.g., Region).
             if incremental_column:
                 # Use incremental_column as version to ensure correct overwriting
                 engine = f"ReplacingMergeTree(`{incremental_column}`)"
                 logger.info(f"Using ReplacingMergeTree with version column: {incremental_column}")
             else:
-                engine = "ReplacingMergeTree()"
-                logger.info("Using ReplacingMergeTree without specific version column (will use latest insertion)")
+                engine = "MergeTree()"
+                logger.info("Using MergeTree for non-incremental table (no deduplication)")
 
             create_query = f"""
                 CREATE TABLE IF NOT EXISTS `{schema}`.`{table}` (
@@ -821,6 +861,25 @@ class ClickHouseConnector(DBConnector):
                 if "uuid" in t:
                     return uuid.UUID(int=0)
                 return ''
+
+            def _parse_temporal_string(value: str):
+                """
+                Parse temporal strings robustly across common DB formats.
+                Returns datetime or None.
+                """
+                s = (value or "").strip()
+                if not s:
+                    return None
+                try:
+                    # Handles ISO timestamps, timezone offsets, and many common formats.
+                    dt = pd.to_datetime(s, errors="coerce", utc=False)
+                    if pd.isna(dt):
+                        return None
+                    if hasattr(dt, "to_pydatetime"):
+                        return dt.to_pydatetime()
+                    return dt
+                except Exception:
+                    return None
             
             # Coerce data to match column types BEFORE normalization
             # This ensures clickhouse-connect receives consistent types
@@ -847,28 +906,18 @@ class ClickHouseConnector(DBConnector):
                         # For Date/DateTime columns, ensure values are date/datetime objects, not strings
                         elif 'date' in col_type:
                             if isinstance(value, str):
-                                # Try to parse string to date
-                                try:
-                                    # datetime is already imported at top of file
-                                    # Try different date formats
-                                    parsed_dt = None
-                                    for fmt in ['%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%Y/%m/%d', '%d/%m/%Y']:
-                                        try:
-                                            parsed_dt = datetime.strptime(value, fmt)
-                                            break
-                                        except ValueError:
-                                            continue
-                                    
-                                    if parsed_dt:
-                                        if 'datetime' in col_type or 'timestamp' in col_type:
-                                            coerced_values.append(parsed_dt)
-                                        else:
-                                            coerced_values.append(parsed_dt.date())
+                                parsed_dt = _parse_temporal_string(value)
+                                if parsed_dt is not None:
+                                    if 'datetime' in col_type or 'timestamp' in col_type:
+                                        coerced_values.append(parsed_dt)
                                     else:
-                                        # Couldn't parse, keep as string (will cause error but better than crash)
-                                        coerced_values.append(value)
-                                except Exception:
-                                    coerced_values.append(value)
+                                        coerced_values.append(parsed_dt.date())
+                                else:
+                                    # Never pass raw strings to Date/DateTime columns.
+                                    if column_nullable.get(idx, True):
+                                        coerced_values.append(None)
+                                    else:
+                                        coerced_values.append(_default_for_non_nullable(col_type))
                             elif isinstance(value, (date, datetime)):
                                 # Already a date/datetime object
                                 coerced_values.append(value)
@@ -918,23 +967,14 @@ class ClickHouseConnector(DBConnector):
                             elif isinstance(value, datetime):
                                 normalized.append(value.date())
                             elif isinstance(value, str):
-                                # Try to parse string to date
-                                try:
-                                    parsed_dt = None
-                                    for fmt in ['%Y-%m-%d', '%Y/%m/%d', '%d/%m/%Y', '%Y-%m-%d %H:%M:%S']:
-                                        try:
-                                            parsed_dt = datetime.strptime(value, fmt)
-                                            break
-                                        except ValueError:
-                                            continue
-                                    
-                                    if parsed_dt:
-                                        normalized.append(parsed_dt.date())
+                                parsed_dt = _parse_temporal_string(value)
+                                if parsed_dt is not None:
+                                    normalized.append(parsed_dt.date())
+                                else:
+                                    if column_nullable.get(idx, True):
+                                        normalized.append(None)
                                     else:
-                                        # Couldn't parse, keep as string (will error but better than crash)
-                                        normalized.append(value)
-                                except Exception:
-                                    normalized.append(value)
+                                        normalized.append(_default_for_non_nullable(col_type))
                             else:
                                 normalized.append(value)
                         elif "uuid" in col_type:
@@ -953,40 +993,19 @@ class ClickHouseConnector(DBConnector):
                                 dt_value = datetime.combine(value, datetime.min.time())
                                 normalized.append(dt_value)
                             elif isinstance(value, str):
-                                # Try to parse string to datetime
-                                try:
-                                    parsed_dt = None
-                                    # Expanded list of date formats for better compatibility
-                                    date_formats = [
-                                        '%Y-%m-%d %H:%M:%S',
-                                        '%Y-%m-%dT%H:%M:%S',
-                                        '%Y-%m-%dT%H:%M:%SZ',
-                                        '%Y-%m-%d %H:%M:%S.%f',
-                                        '%Y-%m-%dT%H:%M:%S.%f',
-                                        '%Y-%m-%d',
-                                        '%Y/%m/%d',
-                                        '%d/%m/%Y',
-                                        '%m/%d/%Y',
-                                        '%d-%m-%Y',
-                                        '%Y%m%d'
-                                    ]
-                                    for fmt in date_formats:
-                                        try:
-                                            parsed_dt = datetime.strptime(value, fmt)
-                                            break
-                                        except ValueError:
-                                            continue
-                                    
-                                    if parsed_dt:
-                                        normalized.append(parsed_dt)
-                                    else:
-                                        # CRITICAL: If we can't parse a date, don't pass a string to a DateTime column
-                                        # This prevents the 'str' object has no attribute 'timestamp' error
-                                        logger.error(f"Failed to parse datetime value '{value}' for column at index {idx}. Using None.")
+                                parsed_dt = _parse_temporal_string(value)
+                                if parsed_dt is not None:
+                                    normalized.append(parsed_dt)
+                                else:
+                                    logger.error(
+                                        "Failed to parse datetime value '%s' for column index %s. Using null/default.",
+                                        value,
+                                        idx,
+                                    )
+                                    if column_nullable.get(idx, True):
                                         normalized.append(None)
-                                except Exception as e:
-                                    logger.error(f"Unexpected error parsing datetime '{value}': {str(e)}")
-                                    normalized.append(None)
+                                    else:
+                                        normalized.append(_default_for_non_nullable(col_type))
                             else:
                                 normalized.append(value)
                         else:

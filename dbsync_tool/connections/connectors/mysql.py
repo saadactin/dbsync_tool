@@ -182,6 +182,56 @@ class MySQLConnector(DBConnector):
         cursor.close()
         return count
     
+    def get_database_size_bytes(self) -> Optional[int]:
+        """
+        Return total size (data + index) in bytes for the current database
+        using information_schema.tables.
+        """
+        try:
+            if not self._connection:
+                self.connect()
+            schema = self.database_name
+            if not schema:
+                return None
+            cursor = self._connection.cursor()
+            cursor.execute(
+                """
+                SELECT COALESCE(SUM(data_length + index_length), 0)
+                FROM information_schema.tables
+                WHERE table_schema = %s
+                """,
+                (schema,),
+            )
+            row = cursor.fetchone()
+            cursor.close()
+            return int(row[0]) if row and row[0] is not None else None
+        except Exception as e:
+            logger.warning(f"Failed to get MySQL database size: {str(e)}")
+            return None
+
+    def get_table_size_bytes(self, schema: str, table: str) -> Optional[int]:
+        """Return data_length + index_length in bytes for a specific MySQL table."""
+        try:
+            if not self._connection:
+                self.connect()
+            cursor = self._connection.cursor()
+            cursor.execute(
+                """
+                SELECT COALESCE(data_length, 0) + COALESCE(index_length, 0)
+                FROM information_schema.tables
+                WHERE table_schema = %s AND table_name = %s
+                """,
+                (schema, table),
+            )
+            row = cursor.fetchone()
+            cursor.close()
+            return int(row[0]) if row and row[0] is not None else None
+        except Exception as e:
+            logger.warning(
+                f"Failed to get MySQL table size for {schema}.{table}: {str(e)}"
+            )
+            return None
+
     def get_approximate_row_count(self, schema: str, table: str) -> Optional[int]:
         """
         Get approximate row count using information_schema statistics (safe, no table scan)

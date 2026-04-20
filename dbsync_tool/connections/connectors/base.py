@@ -186,6 +186,25 @@ class DBConnector(ABC):
         raise NotImplementedError(
             f"{self.__class__.__name__}.execute_query_fetchall is not implemented"
         )
+
+    def get_database_size_bytes(self) -> Optional[int]:
+        """
+        Return the whole-database allocated/logical size in bytes.
+
+        Default returns None, meaning "not supported / cannot compute".
+        Concrete connectors override this with engine-specific queries.
+        Implementations MUST swallow their own errors and return None on failure.
+        """
+        return None
+
+    def get_table_size_bytes(self, schema: str, table: str) -> Optional[int]:
+        """
+        Return the size of a single table in bytes (including indexes if the
+        engine reports them together, to stay apples-to-apples per engine).
+
+        Default returns None. Implementations MUST return None on failure.
+        """
+        return None
     
     @abstractmethod
     def create_table(self, schema: str, table: str, columns: List[ColumnInfo]):

@@ -2,6 +2,8 @@
 PostgreSQL database connector implementation
 """
 import re
+import math
+import numbers
 import psycopg2
 from psycopg2.extras import execute_values
 from psycopg2 import sql
@@ -104,6 +106,63 @@ def _register_safe_pg_temporal_types(conn) -> None:
 
 class PostgresConnector(DBConnector):
     """PostgreSQL database connector"""
+
+    def _execute_values_resilient(
+        self,
+        cursor,
+        query,
+        rows: List[Tuple[Any, ...]],
+        page_size: int = 1000,
+        context: str = "",
+    ) -> Tuple[int, int]:
+        """
+        Execute values with row-level resilience.
+
+        Strategy:
+        - Try chunk as a whole.
+        - If it fails, rollback to savepoint and split the chunk.
+        - Recursively isolate unrecoverable rows and skip only those rows.
+
+        Returns:
+            (applied_rows, skipped_rows)
+        """
+        if not rows:
+            return 0, 0
+
+        applied_rows = 0
+        skipped_rows = 0
+        stack: List[List[Tuple[Any, ...]]] = [rows]
+        savepoint_counter = 0
+
+        while stack:
+            chunk = stack.pop()
+            if not chunk:
+                continue
+
+            savepoint_counter += 1
+            savepoint = f"sp_resilient_{savepoint_counter}"
+            cursor.execute(f"SAVEPOINT {savepoint}")
+            try:
+                execute_values(cursor, query, chunk, page_size=min(page_size, len(chunk)))
+                cursor.execute(f"RELEASE SAVEPOINT {savepoint}")
+                applied_rows += len(chunk)
+            except Exception as exc:
+                cursor.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                cursor.execute(f"RELEASE SAVEPOINT {savepoint}")
+                if len(chunk) == 1:
+                    skipped_rows += 1
+                    logger.warning(
+                        "Skipping one bad row during resilient write (%s): %s",
+                        context or "postgres_write",
+                        str(exc),
+                    )
+                    continue
+                mid = len(chunk) // 2
+                # Process smaller chunks to isolate problematic rows.
+                stack.append(chunk[mid:])
+                stack.append(chunk[:mid])
+
+        return applied_rows, skipped_rows
     
     def connect(self):
         """Establish PostgreSQL connection with enhanced error handling"""
@@ -336,6 +395,51 @@ class PostgresConnector(DBConnector):
             cursor.execute(query)
             return cursor.fetchone()[0]
     
+    def get_database_size_bytes(self) -> Optional[int]:
+        """Return whole-database size using pg_database_size() on the current DB."""
+        try:
+            if not self._connection:
+                self.connect()
+            with self._connection.cursor() as cursor:
+                cursor.execute("SELECT pg_database_size(current_database())")
+                row = cursor.fetchone()
+                return int(row[0]) if row and row[0] is not None else None
+        except Exception as e:
+            logger.warning(f"Failed to get Postgres database size: {str(e)}")
+            return None
+
+    def get_table_size_bytes(self, schema: str, table: str) -> Optional[int]:
+        """Return pg_total_relation_size (heap + indexes + toast) for schema.table."""
+        try:
+            if not self._connection:
+                self.connect()
+            with self._connection.cursor() as cursor:
+                # Use to_regclass to avoid raising relation-does-not-exist errors.
+                qualified = f'"{schema}"."{table}"'
+                cursor.execute(
+                    """
+                    SELECT
+                        CASE
+                            WHEN to_regclass(%s) IS NULL THEN NULL
+                            ELSE pg_total_relation_size(to_regclass(%s))
+                        END
+                    """,
+                    (qualified, qualified),
+                )
+                row = cursor.fetchone()
+                return int(row[0]) if row and row[0] is not None else None
+        except Exception as e:
+            # Clear failed transaction state so subsequent fallback probes can run.
+            try:
+                if self._connection:
+                    self._connection.rollback()
+            except Exception:
+                pass
+            logger.warning(
+                f"Failed to get Postgres table size for {schema}.{table}: {str(e)}"
+            )
+            return None
+
     def get_approximate_row_count(self, schema: str, table: str) -> Optional[int]:
         """
         Get approximate row count using pg_class statistics (safe, no table scan)
@@ -660,8 +764,21 @@ class PostgresConnector(DBConnector):
                     col_identifiers
                 )
                 
-                # Use execute_values for efficient bulk insert
-                execute_values(cursor, insert_query, normalized_rows, page_size=1000)
+                applied, skipped = self._execute_values_resilient(
+                    cursor=cursor,
+                    query=insert_query,
+                    rows=normalized_rows,
+                    page_size=1000,
+                    context=f"bulk_insert {schema}.{table}",
+                )
+                if skipped > 0:
+                    logger.warning(
+                        "Resilient bulk insert for %s.%s skipped %s row(s), applied %s row(s).",
+                        schema,
+                        table,
+                        skipped,
+                        applied,
+                    )
                 self._connection.commit()
         except Exception as e:
             self._connection.rollback()
@@ -795,12 +912,185 @@ class PostgresConnector(DBConnector):
             self._connection.rollback()
             raise DatabaseConnectionError(f"Failed to add missing columns: {str(e)}")
     
+    def _normalize_rows_for_upsert(
+        self,
+        schema: str,
+        table: str,
+        df: pd.DataFrame,
+    ) -> List[Tuple[Any, ...]]:
+        """
+        Normalize DataFrame values for PostgreSQL upsert:
+        - Convert pandas/NumPy null-like values to None.
+        - Convert Timestamp to Python datetime.
+        - Remove null bytes from strings.
+        - Guard BIGINT overflow by coercing out-of-range values to NULL.
+        """
+        try:
+            target_columns = self.get_columns(schema, table)
+        except Exception:
+            target_columns = []
+        type_by_col = {
+            (getattr(c, "name", "") or "").lower(): (getattr(c, "data_type", "") or "").lower()
+            for c in target_columns
+            if getattr(c, "name", None)
+        }
+
+        bigint_min = -9223372036854775808
+        bigint_max = 9223372036854775807
+
+        def _is_missing(value: Any) -> bool:
+            if value is None:
+                return True
+            try:
+                return bool(pd.isna(value))
+            except Exception:
+                return False
+
+        def _normalize_value(col_name: str, value: Any) -> Any:
+            col_type = type_by_col.get((col_name or "").lower(), "")
+
+            if _is_missing(value):
+                return None
+
+            if isinstance(value, pd.Timestamp):
+                return None if _is_missing(value) else value.to_pydatetime()
+
+            if isinstance(value, str):
+                cleaned = value.replace("\x00", "")
+                lowered = cleaned.strip().lower()
+                if lowered in {"nat", "nan", "none", "null"}:
+                    if any(token in col_type for token in ("timestamp", "date", "time", "int", "numeric", "decimal", "double", "real")):
+                        return None
+                return cleaned
+
+            if isinstance(value, Decimal):
+                return value
+
+            if isinstance(value, bool):
+                return value
+
+            if isinstance(value, numbers.Integral) and not isinstance(value, bool):
+                int_val = int(value)
+                if "bigint" in col_type and (int_val < bigint_min or int_val > bigint_max):
+                    logger.warning(
+                        "BIGINT overflow detected for %s.%s column '%s'; coercing value to NULL.",
+                        schema,
+                        table,
+                        col_name,
+                    )
+                    return None
+                return int_val
+
+            if isinstance(value, str) and "bigint" in col_type:
+                s = value.strip()
+                if re.fullmatch(r"[+-]?\d+", s or ""):
+                    try:
+                        int_val = int(s)
+                        if int_val < bigint_min or int_val > bigint_max:
+                            logger.warning(
+                                "BIGINT overflow detected for %s.%s column '%s'; coercing value to NULL.",
+                                schema,
+                                table,
+                                col_name,
+                            )
+                            return None
+                    except Exception:
+                        return None
+
+            if isinstance(value, int):
+                if "bigint" in col_type and (value < bigint_min or value > bigint_max):
+                    logger.warning(
+                        "BIGINT overflow detected for %s.%s column '%s'; coercing value to NULL.",
+                        schema,
+                        table,
+                        col_name,
+                    )
+                    return None
+                return value
+
+            if isinstance(value, float):
+                if math.isnan(value) or math.isinf(value):
+                    return None
+                return value
+
+            if hasattr(value, "to_decimal") and "decimal128" in value.__class__.__name__.lower():
+                try:
+                    return value.to_decimal()
+                except Exception:
+                    return str(value)
+
+            if isinstance(value, (dict, list, tuple, set)):
+                try:
+                    return json.dumps(value, default=str, ensure_ascii=False).replace("\x00", "")
+                except Exception:
+                    return str(value).replace("\x00", "")
+
+            return value
+
+        normalized_rows: List[Tuple[Any, ...]] = []
+        for row in df.itertuples(index=False, name=None):
+            normalized_rows.append(
+                tuple(_normalize_value(col_name, cell) for col_name, cell in zip(df.columns, row))
+            )
+        return normalized_rows
+
+    def _has_matching_conflict_constraint(
+        self,
+        schema: str,
+        table: str,
+        key_columns: List[str],
+    ) -> bool:
+        if not key_columns:
+            return False
+        normalized_keys = [k.lower() for k in key_columns]
+        with self._connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT i.indkey::text, i.indnkeyatts
+                FROM pg_index i
+                JOIN pg_class t ON t.oid = i.indrelid
+                JOIN pg_namespace ns ON ns.oid = t.relnamespace
+                WHERE ns.nspname = %s
+                  AND t.relname = %s
+                  AND (i.indisunique OR i.indisexclusion)
+                """,
+                (schema, table),
+            )
+            index_rows = cursor.fetchall()
+            if not index_rows:
+                return False
+            # Resolve attnums -> ordered column names per index.
+            cursor.execute(
+                """
+                SELECT a.attnum, a.attname
+                FROM pg_attribute a
+                JOIN pg_class t ON t.oid = a.attrelid
+                JOIN pg_namespace ns ON ns.oid = t.relnamespace
+                WHERE ns.nspname = %s
+                  AND t.relname = %s
+                  AND a.attnum > 0
+                """,
+                (schema, table),
+            )
+            attname_by_num = {int(num): str(name).lower() for num, name in cursor.fetchall()}
+
+        for indkey_text, indnkeyatts in index_rows:
+            try:
+                key_nums = [int(x) for x in str(indkey_text).split()[: int(indnkeyatts or 0)]]
+            except Exception:
+                continue
+            idx_cols = [attname_by_num.get(n) for n in key_nums if attname_by_num.get(n)]
+            if idx_cols == normalized_keys:
+                return True
+        return False
+
     def upsert_dataframe(
-        self, 
-        schema: str, 
-        table: str, 
-        df: pd.DataFrame, 
-        key_column: str
+        self,
+        schema: str,
+        table: str,
+        df: pd.DataFrame,
+        key_column: str,
+        key_columns: Optional[List[str]] = None,
     ):
         """
         Upsert (insert or update) DataFrame rows into table using INSERT ... ON CONFLICT
@@ -818,51 +1108,140 @@ class PostgresConnector(DBConnector):
             return
         
         try:
-            if key_column not in df.columns:
+            effective_keys = key_columns or [key_column]
+            effective_keys = [k for k in effective_keys if k]
+            missing_keys = [k for k in effective_keys if k not in df.columns]
+            if missing_keys:
                 raise DatabaseConnectionError(f"Key column {key_column} not found in DataFrame")
-            
+            if not effective_keys:
+                raise DatabaseConnectionError("At least one upsert key column is required")
+
+            normalized_rows = self._normalize_rows_for_upsert(schema, table, df)
+            if not normalized_rows:
+                return
+
             columns = list(df.columns)
-            rows = [tuple(row) for row in df.values]
-            
+            # Keep latest row for duplicate key combinations in the same batch
+            # using normalized python tuples (prevents pandas coercing None back to NaT/NaN).
+            key_idx = [columns.index(k) for k in effective_keys]
+            dedup_map: Dict[Tuple[Any, ...], Tuple[Any, ...]] = {}
+            dedup_order: List[Tuple[Any, ...]] = []
+            for row in normalized_rows:
+                key = tuple(row[i] for i in key_idx)
+                if key not in dedup_map:
+                    dedup_order.append(key)
+                dedup_map[key] = row
+            rows = [dedup_map[k] for k in dedup_order]
+
             with self._connection.cursor() as cursor:
                 # Build column identifiers
                 col_identifiers = sql.SQL(', ').join(
                     sql.Identifier(col) for col in columns
                 )
-                
-                # Build placeholders
-                placeholders = sql.SQL(', ').join([sql.Placeholder()] * len(columns))
-                
-                # Build UPDATE clause (update all columns except key)
-                update_cols = [col for col in columns if col != key_column]
-                update_clause = sql.SQL(', ').join(
-                    sql.SQL("{} = EXCLUDED.{}").format(
-                        sql.Identifier(col),
-                        sql.Identifier(col)
+
+                # Use ON CONFLICT only when matching unique/exclusion index exists.
+                if self._has_matching_conflict_constraint(schema, table, effective_keys):
+                    update_cols = [col for col in columns if col not in effective_keys]
+                    if update_cols:
+                        update_clause = sql.SQL(', ').join(
+                            sql.SQL("{} = EXCLUDED.{}").format(
+                                sql.Identifier(col),
+                                sql.Identifier(col)
+                            )
+                            for col in update_cols
+                        )
+                        insert_query = sql.SQL("""
+                            INSERT INTO {}.{} ({})
+                            VALUES %s
+                            ON CONFLICT ({}) DO UPDATE SET {}
+                        """).format(
+                            sql.Identifier(schema),
+                            sql.Identifier(table),
+                            col_identifiers,
+                            sql.SQL(', ').join(sql.Identifier(k) for k in effective_keys),
+                            update_clause
+                        )
+                    else:
+                        # Key-only table: on conflict do nothing.
+                        insert_query = sql.SQL("""
+                            INSERT INTO {}.{} ({})
+                            VALUES %s
+                            ON CONFLICT ({}) DO NOTHING
+                        """).format(
+                            sql.Identifier(schema),
+                            sql.Identifier(table),
+                            col_identifiers,
+                            sql.SQL(', ').join(sql.Identifier(k) for k in effective_keys),
+                        )
+                    applied, skipped = self._execute_values_resilient(
+                        cursor=cursor,
+                        query=insert_query,
+                        rows=rows,
+                        page_size=1000,
+                        context=f"upsert_on_conflict {schema}.{table}",
                     )
-                    for col in update_cols
-                )
-                
-                # Build INSERT ... ON CONFLICT query
-                insert_query = sql.SQL("""
-                    INSERT INTO {}.{} ({}) 
-                    VALUES ({})
-                    ON CONFLICT ({}) DO UPDATE SET {}
-                """).format(
-                    sql.Identifier(schema),
-                    sql.Identifier(table),
-                    col_identifiers,
-                    placeholders,
-                    sql.Identifier(key_column),
-                    update_clause
-                )
-                
-                # Execute for each row
-                for row in rows:
-                    cursor.execute(insert_query, row)
-                
+                else:
+                    # Fallback strategy (industry-safe degradation):
+                    # emulate upsert by deleting matching keys then inserting batch.
+                    # This keeps incremental flow alive for tables without unique constraints.
+                    if len(effective_keys) == 1:
+                        key = effective_keys[0]
+                        key_idx = columns.index(key)
+                        key_values = [r[key_idx] for r in rows if r[key_idx] is not None]
+                        if key_values:
+                            delete_query = sql.SQL("DELETE FROM {}.{} WHERE {} = ANY(%s)").format(
+                                sql.Identifier(schema),
+                                sql.Identifier(table),
+                                sql.Identifier(key),
+                            )
+                            cursor.execute(delete_query, (key_values,))
+                    else:
+                        tuple_parts = []
+                        params: List[Any] = []
+                        for row in rows:
+                            key_vals = [row[columns.index(k)] for k in effective_keys]
+                            if any(v is None for v in key_vals):
+                                continue
+                            tuple_parts.append(
+                                "(" + ", ".join(["%s"] * len(effective_keys)) + ")"
+                            )
+                            params.extend(key_vals)
+                        if tuple_parts:
+                            key_expr = ", ".join([f'"{k}"' for k in effective_keys])
+                            delete_sql = (
+                                f'DELETE FROM "{schema}"."{table}" '
+                                f'WHERE ({key_expr}) IN ({", ".join(tuple_parts)})'
+                            )
+                            cursor.execute(delete_sql, params)
+
+                    insert_query = sql.SQL("INSERT INTO {}.{} ({}) VALUES %s").format(
+                        sql.Identifier(schema),
+                        sql.Identifier(table),
+                        col_identifiers,
+                    )
+                    applied, skipped = self._execute_values_resilient(
+                        cursor=cursor,
+                        query=insert_query,
+                        rows=rows,
+                        page_size=1000,
+                        context=f"upsert_delete_insert {schema}.{table}",
+                    )
+                if skipped > 0:
+                    logger.warning(
+                        "Resilient upsert for %s.%s skipped %s row(s), applied %s row(s).",
+                        schema,
+                        table,
+                        skipped,
+                        applied,
+                    )
+                if applied == 0 and skipped > 0:
+                    logger.warning(
+                        "All rows in current batch were invalid for %s.%s (skipped=%s). Continuing without failing table.",
+                        schema,
+                        table,
+                        skipped,
+                    )
                 self._connection.commit()
-            
         except Exception as e:
             self._connection.rollback()
             raise DatabaseConnectionError(f"Failed to upsert DataFrame: {str(e)}")

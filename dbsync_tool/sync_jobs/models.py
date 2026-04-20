@@ -88,7 +88,7 @@ class SyncJob(models.Model):
         help_text='Tenant (Admin user) who owns this job'
     )
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
     last_run_at = models.DateTimeField(null=True, blank=True)
     next_run_at = models.DateTimeField(null=True, blank=True)
     target_table_prefix = models.CharField(
@@ -493,6 +493,9 @@ class SyncExecution(models.Model):
     total_rows_synced = models.BigIntegerField(default=0)
     total_source_bytes = models.BigIntegerField(default=0)
     total_target_bytes = models.BigIntegerField(default=0)
+    source_database_size_bytes = models.BigIntegerField(null=True, blank=True)
+    target_database_size_bytes = models.BigIntegerField(null=True, blank=True)
+    size_collected_at = models.DateTimeField(null=True, blank=True)
     error_message = models.TextField(null=True, blank=True)
     memory_peak_mb = models.FloatField(null=True, blank=True)
     query_count = models.IntegerField(null=True, blank=True)
@@ -544,6 +547,7 @@ class SyncExecutionLog(models.Model):
     verification_summary = models.TextField(null=True, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
         db_table = 'sync_execution_logs'

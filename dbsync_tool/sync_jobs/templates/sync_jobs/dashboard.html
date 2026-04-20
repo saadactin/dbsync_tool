@@ -67,7 +67,7 @@
                 <div class="w-10 h-10 rounded-xl bg-purple-50 flex items-center justify-center text-purple-500 group-hover:scale-110 transition-transform">
                     <span class="material-symbols-outlined text-xl">bolt</span>
                 </div>
-                <span class="text-[9px] font-black text-slate-400 tracking-[0.2em] uppercase">Pulse (24H)</span>
+                <span class="text-[9px] font-black text-slate-400 tracking-[0.2em] uppercase">Executions (24H)</span>
             </div>
             <div class="text-3xl font-black text-slate-800 tracking-tighter font-headline mb-1 relative z-10">{{ stats.executions.last_24h }}</div>
             <div class="text-[10px] font-bold text-slate-500 uppercase tracking-wider relative z-10">7D Total: {{ stats.executions.last_7d }}</div>
@@ -244,8 +244,8 @@
                     <div class="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden flex shadow-inner">
                         {% with successful=stats.executions.successful_30d failed=stats.executions.failed_30d total=stats.executions.last_30d %}
                             {% if total > 0 %}
-                            <div class="bg-emerald-500 h-full transition-all duration-1000" style="width: {% widthratio successful total 100 %}%" title="{{ successful }} Successful"></div>
-                            <div class="bg-rose-500 h-full transition-all duration-1000" style="width: {% widthratio failed total 100 %}%" title="{{ failed }} Failed"></div>
+                            <div class="bg-emerald-500 h-full transition-all duration-1000" style="width: {% if failed == 0 %}100{% else %}{% widthratio successful total 100 %}{% endif %}%" title="{{ successful }} Successful"></div>
+                            <div class="bg-rose-500 h-full transition-all duration-1000" style="width: {% if failed == 0 %}0{% else %}{% widthratio failed total 100 %}{% endif %}%" title="{{ failed }} Failed"></div>
                             {% else %}
                             <div class="bg-slate-200 h-full w-full"></div>
                             {% endif %}

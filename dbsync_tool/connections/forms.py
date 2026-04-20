@@ -873,6 +873,33 @@ class APIConnectionForm(forms.ModelForm):
 
 class FileSourceConnectionForm(forms.ModelForm):
     """Form for creating and editing file source connections."""
+    DELIMITER_CHOICES = [
+        (",", "Comma (,)"),
+        (";", "Semicolon (;)"),
+        ("\t", "Tab (\\t)"),
+        ("|", "Pipe (|)"),
+        (":", "Colon (:)"),
+    ]
+    ENCODING_CHOICES = [
+        ("utf-8", "UTF-8"),
+        ("utf-8-sig", "UTF-8 with BOM"),
+        ("utf-16", "UTF-16"),
+        ("latin-1", "Latin-1"),
+        ("cp1252", "Windows-1252"),
+        ("ascii", "ASCII"),
+    ]
+
+    delimiter = forms.ChoiceField(
+        choices=DELIMITER_CHOICES,
+        required=True,
+        widget=forms.Select(attrs={'class': 'form-control'}),
+    )
+    encoding = forms.ChoiceField(
+        choices=ENCODING_CHOICES,
+        required=True,
+        widget=forms.Select(attrs={'class': 'form-control'}),
+    )
+
     upload_file = forms.FileField(
         required=False,
         widget=forms.ClearableFileInput(attrs={'class': 'form-control', 'accept': '.csv,text/csv'}),
@@ -890,8 +917,6 @@ class FileSourceConnectionForm(forms.ModelForm):
                     'placeholder': 'imports/customers.csv',
                 }
             ),
-            'delimiter': forms.TextInput(attrs={'class': 'form-control', 'maxlength': 1}),
-            'encoding': forms.TextInput(attrs={'class': 'form-control'}),
             'has_header': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
             'is_active': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
         }
@@ -902,6 +927,8 @@ class FileSourceConnectionForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         self.tenant = kwargs.pop('tenant', None)
         super().__init__(*args, **kwargs)
+        self.fields['delimiter'].initial = self.initial.get('delimiter') or ','
+        self.fields['encoding'].initial = self.initial.get('encoding') or 'utf-8'
 
     def clean_name(self):
         name = (self.cleaned_data.get('name') or '').strip()

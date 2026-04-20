@@ -2,7 +2,6 @@
 Request validation middleware
 """
 import logging
-from django.http import JsonResponse
 from django.utils.deprecation import MiddlewareMixin
 from django.conf import settings
 from core.error_responses import create_error_response, ErrorCode
@@ -21,8 +20,9 @@ class RequestValidationMiddleware(MiddlewareMixin):
     - Basic input sanitization
     """
     
-    # Maximum request size (10MB)
-    MAX_REQUEST_SIZE = 10 * 1024 * 1024
+    # Maximum request size in bytes.
+    # None disables request-size enforcement (unlimited).
+    MAX_REQUEST_SIZE = getattr(settings, 'REQUEST_VALIDATION_MAX_REQUEST_SIZE', None)
     
     # Required headers for API requests
     API_REQUIRED_HEADERS = ['Content-Type']
@@ -35,7 +35,7 @@ class RequestValidationMiddleware(MiddlewareMixin):
         
         # Check request size
         content_length = request.META.get('CONTENT_LENGTH')
-        if content_length:
+        if self.MAX_REQUEST_SIZE is not None and content_length:
             try:
                 size = int(content_length)
                 if size > self.MAX_REQUEST_SIZE:

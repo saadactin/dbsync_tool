@@ -209,6 +209,17 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+# Disable form field-count cap (unlimited POST/GET fields).
+DATA_UPLOAD_MAX_NUMBER_FIELDS = None
+# Disable Django request-body size cap.
+DATA_UPLOAD_MAX_MEMORY_SIZE = None
+# Disable custom request-validation middleware size cap.
+REQUEST_VALIDATION_MAX_REQUEST_SIZE = None
+# Auto-fail executions with no activity for this duration.
+SYNC_EXECUTION_STALE_TIMEOUT_MINUTES = int(
+    os.environ.get("SYNC_EXECUTION_STALE_TIMEOUT_MINUTES", "30")
+)
+
 # Flat-file sync root (server-side path only).
 # CSV source paths must be provided relative to this directory.
 FILE_SYNC_ROOT = Path(os.environ.get('FILE_SYNC_ROOT', str(BASE_DIR / 'file_sources')))

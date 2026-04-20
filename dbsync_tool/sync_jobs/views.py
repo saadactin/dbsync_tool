@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from django.shortcuts import render, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
+from django.conf import settings
 from django.http import JsonResponse, Http404
 from django.views.decorators.http import require_http_methods
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -20,8 +21,54 @@ from django.utils import timezone
 from connections.models import DatabaseConnection, APIConnection, FileSourceConnection
 from metadata.services import load_all_metadata, load_table_columns
 from .models import SyncJob, SyncJobTable, SyncSchedule, SyncCheckpoint, SyncExecution, SyncExecutionLog
+from .services.execution_launcher import launch_sync_job_subprocess
 
 logger = logging.getLogger(__name__)
+
+
+def _mark_execution_stale_if_inactive(execution: SyncExecution) -> SyncExecution:
+    """
+    Auto-recover executions stuck in running state after process interruption.
+    """
+    if execution.status != "running":
+        return execution
+
+    timeout_minutes = int(getattr(settings, "SYNC_EXECUTION_STALE_TIMEOUT_MINUTES", 30))
+    timeout = timedelta(minutes=timeout_minutes)
+    now = timezone.now()
+
+    latest_log = execution.logs.order_by("-updated_at", "-started_at").first()
+    latest_activity = execution.started_at or execution.created_at
+    if latest_log:
+        latest_activity = max(
+            latest_activity,
+            latest_log.updated_at or latest_log.started_at or latest_activity,
+        )
+
+    if latest_activity and (now - latest_activity) <= timeout:
+        return execution
+
+    execution.status = "failed"
+    execution.completed_at = now
+    execution.error_message = (
+        "Execution was interrupted (likely server reload/restart) and auto-marked failed "
+        f"after {timeout_minutes} minutes of no activity. Re-run the job to continue migration."
+    )
+    execution.save(update_fields=["status", "completed_at", "error_message"])
+    SyncExecutionLog.objects.filter(execution=execution, status="running").update(
+        status="failed",
+        completed_at=now,
+        error_message="Execution interrupted due to worker process termination.",
+    )
+    SyncJob.objects.filter(id=execution.job_id, status="running").update(status="failed")
+    logger.warning(
+        "Auto-marked stale execution as failed execution=%s job=%s inactivity_minutes=%s",
+        execution.id,
+        execution.job_id,
+        timeout_minutes,
+    )
+    execution.refresh_from_db()
+    return execution
 
 
 def _normalize_job_source_db_type(conn: Optional[DatabaseConnection]) -> str:
@@ -2667,25 +2714,10 @@ def create_job_step4_submit(request):
         # If schedule type is 'once', automatically start the sync execution asynchronously
         if schedule_type == 'once':
             try:
-                import threading
-                from sync_engine.executor import SyncExecutor
-                
                 logger.info(
-                    f"Auto-starting 'once' schedule job {sync_job.id} for user {request.user.username} (async)"
+                    f"Auto-starting 'once' schedule job {sync_job.id} for user {request.user.username} (detached subprocess)"
                 )
-                
-                # Execute asynchronously in a background thread
-                def run_sync_async():
-                    try:
-                        executor = SyncExecutor(sync_job)
-                        executor.execute()
-                        logger.info(f"Async execution completed for job {sync_job.id}")
-                    except Exception as e:
-                        logger.error(f"Failed to execute job {sync_job.id} in background: {str(e)}", exc_info=True)
-                
-                # Start the sync in a background thread
-                thread = threading.Thread(target=run_sync_async, daemon=True)
-                thread.start()
+                launch_sync_job_subprocess(str(sync_job.id), initiated_by_user_id=request.user.id)
                 
                 # Immediately redirect to job detail page (don't wait for sync to complete)
                 messages.success(
@@ -2787,6 +2819,9 @@ def job_detail(request, job_id):
     except Exception as e:
         logger.warning(f"Error refreshing next_run_at in job_detail view: {str(e)}")
     
+    storage_footprint = _build_storage_footprint(job, latest_execution)
+    size_logs = _build_size_logs(latest_execution, storage_footprint.get('source_kind') if storage_footprint else None)
+
     context = {
         'job': job,
         'executions': executions,
@@ -2796,10 +2831,114 @@ def job_detail(request, job_id):
         'failed_executions': failed_executions,
         'total_rows_synced_all_time': total_rows_synced_all_time,
         'checkpoint_map': checkpoint_map,
+        'storage_footprint': storage_footprint,
+        'size_logs': size_logs,
         'page_title': f'Job: {job.name}',
     }
     
     return render(request, 'sync_jobs/job_detail.html', context)
+
+
+def _build_storage_footprint(job, latest_execution):
+    """
+    Build a dict describing the latest execution's source vs target storage
+    footprint for the Overview tab. Returns None-safe values so the template
+    can render a 'not measured yet' state when fields are NULL (older
+    executions or sizing failures).
+    """
+    source_kind = getattr(job, 'source_connection_type', 'database') or 'database'
+    kind_label_map = {
+        'database': 'Database',
+        'flat_file': 'Flat File',
+        'api': 'API Source',
+    }
+    source_kind_label = kind_label_map.get(source_kind, 'Source')
+
+    if source_kind == 'api' and job.source_api_connection:
+        api_conn = job.source_api_connection
+        source_display = f"{api_conn.name} ({api_conn.get_api_type_display()})"
+    elif source_kind == 'flat_file' and job.source_file_connection:
+        fc = job.source_file_connection
+        source_display = fc.relative_path or fc.name
+    elif job.source_connection:
+        sc = job.source_connection
+        source_display = f"{sc.host}:{sc.port} / {sc.database_name or ''}".rstrip(' /')
+    else:
+        source_display = '—'
+
+    target_display = '—'
+    if job.target_connection:
+        tc = job.target_connection
+        target_display = f"{tc.host}:{tc.port} / {tc.database_name or ''}".rstrip(' /')
+
+    source_db_bytes = getattr(latest_execution, 'source_database_size_bytes', None) if latest_execution else None
+    target_db_bytes = getattr(latest_execution, 'target_database_size_bytes', None) if latest_execution else None
+    total_source = getattr(latest_execution, 'total_source_bytes', 0) if latest_execution else 0
+    total_target = getattr(latest_execution, 'total_target_bytes', 0) if latest_execution else 0
+    collected_at = getattr(latest_execution, 'size_collected_at', None) if latest_execution else None
+
+    # Storage comparison for this page is table-scoped (selected entities only).
+    source_bytes = total_source if total_source and total_source > 0 else None
+    target_bytes = total_target if total_target and total_target > 0 else None
+
+    delta = None
+    ratio_pct = None
+    direction = None
+    if source_bytes is not None and target_bytes is not None and source_bytes > 0:
+        delta = int(target_bytes) - int(source_bytes)
+        ratio_pct = (int(target_bytes) / int(source_bytes)) * 100.0
+        if delta < 0:
+            direction = 'saved'
+        elif delta > 0:
+            direction = 'expanded'
+        else:
+            direction = 'equal'
+
+    return {
+        'source_kind': source_kind,
+        'source_kind_label': source_kind_label,
+        'source_display': source_display,
+        'target_display': target_display,
+        'source_db_bytes': source_db_bytes,
+        'target_db_bytes': target_db_bytes,
+        'source_selected_bytes': source_bytes,
+        'target_selected_bytes': target_bytes,
+        'total_source_bytes': total_source,
+        'total_target_bytes': total_target,
+        'delta_bytes': delta,
+        'delta_abs_bytes': abs(delta) if delta is not None else None,
+        'ratio_pct': ratio_pct,
+        'direction': direction,
+        'collected_at': collected_at,
+        'has_data': (source_bytes is not None) or (target_bytes is not None),
+        'source_is_api': source_kind == 'api',
+    }
+
+
+def _build_size_logs(latest_execution, source_kind):
+    """Return a lightweight list of dicts for the per-table breakdown table."""
+    if not latest_execution:
+        return []
+    try:
+        logs = list(latest_execution.logs.all())
+    except Exception:
+        return []
+    out = []
+    for log in logs:
+        src = getattr(log, 'source_size_bytes', None)
+        tgt = getattr(log, 'target_size_bytes', None)
+        delta_pct = None
+        if src and src > 0 and tgt is not None and tgt > 0:
+            delta_pct = ((tgt - src) / src) * 100.0
+        out.append({
+            'schema_name': log.schema_name,
+            'table_name': log.table_name,
+            'source_size_bytes': src if src and src > 0 else None,
+            'target_size_bytes': tgt if tgt and tgt > 0 else None,
+            'delta_pct': delta_pct,
+            'source_is_api': source_kind == 'api',
+        })
+    return out
 
 
 @login_required
@@ -3199,28 +3338,13 @@ def job_edit(request, job_id):
             
             messages.success(request, f'Job "{job.name}" updated successfully.')
             
-            # If schedule type is 'once', automatically start the sync execution synchronously
+            # If schedule type is 'once', automatically start the sync execution asynchronously
             if schedule_type == 'once' and job.status != 'running':
                 try:
-                    import threading
-                    from sync_engine.executor import SyncExecutor
-                    
                     logger.info(
-                        f"Auto-starting 'once' schedule job {job.id} for user {request.user.username} (async)"
+                        f"Auto-starting 'once' schedule job {job.id} for user {request.user.username} (detached subprocess)"
                     )
-                    
-                    # Execute asynchronously in a background thread
-                    def run_sync_async():
-                        try:
-                            executor = SyncExecutor(job)
-                            executor.execute()
-                            logger.info(f"Async execution completed for job {job.id}")
-                        except Exception as e:
-                            logger.error(f"Failed to execute job {job.id} in background: {str(e)}", exc_info=True)
-                    
-                    # Start the sync in a background thread
-                    thread = threading.Thread(target=run_sync_async, daemon=True)
-                    thread.start()
+                    launch_sync_job_subprocess(str(job.id), initiated_by_user_id=request.user.id)
                     
                     messages.success(
                         request,
@@ -3324,25 +3448,10 @@ def job_run_now(request, job_id):
     
     # Execute sync asynchronously
     try:
-        import threading
-        from sync_engine.executor import SyncExecutor
-        
         logger.info(
-            f"User {request.user.username} triggered run for job {job_id}: {job.name} (async)"
+            f"User {request.user.username} triggered run for job {job_id}: {job.name} (detached subprocess)"
         )
-        
-        # Execute asynchronously in a background thread
-        def run_sync_async():
-            try:
-                executor = SyncExecutor(job)
-                executor.execute()
-                logger.info(f"Async execution completed for job {job_id}")
-            except Exception as e:
-                logger.error(f"Failed to execute job {job_id} in background: {str(e)}", exc_info=True)
-        
-        # Start the sync in a background thread
-        thread = threading.Thread(target=run_sync_async, daemon=True)
-        thread.start()
+        launch_sync_job_subprocess(str(job.id), initiated_by_user_id=request.user.id)
         
         messages.success(
             request,
@@ -3436,6 +3545,7 @@ def execution_status_api(request, job_id, execution_id):
             id=execution_id,
             job=job
         )
+        execution = _mark_execution_stale_if_inactive(execution)
     except SyncJob.DoesNotExist:
         return JsonResponse({'error': 'Job not found'}, status=404)
     except SyncExecution.DoesNotExist:

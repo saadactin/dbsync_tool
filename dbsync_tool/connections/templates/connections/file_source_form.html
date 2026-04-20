@@ -106,7 +106,7 @@
                                             <label for="{{ form.delimiter.id_for_label }}" class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Delimiter</label>
                                             <div class="relative">
                                                 <select name="{{ form.delimiter.name }}" id="{{ form.delimiter.id_for_label }}" 
-                                                        class="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-indigo-500 transition-all outline-none appearance-none text-sm shadow-sm">
+                                                        class="w-full pr-10 pl-5 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-indigo-500 transition-all outline-none appearance-none text-sm shadow-sm cursor-pointer">
                                                     {% for value, text in form.delimiter.field.choices %}
                                                         <option value="{{ value }}" {% if form.delimiter.value == value %}selected{% endif %}>{{ text }}</option>
                                                     {% endfor %}
@@ -120,7 +120,7 @@
                                             <label for="{{ form.encoding.id_for_label }}" class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Encoding</label>
                                             <div class="relative">
                                                 <select name="{{ form.encoding.name }}" id="{{ form.encoding.id_for_label }}" 
-                                                        class="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-indigo-500 transition-all outline-none appearance-none text-sm shadow-sm">
+                                                        class="w-full pr-10 pl-5 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-indigo-500 transition-all outline-none appearance-none text-sm shadow-sm cursor-pointer">
                                                     {% for value, text in form.encoding.field.choices %}
                                                         <option value="{{ value }}" {% if form.encoding.value == value %}selected{% endif %}>{{ text }}</option>
                                                     {% endfor %}
