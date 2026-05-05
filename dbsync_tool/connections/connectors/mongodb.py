@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple, Set
+from urllib.parse import quote_plus
 
 from .base import DBConnector, ColumnInfo
 from core.exceptions import DatabaseConnectionError
@@ -47,31 +48,98 @@ class MongoDBConnector(DBConnector):
             ) from e
 
         try:
-            # Host/port; credentials only when the user supplied them (local dev often has auth off).
-            client_kwargs: Dict[str, Any] = {
-                "host": self.host,
-                "port": int(self.port) if self.port is not None else 27017,
-                "serverSelectionTimeoutMS": 10_000,
-                "connectTimeoutMS": 10_000,
-                "socketTimeoutMS": 10_000,
-            }
             auth_user = (self.username or "").strip()
             auth_pass = self.password if self.password is not None else ""
-            if auth_user or auth_pass:
-                # MongoDB authenticates against an "authentication database" (authSource).
-                # `root` and most admin users are defined in `admin`.
-                # The UI "Database Name" is the *target database* to browse/sync, not necessarily the auth DB.
-                # For `root`/`admin`, always use `admin` to avoid auth failures when a non-admin database is selected.
-                u_lower = auth_user.lower()
-                if u_lower in {"root", "admin"}:
-                    auth_db = "admin"
-                else:
-                    auth_db = (self.database_name or "").strip() or "admin"
-                client_kwargs["username"] = auth_user or None
-                client_kwargs["password"] = auth_pass
-                client_kwargs["authSource"] = auth_db
+            host_value = (self.host or "").strip()
+            host_lower = host_value.lower()
 
-            self._client = MongoClient(**client_kwargs)
+            # MongoDB Atlas typically provides SRV hosts (*.mongodb.net) that should be
+            # resolved via mongodb+srv:// URI mode instead of host+port socket mode.
+            use_uri_mode = host_lower.startswith("mongodb+srv://") or host_lower.startswith("mongodb://")
+            use_atlas_srv = (
+                not use_uri_mode
+                and host_lower.endswith(".mongodb.net")
+                and host_lower not in {"localhost", "127.0.0.1", "::1"}
+            )
+
+            if use_uri_mode or use_atlas_srv:
+                if use_uri_mode:
+                    mongo_uri = host_value
+                    self._client = MongoClient(
+                        mongo_uri,
+                        serverSelectionTimeoutMS=10_000,
+                        connectTimeoutMS=10_000,
+                        socketTimeoutMS=10_000,
+                    )
+                else:
+                    # Build URI from host + credentials captured in the form.
+                    if not auth_user or not auth_pass:
+                        raise DatabaseConnectionError(
+                            "MongoDB Atlas requires username and password."
+                        )
+                    encoded_user = quote_plus(auth_user)
+                    encoded_pass = quote_plus(auth_pass)
+                    requested_auth_db = (self.database_name or "").strip()
+                    candidate_auth_dbs: List[str] = []
+                    if requested_auth_db:
+                        candidate_auth_dbs.append(requested_auth_db)
+                    if "admin" not in {db.lower() for db in candidate_auth_dbs}:
+                        candidate_auth_dbs.append("admin")
+
+                    last_auth_error: Optional[Exception] = None
+                    for auth_db in candidate_auth_dbs:
+                        mongo_uri = (
+                            f"mongodb+srv://{encoded_user}:{encoded_pass}@{host_value}/"
+                            f"?retryWrites=true&w=majority&authSource={quote_plus(auth_db)}"
+                        )
+                        try:
+                            self._client = MongoClient(
+                                mongo_uri,
+                                serverSelectionTimeoutMS=10_000,
+                                connectTimeoutMS=10_000,
+                                socketTimeoutMS=10_000,
+                            )
+                            self._client.admin.command("ping")
+                            self._connection = self._client
+                            return self._client
+                        except PyMongoError as e:
+                            # Keep trying on auth failures; report final error if all fail.
+                            last_auth_error = e
+                            try:
+                                if self._client:
+                                    self._client.close()
+                            except Exception:
+                                pass
+                            self._client = None
+                            continue
+
+                    if last_auth_error:
+                        raise last_auth_error
+                    raise DatabaseConnectionError("Connection failed: unable to authenticate.")
+            else:
+                # Host/port mode for local/self-hosted MongoDB deployments.
+                client_kwargs: Dict[str, Any] = {
+                    "host": host_value,
+                    "port": int(self.port) if self.port is not None else 27017,
+                    "serverSelectionTimeoutMS": 10_000,
+                    "connectTimeoutMS": 10_000,
+                    "socketTimeoutMS": 10_000,
+                }
+                if auth_user or auth_pass:
+                    # MongoDB authenticates against an "authentication database" (authSource).
+                    # `root` and most admin users are defined in `admin`.
+                    # The UI "Database Name" is the *target database* to browse/sync, not necessarily the auth DB.
+                    # For `root`/`admin`, always use `admin` to avoid auth failures when a non-admin database is selected.
+                    u_lower = auth_user.lower()
+                    if u_lower in {"root", "admin"}:
+                        auth_db = "admin"
+                    else:
+                        auth_db = (self.database_name or "").strip() or "admin"
+                    client_kwargs["username"] = auth_user or None
+                    client_kwargs["password"] = auth_pass
+                    client_kwargs["authSource"] = auth_db
+                self._client = MongoClient(**client_kwargs)
+
             # Validate connectivity.
             self._client.admin.command("ping")
             self._connection = self._client

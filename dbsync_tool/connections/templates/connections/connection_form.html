@@ -55,6 +55,13 @@
         <div class="max-w-[1200px] mx-auto">
             <form method="post" class="space-y-10">
                 {% csrf_token %}
+                {% if form.non_field_errors %}
+                <div class="bg-rose-50 border border-rose-200 rounded-xl p-4">
+                    {% for error in form.non_field_errors %}
+                        <p class="text-rose-700 text-sm font-bold">{{ error }}</p>
+                    {% endfor %}
+                </div>
+                {% endif %}
                 
                 <!-- Main Configuration Card -->
                 <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-200/40 overflow-hidden">
@@ -117,12 +124,18 @@
                                         <input type="text" name="{{ form.host.name }}" id="{{ form.host.id_for_label }}" value="{{ form.host.value|default:'' }}" 
                                                class="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-primary focus:ring-4 focus:ring-primary/5 transition-all outline-none text-base shadow-sm"
                                                placeholder="127.0.0.1 or host.internal" required>
+                                        {% if form.host.errors %}
+                                            <p class="text-rose-500 text-xs font-bold mt-2 ml-2">{{ form.host.errors.0 }}</p>
+                                        {% endif %}
                                     </div>
                                     <div class="space-y-2">
                                         <label for="{{ form.port.id_for_label }}" class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Port</label>
                                         <input type="number" name="{{ form.port.name }}" id="{{ form.port.id_for_label }}" value="{{ form.port.value|default:'' }}" 
                                                class="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-primary focus:ring-4 focus:ring-primary/5 transition-all outline-none text-base shadow-sm"
                                                placeholder="5432" required>
+                                        {% if form.port.errors %}
+                                            <p class="text-rose-500 text-xs font-bold mt-2 ml-2">{{ form.port.errors.0 }}</p>
+                                        {% endif %}
                                     </div>
                                 </div>
 
@@ -158,6 +171,9 @@
                                                    class="w-full pl-12 pr-6 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/5 transition-all outline-none text-base shadow-sm"
                                                    placeholder="db_admin" required>
                                         </div>
+                                        {% if form.username.errors %}
+                                            <p class="text-rose-500 text-xs font-bold mt-2 ml-2">{{ form.username.errors.0 }}</p>
+                                        {% endif %}
                                     </div>
 
                                     <div class="space-y-2">
@@ -174,6 +190,9 @@
                                             </button>
                                         </div>
                                         <p class="text-[10px] font-bold text-slate-400 mt-1 ml-2">{{ form.password.help_text|default:"Secrets are encrypted with AES-256 for vault security" }}</p>
+                                        {% if form.password.errors %}
+                                            <p class="text-rose-500 text-xs font-bold mt-2 ml-2">{{ form.password.errors.0 }}</p>
+                                        {% endif %}
                                     </div>
                                 </div>
                             </div>
@@ -235,6 +254,9 @@
                                                required readonly>
                                     </div>
                                     <p class="text-[10px] font-bold text-slate-400 mt-2 ml-2" id="database-name-help">This node will be used as the primary data source</p>
+                                    {% if form.database_name.errors %}
+                                        <p class="text-rose-500 text-xs font-bold mt-2 ml-2">{{ form.database_name.errors.0 }}</p>
+                                    {% endif %}
                                 </div>
                             </div>
                         </div>

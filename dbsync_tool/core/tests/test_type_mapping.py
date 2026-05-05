@@ -180,6 +180,14 @@ class TestTypeMapping(unittest.TestCase):
         result = map_data_type('text', 'postgres', 'sqlserver', max_length=1000)
         # Should replace (MAX) with actual length
         self.assertIn('1000', result)
+
+    def test_sqlserver_varchar_max_length_minus_one_maps_to_text_in_postgres(self):
+        result = map_data_type('varchar', 'sqlserver', 'postgres', max_length=-1)
+        self.assertEqual(result, 'TEXT')
+
+    def test_sqlserver_nvarchar_max_type_maps_to_text_in_postgres(self):
+        result = map_data_type('nvarchar(max)', 'sqlserver', 'postgres')
+        self.assertEqual(result, 'TEXT')
     
     # Helper function tests
     def test_get_default_length_varchar(self):

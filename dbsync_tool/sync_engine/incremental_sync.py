@@ -110,14 +110,18 @@ class IncrementalSyncExecutor:
         try:
             overlap_seconds = int(overlap_seconds_raw)
         except (TypeError, ValueError):
-            # If job.incremental_overlap_seconds is missing/misconfigured, fall back to "no overlap".
-            return checkpoint_value
+            overlap_seconds = 0
 
-        if overlap_seconds <= 0 or checkpoint_value is None:
+        if checkpoint_value is None:
             return checkpoint_value
 
         if not self._is_datetime_like(col_type):
+            if overlap_seconds <= 0:
+                return checkpoint_value
             return checkpoint_value
+
+        if overlap_seconds <= 0 and self._is_datetime_like(col_type):
+            overlap_seconds = 60
 
         checkpoint_dt = self._normalize_datetime_like(checkpoint_value)
         if checkpoint_dt is None:
@@ -1229,11 +1233,98 @@ class IncrementalSyncExecutor:
                 column_name_set=column_name_set,
                 context=f"{schema}.{table}",
             )
+
+            eligibility = None
+            try:
+                from sync_engine.eligibility import IncrementalEligibility
+                eligibility = IncrementalEligibility.evaluate(
+                    configured_incremental_column=incremental_column,
+                    configured_key_columns=configured_keys_raw,
+                    columns=columns,
+                    pk_columns=pk_columns,
+                    assume_incremental_monotonic=(
+                        self.table_handler.target_db_type != "clickhouse"
+                    ),
+                )
+                eligibility_text = f"Eligibility: {eligibility.summary()}"
+                logger.info("[%s.%s] %s", schema, table, eligibility_text)
+                existing_summary = getattr(log, "verification_summary", None) or ""
+                log.verification_summary = (
+                    f"{existing_summary}; {eligibility_text}" if existing_summary else eligibility_text
+                )[:5000]
+                log.save(update_fields=["verification_summary"])
+            except Exception as classifier_err:
+                logger.warning(
+                    "Eligibility classifier failed for %s.%s: %s",
+                    schema,
+                    table,
+                    classifier_err,
+                )
+
+            # Eligibility-based fallback: if the table is not safe for incremental
+            # (e.g. monotonic watermark not defensible for Postgres->ClickHouse),
+            # fall back to a full sync for correctness.
+            if (
+                eligibility
+                and getattr(eligibility, "mode", "incremental") == "full"
+                and any(
+                    "monotonic_unknown_disallow_non_rowversion" in (r or "")
+                    for r in getattr(eligibility, "reasons", [])
+                )
+            ):
+                logger.warning(
+                    "Eligibility returned full for %s.%s; running FullSyncExecutor immediately.",
+                    schema,
+                    table,
+                )
+                from sync_engine.full_sync import FullSyncExecutor
+
+                FullSyncExecutor(
+                    job=self.job,
+                    execution=self.execution,
+                    source_connector=self.source_connector,
+                    target_connector=self.target_connector,
+                ).sync_table(job_table)
+
+                # Reset checkpoint so the next incremental run starts from a clean baseline.
+                try:
+                    self.checkpoint_manager.delete_checkpoint(schema, table)
+                except Exception:
+                    pass
+                # Mark this incremental log as completed (full sync produced the real output).
+                try:
+                    log.status = "completed"
+                    log.completed_at = timezone.now()
+                    log.save(update_fields=["status", "completed_at"])
+                except Exception:
+                    pass
+                return
             # Mongo target upsert requires a single deterministic key for _id.
             if self.table_handler.target_db_type == 'mongodb' and len(effective_key_columns) != 1:
                 raise TableSyncError(
                     f"MongoDB incremental target requires exactly one upsert key column for {schema}.{table}, "
                     f"got {effective_key_columns}. Configure SyncJobTable.incremental_key_columns to a single column."
+                )
+
+            try:
+                ensure_unique_index = getattr(self.target_connector, 'ensure_unique_index', None)
+                if callable(ensure_unique_index) and effective_key_columns:
+                    rename_overrides_local = (
+                        getattr(job_table, "column_name_overrides", None) or {}
+                    )
+                    if not isinstance(rename_overrides_local, dict):
+                        rename_overrides_local = {}
+                    target_keys = [
+                        rename_overrides_local.get((k or '').lower(), k)
+                        for k in effective_key_columns
+                    ]
+                    ensure_unique_index(target_schema, target_table, target_keys)
+            except Exception as ensure_idx_err:
+                logger.warning(
+                    "ensure_unique_index failed for %s.%s: %s",
+                    target_schema,
+                    target_table,
+                    ensure_idx_err,
                 )
 
             # Accuracy-first fallback:
@@ -1640,7 +1731,83 @@ class IncrementalSyncExecutor:
                     f"Rows upserted={total_rows_inserted}; net_new_rows={total_rows_net_new}; "
                     f"{checkpoint_decision_text}{schema_drift_suffix}"
                 )
-            
+
+            verification_mode = getattr(self.job, 'verification_mode', 'sampled') or 'sampled'
+            if verification_mode != 'off':
+                try:
+                    from sync_engine.verification import verify_table_parity
+                    parity = verify_table_parity(
+                        job=self.job,
+                        execution=self.execution,
+                        source_connector=self.source_connector,
+                        target_connector=self.target_connector,
+                        source_schema=schema,
+                        source_table=table,
+                        target_schema=target_schema,
+                        target_table=target_table,
+                        sync_mode='incremental',
+                        source_hash_columns=column_names if verification_mode == 'strict' else None,
+                        target_hash_columns=target_column_names if verification_mode == 'strict' else None,
+                        no_delete_propagation=getattr(self.job, 'no_delete_propagation', True),
+                    )
+                    parity_text = (
+                        f"Parity[{verification_mode}]: source={parity.source_count} "
+                        f"target={parity.target_count} decision={parity.decision}"
+                    )
+                    if log.verification_summary:
+                        log.verification_summary = f"{log.verification_summary}; {parity_text}"
+                    else:
+                        log.verification_summary = parity_text
+                    if parity.decision == 'repair_full':
+                        logger.warning(
+                            "Incremental parity drift detected for %s.%s; "
+                            "will be repaired by full sync on next run (verification_mode=%s)",
+                            schema,
+                            table,
+                            verification_mode,
+                        )
+                        if verification_mode == 'strict':
+                            # Immediate repair: run full sync now, then reset checkpoint.
+                            # This ensures "perfect after this run" semantics.
+                            repair_attempts = getattr(self, "_immediate_repair_attempts", {})
+                            repair_key = (schema, table)
+                            if repair_attempts.get(repair_key):
+                                raise TableSyncError(
+                                    f"Incremental parity strict repair already attempted for {schema}.{table}; "
+                                    f"aborting. source_count={parity.source_count} target_count={parity.target_count}"
+                                )
+
+                            repair_attempts[repair_key] = True
+                            setattr(self, "_immediate_repair_attempts", repair_attempts)
+
+                            try:
+                                from sync_engine.full_sync import FullSyncExecutor
+
+                                full_executor = FullSyncExecutor(
+                                    job=self.job,
+                                    execution=self.execution,
+                                    source_connector=self.source_connector,
+                                    target_connector=self.target_connector,
+                                )
+                                full_executor.sync_table(job_table)
+
+                                # Full sync doesn't update incremental checkpoints; reset so the
+                                # next incremental run starts from a clean baseline.
+                                self.checkpoint_manager.delete_checkpoint(schema, table)
+                            except Exception as repair_error:
+                                raise TableSyncError(
+                                    f"Incremental parity strict repair-full failed for {schema}.{table}: {str(repair_error)}"
+                                ) from repair_error
+                except TableSyncError:
+                    raise
+                except Exception as parity_error:
+                    logger.warning(
+                        "Parity verification skipped for %s.%s: %s",
+                        schema,
+                        table,
+                        parity_error,
+                    )
+
             # Mark log as completed
             log.status = 'completed'
             log.completed_at = timezone.now()
@@ -2273,14 +2440,21 @@ class IncrementalSyncExecutor:
                 f"Cannot upsert into {schema}.{table}: key column '{key_column}' not present in batch."
             )
 
-        # Key nulls make upsert non-deterministic. Skip those rows instead of failing the
-        # whole incremental run; caller still advances checkpoint based on incremental column.
+        # Key nulls make upsert non-deterministic.
+        # For ClickHouse incremental (delete+insert by identity), we must skip rows where
+        # ANY identity key column is NULL/NaN, not just the first key column.
         try:
-            valid_mask = ~df[key_column].isna()
+            if self.table_handler.target_db_type == "clickhouse" and key_columns:
+                valid_mask = pd.Series(True, index=df.index)
+                for k in key_columns:
+                    if k in df.columns:
+                        valid_mask &= ~df[k].isna()
+            else:
+                valid_mask = ~df[key_column].isna()
             skipped = int((~valid_mask).sum())
             if skipped > 0:
                 logger.warning(
-                    "Skipping %s row(s) for %s.%s because upsert key column '%s' contains NULL/NaN.",
+                    "Skipping %s row(s) for %s.%s because upsert identity key column(s) contain NULL/NaN.",
                     skipped,
                     schema,
                     table,
@@ -2293,6 +2467,11 @@ class IncrementalSyncExecutor:
             # Some pandas dtypes can raise on isna; keep original behavior and attempt upsert.
             pass
         try:
+            missing_key_cols = [k for k in key_columns if k and k not in df.columns]
+            if missing_key_cols:
+                raise TableSyncError(
+                    f"Cannot upsert into {schema}.{table}: identity key column(s) not present in batch: {missing_key_cols}"
+                )
             self.target_connector.upsert_dataframe(
                 schema=schema,
                 table=table,

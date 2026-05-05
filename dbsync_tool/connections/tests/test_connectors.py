@@ -1,7 +1,7 @@
 """
 Tests for database connectors
 """
-from django.test import TestCase
+from django.test import TestCase, SimpleTestCase
 from django.conf import settings
 from connections.connectors.postgres import PostgresConnector
 from connections.connectors.base import ColumnInfo
@@ -85,6 +85,8 @@ class PostgresConnectorTests(TestCase):
             self.skipTest("PostgreSQL not available for testing")
 
 
+
+
 class ConnectorFactoryMongoTests(TestCase):
     def test_get_connector_mongodb_missing_pymongo_raises_invalid_database_type(self):
         from connections.connectors import get_connector
@@ -100,6 +102,56 @@ class ConnectorFactoryMongoTests(TestCase):
                     database_name=None,
                 )
             self.assertIn("Install pymongo", str(ctx.exception))
+
+
+class PostgresConnectorGuardTests(SimpleTestCase):
+    """Pure unit tests that do not require DB settings/connection."""
+
+    def test_invalid_character_type_guard(self):
+        self.assertTrue(PostgresConnector._is_invalid_character_type("VARCHAR(-1)"))
+        self.assertTrue(PostgresConnector._is_invalid_character_type("NCHAR(-2)"))
+        self.assertFalse(PostgresConnector._is_invalid_character_type("TEXT"))
+        self.assertFalse(PostgresConnector._is_invalid_character_type("VARCHAR(255)"))
+
+    def test_create_table_includes_primary_key_in_ddl_preview(self):
+        """When PK metadata exists, CREATE TABLE DDL should include PRIMARY KEY."""
+        connector = PostgresConnector("localhost", 5432, "u", "p", "db")
+        conn = MagicMock()
+        cursor_cm = MagicMock()
+        cursor = MagicMock()
+        conn.cursor.return_value = cursor_cm
+        cursor_cm.__enter__.return_value = cursor
+        connector._connection = conn
+
+        # CREATE SCHEMA succeeds; CREATE TABLE fails so error contains DDL preview.
+        cursor.execute.side_effect = [None, Exception("forced create failure")]
+        cols = [
+            ColumnInfo(name="id", data_type="integer", is_nullable=False, is_primary_key=True),
+            ColumnInfo(name="name", data_type="text", is_nullable=True, is_primary_key=False),
+        ]
+        with self.assertRaises(DatabaseConnectionError) as ctx:
+            connector.create_table("public", "t", cols)
+        self.assertIn('PRIMARY KEY ("id")', str(ctx.exception))
+
+    def test_create_table_includes_composite_primary_key_in_ddl_preview(self):
+        """Composite source PK metadata should produce composite PK constraint in DDL."""
+        connector = PostgresConnector("localhost", 5432, "u", "p", "db")
+        conn = MagicMock()
+        cursor_cm = MagicMock()
+        cursor = MagicMock()
+        conn.cursor.return_value = cursor_cm
+        cursor_cm.__enter__.return_value = cursor
+        connector._connection = conn
+
+        cursor.execute.side_effect = [None, Exception("forced create failure")]
+        cols = [
+            ColumnInfo(name="k1", data_type="integer", is_nullable=False, is_primary_key=True),
+            ColumnInfo(name="k2", data_type="integer", is_nullable=False, is_primary_key=True),
+            ColumnInfo(name="payload", data_type="text", is_nullable=True, is_primary_key=False),
+        ]
+        with self.assertRaises(DatabaseConnectionError) as ctx:
+            connector.create_table("public", "t", cols)
+        self.assertIn('PRIMARY KEY ("k1", "k2")', str(ctx.exception))
 
 
 class MongoDBConnectorAuthSourceTests(TestCase):

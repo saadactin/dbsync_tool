@@ -24,12 +24,13 @@ from .services import test_database_connection
 from .timing import elapsed_ms_since
 from .connectors import get_connector
 from .file_source_paths import resolve_safe_source_path
+from .file_format import validate_upload, default_extension_for
 from core.exceptions import DatabaseConnectionError, InvalidDatabaseTypeError
 
 logger = logging.getLogger('connections.views')
 
 
-def _save_uploaded_file_source(uploaded_file, relative_path_hint: str) -> str:
+def _save_uploaded_file_source(uploaded_file, relative_path_hint: str, file_format: str = 'csv') -> str:
     """
     Save uploaded file inside FILE_SYNC_ROOT and return relative path.
     """
@@ -38,10 +39,10 @@ def _save_uploaded_file_source(uploaded_file, relative_path_hint: str) -> str:
     root = Path(getattr(settings, 'FILE_SYNC_ROOT'))
     root.mkdir(parents=True, exist_ok=True)
 
-    filename = os.path.basename(uploaded_file.name or 'uploaded.csv')
+    filename = os.path.basename(uploaded_file.name or f'uploaded{default_extension_for(file_format)}')
     filename = re.sub(r'[^0-9a-zA-Z._-]', '_', filename)
     if not filename:
-        filename = 'uploaded.csv'
+        filename = f'uploaded{default_extension_for(file_format)}'
 
     hint = (relative_path_hint or '').strip().replace('\\', '/')
     rel_dir = ''
@@ -54,7 +55,7 @@ def _save_uploaded_file_source(uploaded_file, relative_path_hint: str) -> str:
     target_dir.mkdir(parents=True, exist_ok=True)
 
     stem, ext = os.path.splitext(filename)
-    ext = ext or '.csv'
+    ext = ext or default_extension_for(file_format)
     candidate = target_dir / f"{stem}{ext}"
     counter = 1
     while candidate.exists():
@@ -143,9 +144,11 @@ class FileSourceCreateView(ViewerReadOnlyMixin, OperatorOrAboveMixin, CreateView
             return self.form_invalid(form)
         uploaded_file = self.request.FILES.get('upload_file')
         if uploaded_file:
+            instance.file_format = validate_upload(uploaded_file, form.cleaned_data.get('file_format'))
             instance.relative_path = _save_uploaded_file_source(
                 uploaded_file,
-                form.cleaned_data.get('relative_path', '')
+                form.cleaned_data.get('relative_path', ''),
+                instance.file_format,
             )
         instance.save()
         messages.success(self.request, f'File Source "{instance.name}" created successfully!')
@@ -176,9 +179,11 @@ class FileSourceUpdateView(ViewerReadOnlyMixin, OperatorOrAboveMixin, UpdateView
         instance = form.save(commit=False)
         uploaded_file = self.request.FILES.get('upload_file')
         if uploaded_file:
+            instance.file_format = validate_upload(uploaded_file, form.cleaned_data.get('file_format'))
             instance.relative_path = _save_uploaded_file_source(
                 uploaded_file,
-                form.cleaned_data.get('relative_path', '')
+                form.cleaned_data.get('relative_path', ''),
+                instance.file_format,
             )
         messages.success(self.request, f'File Source "{form.instance.name}" updated successfully!')
         return super().form_valid(form)
@@ -715,6 +720,15 @@ class ConnectionTestAndListDatabasesView(LoginRequiredMixin, View):
                     'message': 'Port must be a valid number',
                     'latency_ms': 0,
                     'details': {'db_type': db_type, 'host': host or '', 'port': str(port)},
+                }, status=400)
+
+            # Fast, user-friendly guardrail for a frequent Atlas misconfiguration.
+            if db_type == 'mongodb' and port == 5000 and 'mongodb.net' in (host or '').lower():
+                return JsonResponse({
+                    'success': False,
+                    'message': 'MongoDB Atlas host detected with port 5000. Please use port 27017.',
+                    'latency_ms': 0,
+                    'details': {'db_type': db_type, 'host': host or '', 'port': port},
                 }, status=400)
 
             details = {

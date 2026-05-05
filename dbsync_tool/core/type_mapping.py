@@ -593,8 +593,38 @@ def map_data_type(
         else:
             mapped_type = 'TEXT'
     
-    # Apply length constraints
-    if max_length:
+    # SQL Server reports varchar(max)/nvarchar(max) with max_length=-1.
+    # That must never be rendered as VARCHAR(-1) on target databases.
+    source_type_upper = source_type_normalized.upper()
+    has_unbounded_length = (
+        isinstance(max_length, int) and max_length < 0
+    ) or ("(MAX)" in source_type_upper)
+
+    if has_unbounded_length and (
+        "VARCHAR" in mapped_type.upper()
+        or "NVARCHAR" in mapped_type.upper()
+        or "CHAR" in mapped_type.upper()
+        or "NCHAR" in mapped_type.upper()
+    ):
+        logger.info(
+            "Unbounded character type detected during mapping: source_type=%s source_db=%s "
+            "target_db=%s max_length=%s -> coercing to unbounded-safe target type.",
+            source_type,
+            source_db,
+            target_db,
+            max_length,
+        )
+        if target_db == "postgres":
+            mapped_type = "TEXT"
+        elif target_db == "mysql":
+            mapped_type = "TEXT"
+        elif target_db == "sqlserver":
+            mapped_type = "NVARCHAR(MAX)"
+        elif target_db == "clickhouse":
+            mapped_type = "String"
+
+    # Apply length constraints only for valid positive lengths.
+    if isinstance(max_length, int) and max_length > 0:
         if 'VARCHAR' in mapped_type.upper() or 'NVARCHAR' in mapped_type.upper():
             # Replace (MAX) with actual length or add length
             if '(MAX)' in mapped_type.upper():

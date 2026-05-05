@@ -245,10 +245,10 @@ class TestFullSyncExecutor(unittest.TestCase):
             executor.sync_table(job_table)
         
         # Verify ClickHouse-specific calls
-        # ClickHouse should use schema as database name
+        # ClickHouse should use configured connection database name
         clickhouse_target.bulk_insert.assert_called_once()
         call_args = clickhouse_target.bulk_insert.call_args
-        self.assertEqual(call_args[1]['schema'], 'public')  # Schema mapped to database
+        self.assertEqual(call_args[1]['schema'], 'test_db')
 
 
 if __name__ == '__main__':

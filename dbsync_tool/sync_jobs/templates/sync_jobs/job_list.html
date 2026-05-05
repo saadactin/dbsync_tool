@@ -141,7 +141,7 @@
                 </thead>
                 <tbody class="divide-y divide-slate-100">
                     {% for job in jobs %}
-                    <tr class="group hover:bg-slate-50/60 transition-colors">
+                    <tr class="group hover:bg-slate-50/60 transition-colors" data-job-row-id="{{ job.id }}">
                         <!-- Job Name & Created -->
                         <td class="px-8 py-6">
                             <div class="flex flex-col">
@@ -189,14 +189,14 @@
 
                         <!-- Status -->
                         <td class="px-8 py-6 text-center">
-                            <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border
+                            <div data-job-status-chip class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border
                                 {% if job.status == 'pending' %}bg-slate-50 text-slate-500 border-slate-200
                                 {% elif job.status == 'running' %}bg-blue-50 text-primary border-blue-200
                                 {% elif job.status == 'completed' %}bg-emerald-50 text-emerald-600 border-emerald-200
                                 {% elif job.status == 'failed' %}bg-red-50 text-red-600 border-red-200
                                 {% elif job.status == 'paused' %}bg-amber-50 text-amber-600 border-amber-200
                                 {% endif %}">
-                                <span class="w-2.5 h-2.5 rounded-full 
+                                <span data-job-status-dot class="w-2.5 h-2.5 rounded-full 
                                     {% if job.status == 'pending' %}bg-slate-400
                                     {% elif job.status == 'running' %}bg-primary animate-pulse
                                     {% elif job.status == 'completed' %}bg-emerald-500
@@ -204,7 +204,7 @@
                                     {% elif job.status == 'paused' %}bg-amber-400
                                     {% endif %}">
                                 </span>
-                                <span class="text-xs font-black uppercase tracking-[0.1em]">{{ job.get_status_display }}</span>
+                                <span data-job-status-text class="text-xs font-black uppercase tracking-[0.1em]">{{ job.get_status_display }}</span>
                             </div>
                         </td>
 
@@ -213,11 +213,11 @@
                             <div class="flex flex-col gap-2">
                                 <div class="flex items-center gap-2 text-sm font-bold text-slate-600">
                                     <span class="material-symbols-outlined text-base">history</span>
-                                    <span>{% if job.last_run_at %}{{ job.last_run_at|date:"M d, H:i" }}{% else %}Never Synced{% endif %}</span>
+                                    <span data-job-last-run>{% if job.last_run_at %}{{ job.last_run_at|date:"M d, H:i" }}{% else %}Never Synced{% endif %}</span>
                                 </div>
                                 <div class="flex items-center gap-2 text-xs font-bold text-slate-400">
                                     <span class="material-symbols-outlined text-sm">event_repeat</span>
-                                    <span>{% if job.next_run_at %}{{ job.next_run_at|date:"M d, H:i" }}{% else %}Manual Refresh Only{% endif %}</span>
+                                    <span data-job-next-run>{% if job.next_run_at %}{{ job.next_run_at|date:"M d, H:i" }}{% else %}Manual Refresh Only{% endif %}</span>
                                 </div>
                             </div>
                         </td>
@@ -274,6 +274,7 @@
 
 {% block extra_js %}
 <script src="{% static 'js/sync_jobs.js' %}"></script>
+<script src="{% static 'js/job_realtime.js' %}"></script>
 <script src="{% static 'js/notifications.js' %}"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {

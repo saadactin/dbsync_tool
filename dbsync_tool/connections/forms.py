@@ -5,7 +5,15 @@ import json
 import re
 from django import forms
 from django.core.exceptions import ValidationError
-from .models import DatabaseConnection, APIConnection, FileSourceConnection
+from .models import (
+    DatabaseConnection,
+    APIConnection,
+    FileSourceConnection,
+    FILE_FORMAT_CHOICES,
+    NESTED_STRATEGY_CHOICES,
+    DELIMITED_FORMATS,
+)
+from .file_format import validate_upload, ACCEPT_MIME
 from core.constants import (
     DB_TYPE_CHOICES,
     DEFAULT_PORTS,
@@ -143,9 +151,8 @@ class DatabaseConnectionForm(forms.ModelForm):
                 raise forms.ValidationError("Host is required for Oracle ADW.")
             raise forms.ValidationError("Host is required.")
         
-        # Strip and sanitize
+        # Strip first (sanitization after Mongo URI normalization)
         host = host.strip()
-        host = sanitize_string(host, max_length=255)
         
         # Length validation
         if len(host) < 1:
@@ -161,6 +168,23 @@ class DatabaseConnectionForm(forms.ModelForm):
             self.cleaned_data.get('db_type')
             or (self.data.get('db_type') if getattr(self, 'data', None) else None)
         )
+
+        # MongoDB convenience: allow full URI in host field and normalize to hostname.
+        # Example accepted values:
+        # - mongodb+srv://user:pass@cluster0.x.mongodb.net/?appName=Cluster0
+        # - mongodb://localhost:27017/
+        if db_type == 'mongodb' and (
+            host.lower().startswith('mongodb+srv://') or host.lower().startswith('mongodb://')
+        ):
+            parsed = urlparse(host)
+            if not parsed.hostname:
+                raise forms.ValidationError(
+                    "Invalid MongoDB URI. Please provide a valid mongodb:// or mongodb+srv:// value."
+                )
+            host = parsed.hostname
+
+        host = sanitize_string(host, max_length=255)
+
         ip_pattern = r'^(\d{1,3}\.){3}\d{1,3}$'
         hostname_pattern = r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$'
         
@@ -194,6 +218,20 @@ class DatabaseConnectionForm(forms.ModelForm):
             if db_type == 'oracle_adw':
                 raise forms.ValidationError("Port must be between 1 and 65535 (Oracle ADW often uses 1522).")
             raise forms.ValidationError("Port must be between 1 and 65535.")
+
+        db_type = (
+            self.cleaned_data.get('db_type')
+            or (self.data.get('db_type') if getattr(self, 'data', None) else None)
+        )
+        host_value = (
+            self.cleaned_data.get('host')
+            or (self.data.get('host') if getattr(self, 'data', None) else '')
+            or ''
+        ).strip().lower()
+        if db_type == 'mongodb' and port == 5000 and 'mongodb.net' in host_value:
+            raise forms.ValidationError(
+                "MongoDB Atlas does not use port 5000. Use port 27017 (or leave Mongo URI handling to driver defaults)."
+            )
         
         return port
     
@@ -891,7 +929,7 @@ class FileSourceConnectionForm(forms.ModelForm):
 
     delimiter = forms.ChoiceField(
         choices=DELIMITER_CHOICES,
-        required=True,
+        required=False,
         widget=forms.Select(attrs={'class': 'form-control'}),
     )
     encoding = forms.ChoiceField(
@@ -899,16 +937,51 @@ class FileSourceConnectionForm(forms.ModelForm):
         required=True,
         widget=forms.Select(attrs={'class': 'form-control'}),
     )
+    file_format = forms.ChoiceField(
+        choices=FILE_FORMAT_CHOICES,
+        required=True,
+        initial='csv',
+        widget=forms.Select(attrs={'class': 'form-control'}),
+    )
+    record_path = forms.CharField(
+        required=False,
+        widget=forms.TextInput(attrs={'class': 'form-control'}),
+    )
+    sheet_name = forms.CharField(
+        required=False,
+        widget=forms.TextInput(attrs={'class': 'form-control'}),
+    )
+    nested_strategy = forms.ChoiceField(
+        choices=NESTED_STRATEGY_CHOICES,
+        required=True,
+        initial='flatten',
+        widget=forms.Select(attrs={'class': 'form-control'}),
+    )
+    flatten_separator = forms.CharField(
+        required=True,
+        initial='.',
+        widget=forms.TextInput(attrs={'class': 'form-control'}),
+    )
 
     upload_file = forms.FileField(
         required=False,
-        widget=forms.ClearableFileInput(attrs={'class': 'form-control', 'accept': '.csv,text/csv'}),
-        help_text='Optional: upload a CSV from this device. If provided, server will store it under FILE_SYNC_ROOT.',
+        widget=forms.ClearableFileInput(
+            attrs={
+                'class': 'form-control',
+                'accept': ACCEPT_MIME,
+            }
+        ),
+        help_text='Optional: upload a file from this device. If provided, server will store it under FILE_SYNC_ROOT.',
     )
 
     class Meta:
         model = FileSourceConnection
-        fields = ['name', 'relative_path', 'upload_file', 'delimiter', 'encoding', 'has_header', 'is_active']
+        fields = [
+            'name', 'relative_path', 'file_format', 'upload_file',
+            'delimiter', 'encoding', 'has_header',
+            'record_path', 'sheet_name', 'nested_strategy', 'flatten_separator',
+            'is_active',
+        ]
         widgets = {
             'name': forms.TextInput(attrs={'class': 'form-control'}),
             'relative_path': forms.TextInput(
@@ -927,8 +1000,11 @@ class FileSourceConnectionForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         self.tenant = kwargs.pop('tenant', None)
         super().__init__(*args, **kwargs)
+        self.fields['file_format'].initial = self.initial.get('file_format') or 'csv'
         self.fields['delimiter'].initial = self.initial.get('delimiter') or ','
         self.fields['encoding'].initial = self.initial.get('encoding') or 'utf-8'
+        self.fields['nested_strategy'].initial = self.initial.get('nested_strategy') or 'flatten'
+        self.fields['flatten_separator'].initial = self.initial.get('flatten_separator') or '.'
 
     def clean_name(self):
         name = (self.cleaned_data.get('name') or '').strip()
@@ -961,8 +1037,11 @@ class FileSourceConnectionForm(forms.ModelForm):
 
     def clean_delimiter(self):
         delimiter = self.cleaned_data.get('delimiter')
+        fmt = (self.cleaned_data.get('file_format') or self.initial.get('file_format') or 'csv').lower()
+        if fmt not in DELIMITED_FORMATS:
+            return delimiter or ''
         if delimiter is None:
-            raise forms.ValidationError("Delimiter is required.")
+            raise forms.ValidationError("Delimiter is required for CSV/TSV/TXT.")
         delimiter = str(delimiter)
         if len(delimiter) != 1:
             raise forms.ValidationError("Delimiter must be exactly one character.")
@@ -973,3 +1052,33 @@ class FileSourceConnectionForm(forms.ModelForm):
         if not encoding:
             raise forms.ValidationError("Encoding is required.")
         return encoding
+
+    def clean_record_path(self):
+        value = (self.cleaned_data.get('record_path') or '').strip()
+        fmt = (self.cleaned_data.get('file_format') or self.initial.get('file_format') or 'csv').lower()
+        if fmt == 'xml' and not value:
+            raise forms.ValidationError("Record path is required for XML format.")
+        return value
+
+    def clean_flatten_separator(self):
+        value = (self.cleaned_data.get('flatten_separator') or '.').strip()
+        strategy = (self.cleaned_data.get('nested_strategy') or 'flatten').lower()
+        if strategy == 'flatten' and not value:
+            raise forms.ValidationError("Flatten separator is required for flatten strategy.")
+        return value or '.'
+
+    def clean(self):
+        cleaned_data = super().clean()
+        declared_format = (cleaned_data.get('file_format') or 'csv').lower()
+        uploaded = self.files.get('upload_file') or cleaned_data.get('upload_file')
+        try:
+            normalized = validate_upload(uploaded, declared_format)
+            cleaned_data['file_format'] = normalized
+        except ValidationError as exc:
+            if hasattr(exc, 'message_dict'):
+                for field, errs in exc.message_dict.items():
+                    for err in errs:
+                        self.add_error(field, err)
+            else:
+                self.add_error('upload_file', str(exc))
+        return cleaned_data

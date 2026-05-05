@@ -17,6 +17,25 @@ logger = logging.getLogger(__name__)
 
 class ClickHouseConnector(DBConnector):
     """ClickHouse database connector"""
+
+    def _columns_cache_key(self, schema: str, table: str) -> str:
+        return f"{schema}.{table}".lower()
+
+    def _get_cached_columns(self, schema: str, table: str) -> Optional[List[ColumnInfo]]:
+        cache = getattr(self, "_columns_cache", None)
+        if not isinstance(cache, dict):
+            return None
+        return cache.get(self._columns_cache_key(schema, table))
+
+    def _set_cached_columns(self, schema: str, table: str, columns: List[ColumnInfo]) -> None:
+        if not isinstance(getattr(self, "_columns_cache", None), dict):
+            self._columns_cache = {}
+        self._columns_cache[self._columns_cache_key(schema, table)] = columns
+
+    def _invalidate_cached_columns(self, schema: str, table: str) -> None:
+        cache = getattr(self, "_columns_cache", None)
+        if isinstance(cache, dict):
+            cache.pop(self._columns_cache_key(schema, table), None)
     
     def connect(self):
         """Establish ClickHouse connection with enhanced error handling"""
@@ -146,6 +165,10 @@ class ClickHouseConnector(DBConnector):
         """Get column information for a table"""
         if not self._connection:
             self.connect()
+
+        cached = self._get_cached_columns(schema, table)
+        if cached is not None:
+            return cached
         
         # Verify table exists
         check_query = f"""
@@ -209,6 +232,7 @@ class ClickHouseConnector(DBConnector):
                 default_value=default_value
             ))
         
+        self._set_cached_columns(schema, table, columns)
         return columns
     
     def get_row_count(self, schema: str, table: str) -> int:
@@ -220,6 +244,64 @@ class ClickHouseConnector(DBConnector):
         result = self._connection.query(query)
         count = result.result_rows[0][0]
         return int(count)
+
+    def count_rows(
+        self,
+        schema: str,
+        table: str,
+        where: Optional[str] = None,
+    ) -> int:
+        """Return COUNT(*) for a table; optional WHERE clause (used by verifier)."""
+        if not self._connection:
+            self.connect()
+
+        query = f"SELECT count() FROM `{schema}`.`{table}`"
+        if where and where.strip():
+            query += f" WHERE {where}"
+
+        result = self._connection.query(query)
+        count = result.result_rows[0][0]
+        return int(count)
+
+    def aggregate_hash(
+        self,
+        schema: str,
+        table: str,
+        columns: List[str],
+        where: Optional[str] = None,
+    ) -> str:
+        """Return an order-invariant md5 digest of all rows.
+
+        Strategy:
+        - Compute per-row hash as md5(concat('|', toString(col1), ...))
+        - Aggregate with arraySort(groupArray(row_hash)) so order doesn't matter
+        - Hash the sorted array as the final digest
+        """
+        if not columns:
+            return ""
+        if not self._connection:
+            self.connect()
+
+        def _col_expr(c: str) -> str:
+            # Use ifNull(toString(...),'') to normalize Nullable columns deterministically.
+            return f"ifNull(toString(`{c}`), '')"
+
+        row_hash_expr = f"md5(concat('|', {', '.join(_col_expr(c) for c in columns)}))"
+
+        inner = (
+            f"SELECT {row_hash_expr} AS row_hash "
+            f"FROM `{schema}`.`{table}`"
+        )
+        if where and where.strip():
+            inner += f" WHERE {where}"
+
+        outer = (
+            "SELECT md5(arrayStringConcat(arraySort(groupArray(row_hash)), ',')) "
+            f"FROM ({inner})"
+        )
+
+        result = self._connection.query(outer)
+        return str(result.result_rows[0][0] or "")
     
     def get_database_size_bytes(self) -> Optional[int]:
         """Return total compressed bytes for all tables in the connected ClickHouse database."""
@@ -453,6 +535,7 @@ class ClickHouseConnector(DBConnector):
             """
             
             self._connection.command(create_query)
+            self._invalidate_cached_columns(schema, table)
         except Exception as e:
             raise DatabaseConnectionError(f"Failed to create table {schema}.{table}: {str(e)}")
     
@@ -825,9 +908,10 @@ class ClickHouseConnector(DBConnector):
             column_nullable = {}
             try:
                 table_columns = self.get_columns(schema, table)
+                column_idx_by_name = {name: idx for idx, name in enumerate(columns)}
                 for col_info in table_columns:
-                    if col_info.name in columns:
-                        col_idx = columns.index(col_info.name)
+                    col_idx = column_idx_by_name.get(col_info.name)
+                    if col_idx is not None:
                         # Store normalized type (remove Nullable wrapper, lowercase)
                         col_type = col_info.data_type.lower()
                         # Remove 'nullable(' and ')' wrapper if present
@@ -880,6 +964,67 @@ class ClickHouseConnector(DBConnector):
                     return dt
                 except Exception:
                     return None
+
+            def _safe_datetime_for_clickhouse(value: Any, nullable: bool):
+                """
+                Ensure a datetime is serializable by clickhouse-connect on this runtime.
+                Windows can raise OSError for out-of-range datetime.timestamp().
+                """
+                if value is None:
+                    return None if nullable else datetime(1970, 1, 1, 0, 0, 0)
+
+                # Accept date and promote to datetime.
+                if isinstance(value, date) and not isinstance(value, datetime):
+                    value = datetime.combine(value, datetime.min.time())
+
+                if not isinstance(value, datetime):
+                    return None if nullable else datetime(1970, 1, 1, 0, 0, 0)
+
+                if value.tzinfo is not None:
+                    value = value.astimezone(timezone.utc).replace(tzinfo=None)
+
+                # Guard low bound first.
+                if value < datetime(1970, 1, 1, 0, 0, 0):
+                    return None if nullable else datetime(1970, 1, 1, 0, 0, 0)
+
+                # Final platform/runtime safety check.
+                try:
+                    _ = value.timestamp()
+                    return value
+                except (OSError, OverflowError, ValueError):
+                    return None if nullable else datetime(1970, 1, 1, 0, 0, 0)
+
+            def _coerce_numeric(value: Any, col_type: str):
+                """
+                Convert values to numeric types expected by ClickHouse.
+                Returns converted value or None when conversion is impossible.
+                """
+                if value is None:
+                    return None
+                t = (col_type or "").lower()
+                if "bool" in t or "uint8" in t:
+                    if isinstance(value, bool):
+                        return 1 if value else 0
+                    if isinstance(value, (int, float, Decimal)):
+                        return 1 if float(value) != 0 else 0
+                    s = str(value).strip().lower()
+                    if s in {"true", "1", "yes", "y"}:
+                        return 1
+                    if s in {"false", "0", "no", "n"}:
+                        return 0
+                    return None
+                if any(k in t for k in ["int", "uint"]):
+                    try:
+                        # Handle numeric-like strings such as "42" or "42.0"
+                        return int(float(value))
+                    except Exception:
+                        return None
+                if any(k in t for k in ["float", "double", "decimal"]):
+                    try:
+                        return float(value)
+                    except Exception:
+                        return None
+                return value
             
             # Coerce data to match column types BEFORE normalization
             # This ensures clickhouse-connect receives consistent types
@@ -911,7 +1056,15 @@ class ClickHouseConnector(DBConnector):
                                     if 'datetime' in col_type or 'timestamp' in col_type:
                                         coerced_values.append(parsed_dt)
                                     else:
-                                        coerced_values.append(parsed_dt.date())
+                                        # ClickHouse Date lower bound is 1970-01-01 for our runtime path.
+                                        safe_date = parsed_dt.date()
+                                        if safe_date < date(1970, 1, 1):
+                                            if column_nullable.get(idx, True):
+                                                coerced_values.append(None)
+                                            else:
+                                                coerced_values.append(date(1970, 1, 1))
+                                        else:
+                                            coerced_values.append(safe_date)
                                 else:
                                     # Never pass raw strings to Date/DateTime columns.
                                     if column_nullable.get(idx, True):
@@ -920,10 +1073,37 @@ class ClickHouseConnector(DBConnector):
                                         coerced_values.append(_default_for_non_nullable(col_type))
                             elif isinstance(value, (date, datetime)):
                                 # Already a date/datetime object
-                                coerced_values.append(value)
+                                if isinstance(value, datetime):
+                                    # Guard against pre-epoch datetimes that can fail timestamp() on Windows.
+                                    if value.tzinfo is not None:
+                                        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+                                    if value < datetime(1970, 1, 1):
+                                        if column_nullable.get(idx, True):
+                                            coerced_values.append(None)
+                                        else:
+                                            coerced_values.append(datetime(1970, 1, 1, 0, 0, 0))
+                                    else:
+                                        coerced_values.append(value)
+                                else:
+                                    if value < date(1970, 1, 1):
+                                        if column_nullable.get(idx, True):
+                                            coerced_values.append(None)
+                                        else:
+                                            coerced_values.append(date(1970, 1, 1))
+                                    else:
+                                        coerced_values.append(value)
                             else:
                                 # Other type, keep as-is (normalization will handle)
                                 coerced_values.append(value)
+                        elif any(k in col_type for k in ['int', 'uint', 'float', 'double', 'decimal', 'bool']):
+                            numeric_value = _coerce_numeric(value, col_type)
+                            if numeric_value is None:
+                                if column_nullable.get(idx, True):
+                                    coerced_values.append(None)
+                                else:
+                                    coerced_values.append(_default_for_non_nullable(col_type))
+                            else:
+                                coerced_values.append(numeric_value)
                         # For numeric types, keep as numeric (normalization will handle Decimal, etc.)
                         else:
                             coerced_values.append(value)
@@ -982,20 +1162,28 @@ class ClickHouseConnector(DBConnector):
                         elif 'datetime' in col_type or 'timestamp' in col_type:
                             # DateTime/Timestamp column - needs timezone-naive UTC datetime object
                             if isinstance(value, datetime):
-                                # Normalize any timezone-aware datetime to naive UTC to avoid
-                                # mixing offset-aware and offset-naive datetimes inside
-                                # clickhouse-connect temporal encoders
-                                if value.tzinfo is not None:
-                                    value = value.astimezone(timezone.utc).replace(tzinfo=None)
-                                normalized.append(value)
+                                normalized.append(
+                                    _safe_datetime_for_clickhouse(
+                                        value,
+                                        column_nullable.get(idx, True)
+                                    )
+                                )
                             elif isinstance(value, date):
-                                # Convert date to datetime (midnight UTC, naive)
-                                dt_value = datetime.combine(value, datetime.min.time())
-                                normalized.append(dt_value)
+                                normalized.append(
+                                    _safe_datetime_for_clickhouse(
+                                        value,
+                                        column_nullable.get(idx, True)
+                                    )
+                                )
                             elif isinstance(value, str):
                                 parsed_dt = _parse_temporal_string(value)
                                 if parsed_dt is not None:
-                                    normalized.append(parsed_dt)
+                                    normalized.append(
+                                        _safe_datetime_for_clickhouse(
+                                            parsed_dt,
+                                            column_nullable.get(idx, True)
+                                        )
+                                    )
                                 else:
                                     logger.error(
                                         "Failed to parse datetime value '%s' for column index %s. Using null/default.",
@@ -1175,16 +1363,18 @@ class ClickHouseConnector(DBConnector):
                 alter_query = f"ALTER TABLE `{schema}`.`{table}` ADD COLUMN IF NOT EXISTS `{col_name}` {ch_type}"
                 self._connection.command(alter_query)
                 logger.info(f"Added column {col_name} ({ch_type}) to table {schema}.{table}")
+                self._invalidate_cached_columns(schema, table)
             
         except Exception as e:
             raise DatabaseConnectionError(f"Failed to add missing columns: {str(e)}")
     
     def upsert_dataframe(
-        self, 
-        schema: str, 
-        table: str, 
-        df: pd.DataFrame, 
-        key_column: str
+        self,
+        schema: str,
+        table: str,
+        df: pd.DataFrame,
+        key_column: Optional[str] = None,
+        key_columns: Optional[List[str]] = None,
     ):
         """
         Upsert (insert or update) DataFrame rows into table
@@ -1193,7 +1383,8 @@ class ClickHouseConnector(DBConnector):
             schema: Database name
             table: Table name
             df: DataFrame with data
-            key_column: Primary key or unique identifier column name
+            key_column: Backward-compatible single-key name.
+            key_columns: Optional list of identity key column names (composite supported).
         """
         if not self._connection:
             self.connect()
@@ -1203,12 +1394,25 @@ class ClickHouseConnector(DBConnector):
         
         try:
             # ClickHouse deterministic upsert:
-            # 1) delete existing rows for incoming keys
+            # 1) delete existing rows for incoming identity keys (full identity for composite)
             # 2) insert incoming rows
-            # This avoids duplicate-visible rows on normal SELECT queries.
+            #
+            # This avoids duplicate-visible rows on normal SELECT queries for the configured identity.
 
-            if key_column not in df.columns:
-                raise DatabaseConnectionError(f"Key column {key_column} not found in DataFrame")
+            identity_cols: List[str] = []
+            if key_columns:
+                identity_cols = [c for c in key_columns if c]
+            elif key_column:
+                identity_cols = [key_column]
+
+            if not identity_cols:
+                raise DatabaseConnectionError("At least one identity key column is required for ClickHouse upsert.")
+
+            missing_cols = [c for c in identity_cols if c not in df.columns]
+            if missing_cols:
+                raise DatabaseConnectionError(
+                    f"Identity key column(s) not found in DataFrame for {schema}.{table}: {missing_cols}"
+                )
 
             # Normalize None/NaN values to avoid Python array creation errors for non-Nullable columns.
             safe_df = df.copy()
@@ -1224,10 +1428,10 @@ class ClickHouseConnector(DBConnector):
                         safe_df[col] = series.fillna('')
 
             columns = list(safe_df.columns)
-            # De-duplicate incoming batch by key and keep latest row.
-            safe_df = safe_df.drop_duplicates(subset=[key_column], keep='last')
+            # De-duplicate incoming batch by full identity and keep latest row.
+            safe_df = safe_df.drop_duplicates(subset=identity_cols, keep='last')
 
-            def _format_key_value(v):
+            def _format_literal(v) -> str:
                 if pd.isna(v):
                     return "NULL"
                 if isinstance(v, (int, float)) and not isinstance(v, bool):
@@ -1237,16 +1441,35 @@ class ClickHouseConnector(DBConnector):
                 s = str(v).replace("'", "''")
                 return f"'{s}'"
 
-            # Delete existing rows for incoming key set in chunks.
-            key_values = [_format_key_value(v) for v in safe_df[key_column].tolist()]
-            chunk_size = 1000
-            for i in range(0, len(key_values), chunk_size):
-                chunk = key_values[i:i + chunk_size]
-                if not chunk:
+            def _key_condition(col: str, v) -> str:
+                # ClickHouse uses NULL semantics similar to SQL:
+                #   col = NULL does not match; use col IS NULL.
+                if pd.isna(v):
+                    return f"`{col}` IS NULL"
+                return f"`{col}` = {_format_literal(v)}"
+
+            # Build identity tuples for deletion predicate (for composite keys).
+            # Each tuple will be expressed as: (k1=... AND k2=... AND ...)
+            identity_tuples: List[tuple] = list(safe_df[identity_cols].itertuples(index=False, name=None))
+
+            # Delete existing rows for incoming identity set in chunks.
+            # Note: identity tuples with NULL keys are handled via IS NULL predicates.
+            chunk_size = 500
+            for i in range(0, len(identity_tuples), chunk_size):
+                chunk_tuples = identity_tuples[i : i + chunk_size]
+                if not chunk_tuples:
                     continue
+                or_parts: List[str] = []
+                for tup in chunk_tuples:
+                    and_parts: List[str] = []
+                    for col, v in zip(identity_cols, tup):
+                        and_parts.append(_key_condition(col, v))
+                    or_parts.append(f"({' AND '.join(and_parts)})")
+
+                delete_where = " OR ".join(or_parts)
                 delete_query = (
                     f"ALTER TABLE `{schema}`.`{table}` "
-                    f"DELETE WHERE `{key_column}` IN ({', '.join(chunk)}) "
+                    f"DELETE WHERE {delete_where} "
                     f"SETTINGS mutations_sync = 1"
                 )
                 self.execute_query(delete_query)

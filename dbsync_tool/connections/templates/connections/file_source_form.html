@@ -6,7 +6,9 @@
 {% block content %}
 <div class="file-source-form-page min-h-screen bg-transparent pb-32" x-data="{ 
     activeTab: 'config',
-    uploadMode: false
+    uploadMode: false,
+    selectedFormat: '{{ form.file_format.value|default:"csv" }}',
+    nestedStrategy: '{{ form.nested_strategy.value|default:"flatten" }}'
 }">
     <!-- Premium Header -->
     <div class="px-8 pt-6 pb-8">
@@ -101,8 +103,23 @@
 
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
                                 <div class="space-y-4">
+                                    <div class="space-y-2">
+                                        <label for="{{ form.file_format.id_for_label }}" class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Format</label>
+                                        <div class="relative">
+                                            <select name="{{ form.file_format.name }}" id="{{ form.file_format.id_for_label }}" x-model="selectedFormat"
+                                                    class="w-full pr-10 pl-5 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-indigo-500 transition-all outline-none appearance-none text-sm shadow-sm cursor-pointer">
+                                                {% for value, text in form.file_format.field.choices %}
+                                                    <option value="{{ value }}" {% if form.file_format.value == value %}selected{% endif %}>{{ text }}</option>
+                                                {% endfor %}
+                                            </select>
+                                            <div class="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
+                                                <span class="material-symbols-outlined text-slate-400">expand_more</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
                                     <div class="grid grid-cols-2 gap-6">
-                                        <div class="space-y-2">
+                                        <div class="space-y-2" x-show="['csv','tsv','txt'].includes(selectedFormat)">
                                             <label for="{{ form.delimiter.id_for_label }}" class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Delimiter</label>
                                             <div class="relative">
                                                 <select name="{{ form.delimiter.name }}" id="{{ form.delimiter.id_for_label }}" 
@@ -116,7 +133,7 @@
                                                 </div>
                                             </div>
                                         </div>
-                                        <div class="space-y-2">
+                                        <div class="space-y-2" x-show="selectedFormat !== 'xlsx'">
                                             <label for="{{ form.encoding.id_for_label }}" class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Encoding</label>
                                             <div class="relative">
                                                 <select name="{{ form.encoding.name }}" id="{{ form.encoding.id_for_label }}" 
@@ -130,9 +147,43 @@
                                                 </div>
                                             </div>
                                         </div>
+                                        <div class="space-y-2" x-show="selectedFormat === 'xlsx'">
+                                            <label for="{{ form.sheet_name.id_for_label }}" class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Sheet Name (optional)</label>
+                                            <input type="text" name="{{ form.sheet_name.name }}" id="{{ form.sheet_name.id_for_label }}" value="{{ form.sheet_name.value|default:'' }}"
+                                                   placeholder="Empty = first sheet"
+                                                   class="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-indigo-500 transition-all outline-none text-sm shadow-sm">
+                                        </div>
+                                        <div class="space-y-2" x-show="['json','jsonl','xml'].includes(selectedFormat)">
+                                            <label for="{{ form.record_path.id_for_label }}" class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Record Path</label>
+                                            <input type="text" name="{{ form.record_path.name }}" id="{{ form.record_path.id_for_label }}" value="{{ form.record_path.value|default:'' }}"
+                                                   :placeholder="selectedFormat === 'xml' ? '/root/items/item' : 'data.items'"
+                                                   class="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-indigo-500 transition-all outline-none text-sm shadow-sm">
+                                        </div>
                                     </div>
 
-                                    <div class="flex items-center justify-between p-5 bg-slate-50 rounded-2xl border border-slate-100">
+                                    <div class="grid grid-cols-2 gap-6" x-show="['json','jsonl','xml'].includes(selectedFormat)">
+                                        <div class="space-y-2">
+                                            <label for="{{ form.nested_strategy.id_for_label }}" class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Nested Strategy</label>
+                                            <div class="relative">
+                                                <select name="{{ form.nested_strategy.name }}" id="{{ form.nested_strategy.id_for_label }}" x-model="nestedStrategy"
+                                                        class="w-full pr-10 pl-5 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-indigo-500 transition-all outline-none appearance-none text-sm shadow-sm cursor-pointer">
+                                                    {% for value, text in form.nested_strategy.field.choices %}
+                                                        <option value="{{ value }}" {% if form.nested_strategy.value == value %}selected{% endif %}>{{ text }}</option>
+                                                    {% endfor %}
+                                                </select>
+                                                <div class="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
+                                                    <span class="material-symbols-outlined text-slate-400">expand_more</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="space-y-2" x-show="nestedStrategy === 'flatten'">
+                                            <label for="{{ form.flatten_separator.id_for_label }}" class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Flatten Separator</label>
+                                            <input type="text" name="{{ form.flatten_separator.name }}" id="{{ form.flatten_separator.id_for_label }}" value="{{ form.flatten_separator.value|default:'.' }}"
+                                                   class="w-full px-5 py-3.5 bg-white border border-slate-200 rounded-xl text-slate-800 font-bold focus:border-indigo-500 transition-all outline-none text-sm shadow-sm">
+                                        </div>
+                                    </div>
+
+                                    <div class="flex items-center justify-between p-5 bg-slate-50 rounded-2xl border border-slate-100" x-show="selectedFormat !== 'json' && selectedFormat !== 'jsonl' && selectedFormat !== 'xml'">
                                         <div class="flex items-center gap-4">
                                             <span class="material-symbols-outlined text-slate-400 text-lg">table_rows_narrow</span>
                                             <span class="text-[10px] font-black text-slate-700 uppercase tracking-widest">Metadata Header</span>
@@ -147,17 +198,21 @@
                                 <div class="space-y-4">
                                 <div class="space-y-3">
                                     <label class="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Edge Upload Relay</label>
-                                    <div class="relative group h-full min-h-[100px]">
-                                        <div class="absolute inset-0 bg-slate-50 border-2 border-slate-100 border-dashed rounded-xl group-hover:bg-slate-100/50 group-hover:border-indigo-200 transition-all flex flex-col items-center justify-center gap-2 p-4 text-center">
-                                            <div class="w-10 h-10 rounded-full bg-white flex items-center justify-center text-slate-300 group-hover:text-indigo-400 group-hover:scale-110 transition-all shadow-sm">
-                                                <span class="material-symbols-outlined text-lg">cloud_upload</span>
+                                    <div class="relative group h-full min-h-[120px]">
+                                        <div id="edge-upload-relay-zone" class="absolute inset-0 bg-slate-50 border-2 border-slate-100 border-dashed rounded-xl group-hover:bg-slate-100/50 group-hover:border-indigo-200 transition-all flex flex-col items-center justify-center gap-2 p-4 text-center pointer-events-none">
+                                            <div id="edge-upload-icon-wrap" class="w-10 h-10 rounded-full bg-white flex items-center justify-center text-slate-300 group-hover:text-indigo-400 group-hover:scale-110 transition-all shadow-sm">
+                                                <span id="edge-upload-icon" class="material-symbols-outlined text-lg">cloud_upload</span>
                                             </div>
-                                            <div>
-                                                <p class="text-[9px] font-black text-slate-500 uppercase tracking-widest leading-none">Drop CSV to register</p>
+                                            <div class="min-w-0 max-w-full px-1">
+                                                <p id="edge-upload-title" class="text-[9px] font-black text-slate-500 uppercase tracking-widest leading-none">Drop file to register</p>
+                                                <p id="edge-upload-detail" class="hidden mt-2 text-[11px] font-bold text-slate-700 truncate max-w-full" title=""></p>
+                                                <p id="edge-upload-hint" class="hidden mt-1 text-[9px] font-medium text-emerald-700 uppercase tracking-wide">Relative path updated below</p>
                                             </div>
                                         </div>
                                         <input type="file" name="{{ form.upload_file.name }}" id="{{ form.upload_file.id_for_label }}" 
-                                               class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10">
+                                               class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                                               accept=".csv,.tsv,.txt,.json,.jsonl,.ndjson,.xml,.xlsx,text/csv,text/tab-separated-values,text/plain,application/json,application/x-ndjson,application/xml,text/xml,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                               autocomplete="off">
                                     </div>
                                 </div>
                                 </div>
@@ -215,4 +270,133 @@
             </form>
         </div>
     </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    var formatMeta = {
+        csv: { ext: '.csv', accept: '.csv,text/csv', label: 'Drop CSV to register' },
+        tsv: { ext: '.tsv', accept: '.tsv,text/tab-separated-values,text/plain', label: 'Drop TSV to register' },
+        txt: { ext: '.txt', accept: '.txt,text/plain,text/csv', label: 'Drop TXT to register' },
+        json: { ext: '.json', accept: '.json,application/json,text/plain', label: 'Drop JSON to register' },
+        jsonl: { ext: '.jsonl', accept: '.jsonl,.ndjson,application/x-ndjson,application/json,text/plain', label: 'Drop JSONL to register' },
+        xml: { ext: '.xml', accept: '.xml,application/xml,text/xml,text/plain', label: 'Drop XML to register' },
+        xlsx: { ext: '.xlsx', accept: '.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', label: 'Drop XLSX to register' }
+    };
+
+    function sanitizeBasename(name) {
+        var base = String(name || '').replace(/^.*[/\\\\]/, '');
+        base = base.replace(/[^0-9a-zA-Z._-]/g, '_');
+        return base || 'uploaded.csv';
+    }
+    function detectFormatFromFile(file) {
+        if (!file) return 'csv';
+        var name = String(file.name || '').toLowerCase();
+        var type = String(file.type || '').toLowerCase();
+        if (name.endsWith('.jsonl') || name.endsWith('.ndjson') || type.indexOf('x-ndjson') >= 0) return 'jsonl';
+        if (name.endsWith('.json') || type.indexOf('application/json') >= 0) return 'json';
+        if (name.endsWith('.xml') || type.indexOf('application/xml') >= 0 || type.indexOf('text/xml') >= 0) return 'xml';
+        if (name.endsWith('.xlsx') || type.indexOf('spreadsheetml.sheet') >= 0) return 'xlsx';
+        if (name.endsWith('.tsv') || type.indexOf('tab-separated-values') >= 0) return 'tsv';
+        if (name.endsWith('.txt')) return 'txt';
+        if (name.endsWith('.csv') || type.indexOf('text/csv') >= 0) return 'csv';
+        return 'csv';
+    }
+    function formatBytes(n) {
+        if (n == null || isNaN(n)) return '';
+        if (n < 1024) return n + ' B';
+        if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+        return (n / 1048576).toFixed(1) + ' MB';
+    }
+    /** Align with connections.views._save_uploaded_file_source path logic */
+    function syncRelativePath(relInput, uploadedFileName, format) {
+        var safe = sanitizeBasename(uploadedFileName);
+        var meta = formatMeta[format] || formatMeta.csv;
+        if (safe.indexOf('.') === -1) {
+            safe = safe + meta.ext;
+        }
+        var v = String(relInput.value || '').trim().replace(/\\/g, '/');
+        if (!v) {
+            relInput.value = 'uploads/' + safe;
+            return;
+        }
+        var idx = v.lastIndexOf('/');
+        if (idx === -1) {
+            relInput.value = safe;
+            return;
+        }
+        relInput.value = v.slice(0, idx + 1) + safe;
+    }
+    function setUploadZoneIdle(zone, titleEl, detailEl, hintEl, iconEl, iconWrap, format) {
+        var meta = formatMeta[format] || formatMeta.csv;
+        zone.classList.remove('border-emerald-400', 'border-solid', 'bg-emerald-50', 'ring-2', 'ring-emerald-100');
+        zone.classList.add('border-slate-100', 'border-dashed', 'bg-slate-50');
+        titleEl.textContent = meta.label;
+        detailEl.textContent = '';
+        detailEl.removeAttribute('title');
+        detailEl.classList.add('hidden');
+        hintEl.classList.add('hidden');
+        iconEl.textContent = 'cloud_upload';
+        iconWrap.classList.remove('text-emerald-600');
+        iconWrap.classList.add('text-slate-300');
+    }
+    function setUploadZoneSelected(zone, titleEl, detailEl, hintEl, iconEl, iconWrap, file) {
+        zone.classList.remove('border-slate-100', 'border-dashed');
+        zone.classList.add('border-emerald-400', 'border-solid', 'bg-emerald-50', 'ring-2', 'ring-emerald-100');
+        titleEl.textContent = 'File registered locally';
+        var sizePart = formatBytes(file.size);
+        detailEl.textContent = sizePart ? file.name + ' · ' + sizePart : file.name;
+        detailEl.setAttribute('title', file.name);
+        detailEl.classList.remove('hidden');
+        hintEl.classList.remove('hidden');
+        iconEl.textContent = 'check_circle';
+        iconWrap.classList.remove('text-slate-300');
+        iconWrap.classList.add('text-emerald-600');
+    }
+    document.addEventListener('DOMContentLoaded', function () {
+        var upload = document.getElementById('{{ form.upload_file.id_for_label }}');
+        var rel = document.getElementById('{{ form.relative_path.id_for_label }}');
+        var formatSelect = document.getElementById('{{ form.file_format.id_for_label }}');
+        var zone = document.getElementById('edge-upload-relay-zone');
+        if (!upload || !rel || !zone || !formatSelect) return;
+        var titleEl = document.getElementById('edge-upload-title');
+        var detailEl = document.getElementById('edge-upload-detail');
+        var hintEl = document.getElementById('edge-upload-hint');
+        var iconEl = document.getElementById('edge-upload-icon');
+        var iconWrap = document.getElementById('edge-upload-icon-wrap');
+
+        function currentFormat() {
+            return String(formatSelect.value || 'csv').toLowerCase();
+        }
+        function applyFormatUI() {
+            var fmt = currentFormat();
+            var meta = formatMeta[fmt] || formatMeta.csv;
+            upload.setAttribute('accept', meta.accept);
+            if (!upload.files || !upload.files[0]) {
+                setUploadZoneIdle(zone, titleEl, detailEl, hintEl, iconEl, iconWrap, fmt);
+            }
+        }
+
+        formatSelect.addEventListener('change', applyFormatUI);
+        applyFormatUI();
+
+        upload.addEventListener('change', function () {
+            var f = upload.files && upload.files[0];
+            if (!f) {
+                setUploadZoneIdle(zone, titleEl, detailEl, hintEl, iconEl, iconWrap, currentFormat());
+                return;
+            }
+            var detectedFormat = detectFormatFromFile(f);
+            if (formatMeta[detectedFormat]) {
+                formatSelect.value = detectedFormat;
+                formatSelect.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            syncRelativePath(rel, f.name, currentFormat());
+            setUploadZoneSelected(zone, titleEl, detailEl, hintEl, iconEl, iconWrap, f);
+            rel.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+    });
+})();
+</script>
 {% endblock %}

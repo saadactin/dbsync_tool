@@ -12,22 +12,43 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 
 from pathlib import Path
 from cryptography.fernet import Fernet
+from django.core.exceptions import ImproperlyConfigured
 import os
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
+from dotenv import load_dotenv
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+load_dotenv(BASE_DIR / ".env")
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-bx@5l*4o3ggud$prerb0dmw35pksy(&u@lv(hahmdp4!*n_9m9'
+def _require_env(name: str) -> str:
+    """Read a mandatory environment variable; raise if missing/empty."""
+    value = os.environ.get(name)
+    if value is None or value == "":
+        raise ImproperlyConfigured(
+            f"Required environment variable '{name}' is not set. "
+            f"Define it in {BASE_DIR / '.env'} or the process environment."
+        )
+    return value
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
 
-ALLOWED_HOSTS = ['*']
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+SECRET_KEY = _require_env("SECRET_KEY")
+
+DEBUG = _env_bool("DEBUG", default=False)
+
+ALLOWED_HOSTS = [
+    h.strip()
+    for h in os.environ.get("ALLOWED_HOSTS", "*").split(",")
+    if h.strip()
+]
 
 
 # Application definition
@@ -99,11 +120,11 @@ if DB_ENGINE in {"postgres", "postgresql", "pg"}:
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
-            'NAME': os.environ.get('POSTGRES_DB', 'tauseef'),
-            'USER': os.environ.get('POSTGRES_USER', 'migration_user'),
-            'PASSWORD': os.environ.get('POSTGRES_PASSWORD', 'StrongPassword123'),
-            'HOST': os.environ.get('POSTGRES_HOST', 'localhost'),
-            'PORT': os.environ.get('POSTGRES_PORT', '5432'),
+            'NAME': _require_env('POSTGRES_DB'),
+            'USER': _require_env('POSTGRES_USER'),
+            'PASSWORD': _require_env('POSTGRES_PASSWORD'),
+            'HOST': _require_env('POSTGRES_HOST'),
+            'PORT': _require_env('POSTGRES_PORT'),
         }
     }
 else:
@@ -137,21 +158,21 @@ SCHEMA_CACHE_TTL = 600    # 10 minutes for schemas (change less frequently)
 # Using APScheduler instead (no Redis/Celery needed)
 # All scheduled jobs are managed by scheduler.service using APScheduler BackgroundScheduler
 
-# Email Configuration
-EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
-EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
-EMAIL_PORT = int(os.environ.get('EMAIL_PORT', '587'))
-EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True').lower() == 'true'
-EMAIL_USE_SSL = os.environ.get('EMAIL_USE_SSL', 'False').lower() == 'true'
-EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', 'saadpractice4@gmail.com')
-EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', 'txludusmznqxoweo')
-DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'saadpractice4@gmail.com')
+EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', '')
+EMAIL_HOST = os.environ.get('EMAIL_HOST', '')
+EMAIL_PORT = int(os.environ.get('EMAIL_PORT', '0') or '0')
+EMAIL_USE_TLS = _env_bool('EMAIL_USE_TLS', default=False)
+EMAIL_USE_SSL = _env_bool('EMAIL_USE_SSL', default=False)
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', '')
 ADMIN_EMAILS = [
-    os.environ.get("ADMIN_EMAILS", "saad.sayyed@actin.co.in")
+    e.strip()
+    for e in os.environ.get('ADMIN_EMAILS', '').split(',')
+    if e.strip()
 ]
 
-# Site URL for email links
-SITE_URL = os.environ.get('SITE_URL', 'http://localhost:8005')
+SITE_URL = os.environ.get('SITE_URL', '')
 
 # REST Framework Configuration
 REST_FRAMEWORK = {
@@ -188,9 +209,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/4.2/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = os.environ.get('LANGUAGE_CODE', 'en-us')
 
-TIME_ZONE = 'Asia/Kolkata'  # India Standard Time (IST, GMT+5:30)
+TIME_ZONE = os.environ.get('TIME_ZONE', 'Asia/Kolkata')
 
 USE_I18N = True
 
@@ -215,15 +236,23 @@ DATA_UPLOAD_MAX_NUMBER_FIELDS = None
 DATA_UPLOAD_MAX_MEMORY_SIZE = None
 # Disable custom request-validation middleware size cap.
 REQUEST_VALIDATION_MAX_REQUEST_SIZE = None
-# Auto-fail executions with no activity for this duration.
 SYNC_EXECUTION_STALE_TIMEOUT_MINUTES = int(
     os.environ.get("SYNC_EXECUTION_STALE_TIMEOUT_MINUTES", "30")
 )
 
-# Flat-file sync root (server-side path only).
-# CSV source paths must be provided relative to this directory.
-FILE_SYNC_ROOT = Path(os.environ.get('FILE_SYNC_ROOT', str(BASE_DIR / 'file_sources')))
-FILE_SYNC_STRICT = os.environ.get('FILE_SYNC_STRICT', 'True').lower() == 'true'
+_file_sync_root_env = os.environ.get('FILE_SYNC_ROOT', '').strip()
+FILE_SYNC_ROOT = Path(_file_sync_root_env) if _file_sync_root_env else (BASE_DIR / 'file_sources')
+FILE_SYNC_STRICT = _env_bool('FILE_SYNC_STRICT', default=True)
+FILE_FORMAT_MAX_BYTES = {
+    'csv': int(os.environ.get('FILE_MAX_BYTES_CSV', str(1024 * 1024 * 1024))),
+    'tsv': int(os.environ.get('FILE_MAX_BYTES_TSV', str(1024 * 1024 * 1024))),
+    'txt': int(os.environ.get('FILE_MAX_BYTES_TXT', str(1024 * 1024 * 1024))),
+    'json': int(os.environ.get('FILE_MAX_BYTES_JSON', str(512 * 1024 * 1024))),
+    'jsonl': int(os.environ.get('FILE_MAX_BYTES_JSONL', str(512 * 1024 * 1024))),
+    'xml': int(os.environ.get('FILE_MAX_BYTES_XML', str(256 * 1024 * 1024))),
+    'xlsx': int(os.environ.get('FILE_MAX_BYTES_XLSX', str(128 * 1024 * 1024))),
+}
+FILE_FORMAT_JSON_MAX_DEPTH = int(os.environ.get('FILE_FORMAT_JSON_MAX_DEPTH', '64'))
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
@@ -235,22 +264,13 @@ LOGIN_URL = '/accounts/login/'
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/accounts/login/'
 
-# Encryption key for password encryption
-# Generate a key: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-# Store in environment variable or set here (NOT recommended for production)
-# IMPORTANT: This key must remain constant or all encrypted passwords will be unreadable
-ENCRYPTION_KEY = os.environ.get('ENCRYPTION_KEY', None)
-if not ENCRYPTION_KEY:
-    # For development only - use a fixed key so passwords remain decryptable
-    # In production, set ENCRYPTION_KEY environment variable
-    # This key was generated once and must remain constant
-    ENCRYPTION_KEY = 'wTsfowuOCFw9lLEnhYV-9oMCvWCKyZxJRMEUOPtf3MU='
-    print(f"WARNING: Using development encryption key. Set ENCRYPTION_KEY environment variable for production!")
+# Encryption key for password encryption (Fernet, 44 char base64).
+# Generate once: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# This key must remain constant or all encrypted passwords become unreadable.
+ENCRYPTION_KEY = _require_env('ENCRYPTION_KEY')
 
-# Production Settings
 if not DEBUG:
-    # Security settings
-    SECURE_SSL_REDIRECT = os.environ.get('SECURE_SSL_REDIRECT', 'False').lower() == 'true'
+    SECURE_SSL_REDIRECT = _env_bool('SECURE_SSL_REDIRECT', default=False)
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_BROWSER_XSS_FILTER = True

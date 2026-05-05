@@ -98,18 +98,37 @@ def _load_columns_for_mapping_step(
     table_key = _wizard_table_key(table_info)
     plans = request.session.get("sync_job_transform_plan") or {}
     plan = plans.get(table_key)
+    plan_signature = ""
+    try:
+        if isinstance(plan, dict):
+            # Cache key must change when plan output schema changes.
+            plan_signature = json.dumps(plan, sort_keys=True, separators=(",", ":"))
+    except Exception:
+        plan_signature = str(plan)
+    cache_key = f"{source_connection.id}:{table_key}:{hash(plan_signature)}"
+    cache_bucket = request.session.get("sync_job_columns_cache", {}) or {}
+    cached = cache_bucket.get(cache_key)
+    if isinstance(cached, list):
+        return cached
     if isinstance(plan, dict):
         from sync_jobs.services.transform_plan_service import mapping_columns_from_plan
 
         synthetic = mapping_columns_from_plan(plan)
         if synthetic is not None:
+            cache_bucket[cache_key] = synthetic
+            request.session["sync_job_columns_cache"] = cache_bucket
+            request.session.modified = True
             return synthetic
-    return load_table_columns(
+    loaded = load_table_columns(
         str(source_connection.id),
         table_info["schema_name"],
         table_info["table_name"],
         user,
     )
+    cache_bucket[cache_key] = loaded
+    request.session["sync_job_columns_cache"] = cache_bucket
+    request.session.modified = True
+    return loaded
 
 
 def viewer_read_only_required(view_func):
@@ -956,6 +975,7 @@ def create_job_step2_submit(request):
         request.session.pop('sync_job_transform_plan', None)
         request.session.pop('sync_job_transform_validated', None)
         request.session.pop('sync_job_transform_preview_cache', None)
+        request.session.pop('sync_job_columns_cache', None)
 
         # Redirect to step 3 model (join/union/lookup), then mapping
         messages.success(request, f'Selected {len(tables)} table(s).')
@@ -2704,6 +2724,7 @@ def create_job_step4_submit(request):
         request.session.pop('sync_job_transform_plan', None)
         request.session.pop('sync_job_transform_validated', None)
         request.session.pop('sync_job_transform_preview_cache', None)
+        request.session.pop('sync_job_columns_cache', None)
         request.session.pop('sync_job_flat_file_incremental_mode', None)
         request.session.pop('sync_job_flat_file_hash_columns', None)
         request.session.pop('sync_job_flat_file_hash_algorithm', None)
@@ -3614,6 +3635,74 @@ def execution_status_api(request, job_id, execution_id):
     }
     
     return JsonResponse(response_data)
+
+
+@login_required
+@require_http_methods(["GET"])
+def jobs_status_snapshot_api(request):
+    """
+    Lightweight status snapshot for many jobs (UI polling).
+    Query param: ids=<uuid1,uuid2,...>
+    """
+    from accounts.services.tenant_service import TenantService
+    raw_ids = (request.GET.get("ids", "") or "").strip()
+    if not raw_ids:
+        return JsonResponse({"jobs": []})
+    ids = [x.strip() for x in raw_ids.split(",") if x.strip()]
+    if not ids:
+        return JsonResponse({"jobs": []})
+    jobs_qs = SyncJob.objects.filter(id__in=ids)
+    user_jobs = TenantService.get_queryset_for_user(jobs_qs, request.user)
+    jobs = user_jobs.select_related("schedule").prefetch_related("executions")
+    rows = []
+    for job in jobs:
+        latest_execution = job.executions.order_by("-started_at").first()
+        rows.append(
+            {
+                "id": str(job.id),
+                "status": job.status,
+                "status_display": job.get_status_display(),
+                "last_run_at": job.last_run_at.isoformat() if job.last_run_at else None,
+                "next_run_at": job.next_run_at.isoformat() if job.next_run_at else None,
+                "latest_execution_status": latest_execution.status if latest_execution else "",
+            }
+        )
+    return JsonResponse({"jobs": rows})
+
+
+@login_required
+@require_http_methods(["GET"])
+def job_status_snapshot_api(request, job_id):
+    """Lightweight status snapshot for a single job detail page."""
+    from accounts.services.tenant_service import TenantService
+    try:
+        jobs_qs = SyncJob.objects.all()
+        user_jobs = TenantService.get_queryset_for_user(jobs_qs, request.user)
+        job = user_jobs.get(id=job_id)
+    except SyncJob.DoesNotExist:
+        return JsonResponse({"error": "Job not found"}, status=404)
+    latest_execution = job.executions.order_by("-started_at").first()
+    return JsonResponse(
+        {
+            "job": {
+                "id": str(job.id),
+                "status": job.status,
+                "status_display": job.get_status_display(),
+                "last_run_at": job.last_run_at.isoformat() if job.last_run_at else None,
+                "next_run_at": job.next_run_at.isoformat() if job.next_run_at else None,
+            },
+            "latest_execution": {
+                "id": str(latest_execution.id) if latest_execution else None,
+                "status": latest_execution.status if latest_execution else "",
+                "status_display": latest_execution.get_status_display() if latest_execution else "",
+                "started_at": latest_execution.started_at.isoformat() if latest_execution and latest_execution.started_at else None,
+                "completed_at": latest_execution.completed_at.isoformat() if latest_execution and latest_execution.completed_at else None,
+                "completed_tables": latest_execution.completed_tables if latest_execution else 0,
+                "total_tables": latest_execution.total_tables if latest_execution else 0,
+                "total_rows_synced": latest_execution.total_rows_synced if latest_execution else 0,
+            },
+        }
+    )
 
 
 @login_required

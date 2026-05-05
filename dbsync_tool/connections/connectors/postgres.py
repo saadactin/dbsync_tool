@@ -21,6 +21,511 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _strip_outer_parentheses_sql(expr: str) -> str:
+    """
+    Repeatedly remove a single matching outer (...), only when the whole string
+    is wrapped (SQL Server often stores defaults as (getdate()) or ((0))).
+    """
+    s = (expr or "").strip()
+    while len(s) >= 2 and s[0] == "(" and s[-1] == ")":
+        depth = 0
+        for i, ch in enumerate(s):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+            if depth == 0 and i < len(s) - 1:
+                return s
+        if depth != 0:
+            break
+        inner = s[1:-1].strip()
+        if inner == s:
+            break
+        s = inner
+    return s
+
+
+def _balanced_paren_content(s: str, open_paren_index: int) -> Optional[str]:
+    """Return substring inside the '(' at open_paren_index through its matching ')'."""
+    if open_paren_index < 0 or open_paren_index >= len(s) or s[open_paren_index] != "(":
+        return None
+    depth = 0
+    for i in range(open_paren_index, len(s)):
+        ch = s[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return s[open_paren_index + 1 : i]
+    return None
+
+
+def _split_top_level_commas_sql(s: str) -> List[str]:
+    """Split on commas not inside (), [], or string literals (SQL Server-ish)."""
+    parts: List[str] = []
+    depth_paren = 0
+    depth_bracket = 0
+    start = 0
+    i = 0
+    in_str = False
+    str_delim = ""
+    n = len(s)
+    while i < n:
+        ch = s[i]
+        if in_str:
+            if ch == str_delim:
+                if str_delim == "'" and i + 1 < n and s[i + 1] == "'":
+                    i += 2
+                    continue
+                in_str = False
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            in_str = True
+            str_delim = ch
+            i += 1
+            continue
+        if ch == "[":
+            depth_bracket += 1
+        elif ch == "]":
+            depth_bracket = max(0, depth_bracket - 1)
+        elif depth_bracket == 0:
+            if ch == "(":
+                depth_paren += 1
+            elif ch == ")":
+                depth_paren -= 1
+            elif ch == "," and depth_paren == 0:
+                parts.append(s[start:i].strip())
+                start = i + 1
+        i += 1
+    parts.append(s[start:].strip())
+    return parts
+
+
+def _find_top_level_as_keyword(s: str) -> int:
+    """Index of ' AS ' at nesting depth 0 (for CAST(expr AS type)), or -1."""
+    depth_paren = 0
+    depth_bracket = 0
+    i = 0
+    n = len(s)
+    in_str = False
+    str_delim = ""
+    while i < n:
+        ch = s[i]
+        if in_str:
+            if ch == str_delim:
+                if str_delim == "'" and i + 1 < n and s[i + 1] == "'":
+                    i += 2
+                    continue
+                in_str = False
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            in_str = True
+            str_delim = ch
+            i += 1
+            continue
+        if ch == "[":
+            depth_bracket += 1
+        elif ch == "]":
+            depth_bracket = max(0, depth_bracket - 1)
+        elif depth_bracket == 0:
+            if ch == "(":
+                depth_paren += 1
+            elif ch == ")":
+                depth_paren -= 1
+            elif depth_paren == 0 and i + 4 <= n and s[i : i + 4].upper() == " AS ":
+                return i
+        i += 1
+    return -1
+
+
+def _try_peel_convert_value_expression(s: str) -> Optional[str]:
+    """Second argument of CONVERT / TRY_CONVERT(type, value [, style])."""
+    s = s.strip()
+    m = re.match(r"^(TRY_\s*)?CONVERT\s*\(", s, re.I)
+    if not m:
+        return None
+    open_idx = m.end() - 1
+    inner = _balanced_paren_content(s, open_idx)
+    if inner is None:
+        return None
+    parts = _split_top_level_commas_sql(inner)
+    if len(parts) >= 2:
+        return parts[1].strip()
+    return None
+
+
+def _try_peel_cast_value_expression(s: str) -> Optional[str]:
+    """Expression inside CAST(expr AS type) or TRY_CAST(expr AS type)."""
+    s = s.strip()
+    m = re.match(r"^(TRY_\s*)?CAST\s*\(", s, re.I)
+    if not m:
+        return None
+    open_idx = m.end() - 1
+    inner = _balanced_paren_content(s, open_idx)
+    if inner is None:
+        return None
+    as_idx = _find_top_level_as_keyword(inner)
+    if as_idx < 0:
+        return None
+    return inner[:as_idx].strip()
+
+
+def _deep_unwrap_sql_server_default(expr: str, max_iters: int = 24) -> str:
+    """
+    Peel SQL Server wrappers (outer parentheses, CONVERT, TRY_CONVERT, CAST)
+    so literals or GETDATE()-style calls can be translated for PostgreSQL DDL.
+    """
+    s = (expr or "").strip()
+    for _ in range(max_iters):
+        prev = s
+        s = _strip_outer_parentheses_sql(s)
+        peeled = _try_peel_convert_value_expression(s)
+        if peeled is not None and peeled.strip() != s:
+            s = peeled.strip()
+            continue
+        peeled = _try_peel_cast_value_expression(s)
+        if peeled is not None and peeled.strip() != s:
+            s = peeled.strip()
+            continue
+        if s == prev:
+            break
+    return s
+
+
+def _postgres_mapped_type_family(mapped_pg_type: str) -> str:
+    """Coarse family for DEFAULT literal quoting (mapped PostgreSQL type string)."""
+    base = (mapped_pg_type or "").strip().upper().split("(")[0].strip()
+    if base in ("TEXT", "CITEXT") or base.startswith("CHARACTER VARYING"):
+        return "text"
+    if base.startswith("CHAR") or base.startswith("VARCHAR"):
+        return "text"
+    if base in ("BOOLEAN", "BOOL"):
+        return "bool"
+    if base in (
+        "SMALLINT",
+        "INTEGER",
+        "INT",
+        "BIGINT",
+        "SERIAL",
+        "BIGSERIAL",
+        "SMALLSERIAL",
+        "REAL",
+        "DOUBLE PRECISION",
+        "FLOAT",
+        "DECIMAL",
+        "NUMERIC",
+        "MONEY",
+    ) or base.startswith("NUMERIC") or base.startswith("DECIMAL"):
+        return "numeric"
+    if "TIMESTAMP" in base or base in ("DATE", "TIME"):
+        return "temporal"
+    return "other"
+
+
+def _finalize_pg_default_fragment(expr: str, mapped_pg_type: str) -> str:
+    """
+    TEXT/VARCHAR targets cannot use TIMESTAMP/UUID/boolean expression defaults unless cast.
+    Sync still copies explicit source values; this only fixes CREATE TABLE DDL.
+    """
+    if not expr:
+        return expr
+    if _postgres_mapped_type_family(mapped_pg_type) != "text":
+        return expr
+    e = expr.strip()
+    if e.upper() == "NULL":
+        return expr
+    # Typed literal like '2020-01-01'::date still needs ::text when column is TEXT/VARCHAR.
+    if "::" in e:
+        return f"({e})::text"
+    if e.startswith("'"):
+        return expr
+    return f"({e})::text"
+
+
+def _translate_sql_server_temporal_call_to_pg(s: str, mapped_pg_type: str) -> Optional[str]:
+    """Map GETDATE-style calls to PostgreSQL (with ::text when column is textual)."""
+    s = (s or "").strip()
+    if re.fullmatch(r"GETDATE\s*\(\s*\)", s, re.I):
+        return _finalize_pg_default_fragment("CURRENT_TIMESTAMP", mapped_pg_type)
+    if re.fullmatch(r"GETUTCDATE\s*\(\s*\)", s, re.I):
+        return _finalize_pg_default_fragment("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')", mapped_pg_type)
+    if re.fullmatch(r"SYSDATETIME\s*\(\s*\)", s, re.I):
+        return _finalize_pg_default_fragment("CURRENT_TIMESTAMP", mapped_pg_type)
+    if re.fullmatch(r"SYSUTCDATETIME\s*\(\s*\)", s, re.I):
+        return _finalize_pg_default_fragment("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')", mapped_pg_type)
+    if re.fullmatch(r"SYSDATETIMEOFFSET\s*\(\s*\)", s, re.I):
+        return _finalize_pg_default_fragment("CURRENT_TIMESTAMP", mapped_pg_type)
+    return None
+
+
+def _translate_sql_server_uuid_call_to_pg(s: str, mapped_pg_type: str) -> Optional[str]:
+    if re.fullmatch(r"NEWID\s*\(\s*\)", s, re.I):
+        return _finalize_pg_default_fragment("gen_random_uuid()", mapped_pg_type)
+    if re.fullmatch(r"NEWSEQUENTIALID\s*\(\s*\)", s, re.I):
+        return _finalize_pg_default_fragment("gen_random_uuid()", mapped_pg_type)
+    return None
+
+
+def _try_translate_datefromparts_literal(s: str) -> Optional[str]:
+    """DATEFROMPARTS(y,m,d) with integer literals -> PostgreSQL date literal."""
+    m = re.fullmatch(
+        r"DATEFROMPARTS\s*\(\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*\)",
+        (s or "").strip(),
+        re.I,
+    )
+    if not m:
+        return None
+    y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if mo < 1 or mo > 12 or d < 1 or d > 31:
+        return None
+    return f"'{y:04d}-{mo:02d}-{d:02d}'::date"
+
+
+def _quote_pg_ident_pair_for_regclass(schema: str, name: str) -> str:
+    """Double-quoted schema.name as used inside nextval('...'::regclass)."""
+
+    def qi(part: str) -> str:
+        return '"' + str(part).replace('"', '""') + '"'
+
+    return f"{qi(schema)}.{qi(name)}"
+
+
+def _parse_next_value_for_target(s: str) -> Optional[Tuple[str, str]]:
+    """NEXT VALUE FOR [schema].[seq] -> (schema, seq). Single segment uses schema public."""
+    m = re.match(r"^NEXT\s+VALUE\s+FOR\s+(.+)$", (s or "").strip(), re.I | re.DOTALL)
+    if not m:
+        return None
+    tail = m.group(1).strip().rstrip(";")
+    tail = re.sub(r"\[([^\]]+)\]", r"\1", tail)
+    parts = [p.strip() for p in tail.split(".") if p.strip()]
+    if len(parts) >= 2:
+        return parts[-2], parts[-1]
+    if len(parts) == 1:
+        return "public", parts[0]
+    return None
+
+
+def _translate_next_value_for_sql_server(inner: str, mapped_pg_type: str) -> Optional[str]:
+    parsed = _parse_next_value_for_target(inner.strip())
+    if not parsed:
+        return None
+    sch, nm = parsed
+    lit = _quote_pg_ident_pair_for_regclass(sch, nm)
+    return _finalize_pg_default_fragment(f"nextval('{lit}'::regclass)", mapped_pg_type)
+
+
+_DATEADD_UNIT_TO_PG = {
+    "year": "years",
+    "yy": "years",
+    "yyyy": "years",
+    "month": "months",
+    "mm": "months",
+    "m": "months",
+    "dayofyear": "days",
+    "dy": "days",
+    "y": "days",
+    "day": "days",
+    "dd": "days",
+    "d": "days",
+    "week": "weeks",
+    "wk": "weeks",
+    "ww": "weeks",
+    "hour": "hours",
+    "hh": "hours",
+    "minute": "minutes",
+    "mi": "minutes",
+    "n": "minutes",
+    "second": "seconds",
+    "ss": "seconds",
+    "s": "seconds",
+    "millisecond": "milliseconds",
+    "ms": "milliseconds",
+}
+
+
+def _translate_sql_server_dateadd(inner: str, mapped_pg_type: str) -> Optional[str]:
+    """DATEADD(unit, n, date_expr) when date_expr is GETDATE/SYSDATETIME (after unwrap)."""
+    m = re.match(
+        r"^DATEADD\s*\(\s*([\w]+)\s*,\s*(-?\d+)\s*,\s*(.+)\s*\)$",
+        (inner or "").strip(),
+        re.I | re.DOTALL,
+    )
+    if not m:
+        return None
+    unit_raw = m.group(1).strip()
+    try:
+        n = int(m.group(2).strip())
+    except ValueError:
+        return None
+    third = _deep_unwrap_sql_server_default(m.group(3).strip())
+    third_u = third.upper()
+    if re.fullmatch(r"GETDATE\s*\(\s*\)", third, re.I):
+        ts = "CURRENT_TIMESTAMP"
+    elif re.fullmatch(r"SYSDATETIME\s*\(\s*\)", third, re.I):
+        ts = "CURRENT_TIMESTAMP"
+    elif re.fullmatch(r"SYSUTCDATETIME\s*\(\s*\)", third, re.I):
+        ts = "(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"
+    elif re.fullmatch(r"GETUTCDATE\s*\(\s*\)", third, re.I):
+        ts = "(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"
+    elif third_u == "CURRENT_TIMESTAMP":
+        ts = "CURRENT_TIMESTAMP"
+    else:
+        return None
+
+    unit_key = unit_raw.lower()
+    if unit_key in ("quarter", "qq", "q"):
+        n_months = n * 3
+        pg_expr = f"(({ts})::timestamp + ({n_months} || ' months')::interval)"
+        return _finalize_pg_default_fragment(pg_expr, mapped_pg_type)
+
+    pg_unit = _DATEADD_UNIT_TO_PG.get(unit_key)
+    if not pg_unit:
+        return None
+    pg_expr = f"(({ts})::timestamp + ({n} || ' {pg_unit}')::interval)"
+    return _finalize_pg_default_fragment(pg_expr, mapped_pg_type)
+
+
+def _coerce_ts_expr_for_eomonth_cast(ts_expr: str, mapped_pg_type: str) -> str:
+    """End-of-month expression cast to date vs timestamp to match column DDL."""
+    base = (
+        f"(date_trunc('month', ({ts_expr})::timestamp) + interval '1 month - 1 day')"
+    )
+    mu = (mapped_pg_type or "").strip().upper().split("(")[0].strip()
+    if mu == "DATE":
+        return f"{base}::date"
+    return f"{base}::timestamp"
+
+
+def _translate_sql_server_eomonth(inner: str, mapped_pg_type: str) -> Optional[str]:
+    """EOMONTH(GETDATE()[, months]) — only literal month offset 0 (or omitted) for reliability."""
+    m = re.match(r"^EOMONTH\s*\(\s*(.+)\s*\)$", (inner or "").strip(), re.I | re.DOTALL)
+    if not m:
+        return None
+    args_inner = m.group(1).strip()
+    parts = _split_top_level_commas_sql(args_inner)
+    if not parts:
+        return None
+    if len(parts) >= 2:
+        try:
+            mo_add = int(parts[1].strip())
+        except ValueError:
+            return None
+        if mo_add != 0:
+            return None
+
+    first = _deep_unwrap_sql_server_default(parts[0].strip())
+    if re.fullmatch(r"GETDATE\s*\(\s*\)", first, re.I):
+        ts_expr = "CURRENT_TIMESTAMP"
+    elif re.fullmatch(r"SYSDATETIME\s*\(\s*\)", first, re.I):
+        ts_expr = "CURRENT_TIMESTAMP"
+    elif re.fullmatch(r"SYSUTCDATETIME\s*\(\s*\)", first, re.I):
+        ts_expr = "(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"
+    elif re.fullmatch(r"GETUTCDATE\s*\(\s*\)", first, re.I):
+        ts_expr = "(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"
+    elif first.upper() == "CURRENT_TIMESTAMP":
+        ts_expr = "CURRENT_TIMESTAMP"
+    else:
+        return None
+
+    pg_expr = _coerce_ts_expr_for_eomonth_cast(ts_expr, mapped_pg_type)
+    return _finalize_pg_default_fragment(pg_expr, mapped_pg_type)
+
+
+def _translate_sql_server_default_to_pg(inner: str, mapped_pg_type: str) -> Optional[str]:
+    """
+    If inner looks like a SQL Server default expression, return PostgreSQL DDL
+    fragment (without the DEFAULT keyword). Otherwise None.
+    """
+    if not inner or not inner.strip():
+        return None
+    s = inner.strip()
+    su = s.upper()
+
+    dt = _translate_sql_server_temporal_call_to_pg(s, mapped_pg_type)
+    if dt is not None:
+        return dt
+
+    uid = _translate_sql_server_uuid_call_to_pg(s, mapped_pg_type)
+    if uid is not None:
+        return uid
+
+    if re.fullmatch(r"SUSER_SNAME\s*\(\s*(?:NULL\s*)?\)", s, re.I):
+        return _finalize_pg_default_fragment("SESSION_USER", mapped_pg_type)
+    if re.fullmatch(r"USER_NAME\s*\(\s*(?:NULL\s*)?\)", s, re.I):
+        return _finalize_pg_default_fragment("CURRENT_USER", mapped_pg_type)
+    if su == "SYSTEM_USER" or su == "SUSER_SNAME":
+        return _finalize_pg_default_fragment("SESSION_USER", mapped_pg_type)
+
+    lit_date = _try_translate_datefromparts_literal(s)
+    if lit_date is not None:
+        return _finalize_pg_default_fragment(lit_date, mapped_pg_type)
+
+    nv = _translate_next_value_for_sql_server(s, mapped_pg_type)
+    if nv is not None:
+        return nv
+
+    eom = _translate_sql_server_eomonth(s, mapped_pg_type)
+    if eom is not None:
+        return eom
+
+    dad = _translate_sql_server_dateadd(s, mapped_pg_type)
+    if dad is not None:
+        return dad
+
+    fam = _postgres_mapped_type_family(mapped_pg_type)
+
+    # Numeric/bit-style literals SQL Server wraps as ((0)), ((1)).
+    if re.fullmatch(r"-?\d+", s):
+        if fam == "text":
+            escaped = s.replace("'", "''")
+            return f"'{escaped}'"
+        if fam == "bool":
+            return "TRUE" if s != "0" else "FALSE"
+        return s
+
+    if re.fullmatch(r"-?\d+\.\d+", s):
+        if fam == "text":
+            escaped = s.replace("'", "''")
+            return f"'{escaped}'"
+        return s
+
+    return None
+
+
+def _looks_like_pg_builtin_default(s: str) -> Optional[str]:
+    """Recognize common PostgreSQL default expressions we should preserve."""
+    t = s.strip()
+    if not t:
+        return None
+    tu = t.upper()
+
+    if tu in ("CURRENT_TIMESTAMP", "CURRENT_DATE", "CURRENT_TIME", "LOCALTIME", "LOCALTIMESTAMP", "TRUE", "FALSE", "NULL"):
+        return tu
+
+    if re.fullmatch(r"CURRENT_TIMESTAMP\s*\(\s*\)", t, re.I):
+        return "CURRENT_TIMESTAMP"
+    if re.fullmatch(r"CURRENT_DATE\s*\(\s*\)", t, re.I):
+        return "CURRENT_DATE"
+
+    m = re.fullmatch(r"(NOW|LOCALTIME|LOCALTIMESTAMP)\s*\(\s*\)", t, re.I)
+    if m:
+        return f"{m.group(1).upper()}()"
+
+    m = re.fullmatch(r"([\w.]+\.)?(GEN_RANDOM_UUID|UUID_GENERATE_V4)\s*\(\s*\)", t, re.I)
+    if m:
+        qual = m.group(1) or ""
+        fn = m.group(2).upper()
+        bare = "gen_random_uuid" if fn == "GEN_RANDOM_UUID" else "uuid_generate_v4"
+        return f"{qual}{bare}()"
+
+    if re.fullmatch(r"RANDOM\s*\(\s*\)", t, re.I):
+        return "RANDOM()"
+    return None
+
+
 def _pg_temporal_leading_iso_year(s: str) -> Optional[int]:
     """
     Leading calendar year for typical PostgreSQL text date/timestamp wire values.
@@ -106,6 +611,17 @@ def _register_safe_pg_temporal_types(conn) -> None:
 
 class PostgresConnector(DBConnector):
     """PostgreSQL database connector"""
+
+    @staticmethod
+    def _is_invalid_character_type(mapped_type: str) -> bool:
+        """Guard against invalid generated text types like VARCHAR(-1)."""
+        mt = (mapped_type or "").strip().upper()
+        return (
+            "VARCHAR(-" in mt
+            or "NVARCHAR(-" in mt
+            or "CHAR(-" in mt
+            or "NCHAR(-" in mt
+        )
 
     def _execute_values_resilient(
         self,
@@ -546,49 +1062,106 @@ class PostgresConnector(DBConnector):
     
     def _format_default_value(self, default_value: str, data_type: str) -> str:
         """
-        Format default value for PostgreSQL
-        
-        Args:
-            default_value: The default value string
-            data_type: The column data type
-            
-        Returns:
-            Formatted default value string
+        Format DEFAULT clause fragment for PostgreSQL CREATE TABLE.
+
+        ``data_type`` is the mapped PostgreSQL column type (as emitted in DDL),
+        e.g. TEXT, TIMESTAMP WITHOUT TIME ZONE — same as ColumnInfo.data_type
+        from the sync pipeline.
+
+        SQL Server metadata often supplies defaults like ``(getdate())`` or
+        ``((0))`` which are invalid on PostgreSQL unless translated or quoted.
+        Unknown non-portable expressions are omitted (returns '') so DDL still
+        succeeds; rows copied from the source still carry values.
         """
         if not default_value:
-            return ''
-        
-        # Remove any existing quotes
-        default_value = default_value.strip()
-        
-        # Check if it's already a function call or expression (contains parentheses)
-        if '(' in default_value and ')' in default_value:
-            # Likely a function like CURRENT_TIMESTAMP(), NOW(), etc.
-            return default_value
-        
-        # Check if it's a PostgreSQL keyword/constant
-        pg_constants = ['CURRENT_TIMESTAMP', 'CURRENT_DATE', 'CURRENT_TIME', 'TRUE', 'FALSE', 'NULL']
-        if default_value.upper() in pg_constants:
-            return default_value.upper()
-        
-        # Check if it's a number (integer or decimal)
+            return ""
+
+        # Peel SQL Server wrappers so CONVERT/CAST around GETDATE()/literals translate.
+        # Bulk sync supplies explicit column values from the source; defaults only affect
+        # INSERTs written directly against PostgreSQL without those columns.
+        inner = _deep_unwrap_sql_server_default(default_value.strip())
+
+        # SQL-style unicode string literal from SQL Server.
+        if re.match(r"^N'", inner, re.I):
+            inner = inner[1:].strip()
+
+        pg_builtin = _looks_like_pg_builtin_default(inner)
+        if pg_builtin:
+            return _finalize_pg_default_fragment(pg_builtin, data_type)
+
+        translated = _translate_sql_server_default_to_pg(inner, data_type)
+        if translated is not None:
+            return translated
+
+        tu = inner.upper()
+        pg_constants = ("CURRENT_TIMESTAMP", "CURRENT_DATE", "CURRENT_TIME", "TRUE", "FALSE", "NULL")
+        if tu in pg_constants:
+            return _finalize_pg_default_fragment(tu, data_type)
+
+        fam = _postgres_mapped_type_family(data_type)
+
         try:
-            float(default_value)
-            return default_value
+            float(inner)
+            if fam == "text":
+                escaped = inner.replace("'", "''")
+                return f"'{escaped}'"
+            return inner
         except ValueError:
             pass
-        
-        # Check if it's a boolean
-        if default_value.upper() in ('TRUE', 'FALSE', '1', '0'):
-            if default_value.upper() in ('TRUE', '1'):
-                return 'TRUE'
-            else:
-                return 'FALSE'
-        
-        # For text types, quote the value and escape single quotes
-        # Escape single quotes by doubling them
-        escaped_value = default_value.replace("'", "''")
+
+        if tu in ("TRUE", "FALSE", "1", "0"):
+            if tu in ("TRUE", "1"):
+                return "TRUE" if fam != "text" else "'1'"
+            return "FALSE" if fam != "text" else "'0'"
+
+        if inner.startswith("'") and inner.endswith("'") and len(inner) >= 2:
+            body = inner[1:-1].replace("''", "'")
+            escaped = body.replace("'", "''")
+            return f"'{escaped}'"
+
+        # Remaining parenthetic expressions are usually dialect-specific (CONVERT, NEXT VALUE FOR, etc.).
+        if "(" in inner:
+            logger.warning(
+                "Omitting non-portable column default for PostgreSQL DDL (no translation): %s",
+                default_value[:300],
+            )
+            return ""
+
+        escaped_value = inner.replace("'", "''")
         return f"'{escaped_value}'"
+
+    def _ensure_sequences_for_sqlserver_defaults(self, columns: List[ColumnInfo]) -> None:
+        """
+        Pre-create PostgreSQL sequences referenced by SQL Server-style
+        ``NEXT VALUE FOR [schema].[seq]`` column defaults so CREATE TABLE + nextval succeed.
+        """
+        seen: set = set()
+        targets: List[Tuple[str, str]] = []
+        for col in columns:
+            if not col.default_value:
+                continue
+            inner = _deep_unwrap_sql_server_default(col.default_value.strip())
+            if not re.match(r"^NEXT\s+VALUE\s+FOR\s", inner, re.I):
+                continue
+            parsed = _parse_next_value_for_target(inner.strip())
+            if not parsed or parsed in seen:
+                continue
+            seen.add(parsed)
+            targets.append(parsed)
+        if not targets:
+            return
+        with self._connection.cursor() as cursor:
+            for sch, nm in targets:
+                cursor.execute(
+                    sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(sch))
+                )
+                cursor.execute(
+                    sql.SQL("CREATE SEQUENCE IF NOT EXISTS {}.{}").format(
+                        sql.Identifier(sch),
+                        sql.Identifier(nm),
+                    )
+                )
+            self._connection.commit()
     
     def create_table(self, schema: str, table: str, columns: List[ColumnInfo], target_db_type: str = 'postgres'):
         """
@@ -602,6 +1175,17 @@ class PostgresConnector(DBConnector):
         """
         if not self._connection:
             self.connect()
+
+        try:
+            self._ensure_sequences_for_sqlserver_defaults(columns)
+        except Exception as e:
+            try:
+                self._connection.rollback()
+            except Exception:
+                pass
+            raise DatabaseConnectionError(
+                f"Failed to ensure sequences from SQL Server-style defaults: {str(e)}"
+            ) from e
         
         # Create schema if not exists (in separate transaction)
         try:
@@ -616,13 +1200,31 @@ class PostgresConnector(DBConnector):
         
         # Build column definitions using centralized mapping
         column_defs = []
+        primary_key_columns = []
         for col in columns:
-            mapped_type = map_data_type(
-                source_type=col.data_type,
-                source_db='postgres',  # Source is postgres for this connector
-                target_db=target_db_type,
-                max_length=col.max_length
-            )
+            try:
+                mapped_type = map_data_type(
+                    source_type=col.data_type,
+                    source_db='postgres',  # Source is postgres for this connector
+                    target_db=target_db_type,
+                    max_length=col.max_length
+                )
+            except Exception as mapping_error:
+                raise DatabaseConnectionError(
+                    "Type mapping failed while building DDL for "
+                    f"{schema}.{table}.{col.name} "
+                    f"(source_type={col.data_type}, max_length={col.max_length}, "
+                    f"target_db_type={target_db_type}): {mapping_error}"
+                ) from mapping_error
+
+            if self._is_invalid_character_type(mapped_type):
+                raise DatabaseConnectionError(
+                    "Invalid mapped character type generated while creating "
+                    f"{schema}.{table}.{col.name}: mapped_type={mapped_type}, "
+                    f"source_type={col.data_type}, max_length={col.max_length}, "
+                    f"target_db_type={target_db_type}. "
+                    "This usually indicates an unsupported source length value (for example SQL Server MAX as -1)."
+                )
             col_def = f'"{col.name}" {mapped_type}'
             if not col.is_nullable:
                 col_def += ' NOT NULL'
@@ -631,6 +1233,14 @@ class PostgresConnector(DBConnector):
                 if formatted_default:
                     col_def += f' DEFAULT {formatted_default}'
             column_defs.append(col_def)
+            if col.is_primary_key:
+                primary_key_columns.append(col.name)
+
+        # Preserve source PK semantics on freshly created target tables.
+        # This blocks accidental duplicate inserts on retry/replay paths.
+        if primary_key_columns:
+            pk_identifiers = ', '.join(f'"{name}"' for name in primary_key_columns)
+            column_defs.append(f"PRIMARY KEY ({pk_identifiers})")
         
         # Create table with proper error handling and transaction management
         try:
@@ -646,7 +1256,23 @@ class PostgresConnector(DBConnector):
                 self._connection.commit()
         except Exception as e:
             self._connection.rollback()
-            raise DatabaseConnectionError(f"Failed to create table {schema}.{table}: {str(e)}")
+            ddl_preview = ", ".join(column_defs[:10])
+            if len(column_defs) > 10:
+                ddl_preview += ", ..."
+            logger.error(
+                "Create-table failed for %s.%s (target_db_type=%s). Columns=%s. DDL preview: %s. Error: %s",
+                schema,
+                table,
+                target_db_type,
+                len(column_defs),
+                ddl_preview,
+                str(e),
+                exc_info=True,
+            )
+            raise DatabaseConnectionError(
+                f"Failed to create table {schema}.{table}: {str(e)}. "
+                f"DDL column preview: {ddl_preview}"
+            )
     
     def table_exists(self, schema: str, table: str) -> bool:
         """Check if table exists"""
@@ -1083,6 +1709,106 @@ class PostgresConnector(DBConnector):
             if idx_cols == normalized_keys:
                 return True
         return False
+
+    def ensure_unique_index(
+        self,
+        schema: str,
+        table: str,
+        key_columns: List[str],
+    ) -> bool:
+        """Ensure a unique index exists matching the given key columns.
+
+        Idempotent: if the table already has a PK or unique index with exactly
+        these columns in order, no-op. Otherwise creates a deterministic-named
+        unique index. Returns True if a matching index exists after the call.
+        """
+        if not key_columns:
+            return False
+        if not self._connection:
+            self.connect()
+        if self._has_matching_conflict_constraint(schema, table, key_columns):
+            return True
+
+        index_name = f"uniq_dbsync_{table}_{'_'.join(key_columns)}"[:63]
+        cols_sql = sql.SQL(", ").join(sql.Identifier(c) for c in key_columns)
+        try:
+            with self._connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS {idx} ON {schema}.{table} ({cols})"
+                    ).format(
+                        idx=sql.Identifier(index_name),
+                        schema=sql.Identifier(schema),
+                        table=sql.Identifier(table),
+                        cols=cols_sql,
+                    )
+                )
+                self._connection.commit()
+        except Exception as e:
+            self._connection.rollback()
+            logger.warning(
+                "ensure_unique_index failed for %s.%s on %s: %s",
+                schema,
+                table,
+                key_columns,
+                e,
+            )
+            return False
+        return self._has_matching_conflict_constraint(schema, table, key_columns)
+
+    def count_rows(
+        self,
+        schema: str,
+        table: str,
+        where: Optional[str] = None,
+    ) -> int:
+        """Return COUNT(*) for the given table; optional raw WHERE clause."""
+        if not self._connection:
+            self.connect()
+        with self._connection.cursor() as cursor:
+            base = sql.SQL("SELECT COUNT(*) FROM {schema}.{table}").format(
+                schema=sql.Identifier(schema),
+                table=sql.Identifier(table),
+            )
+            if where and where.strip():
+                cursor.execute(base.as_string(self._connection) + f" WHERE {where}")
+            else:
+                cursor.execute(base)
+            row = cursor.fetchone()
+            return int(row[0]) if row and row[0] is not None else 0
+
+    def aggregate_hash(
+        self,
+        schema: str,
+        table: str,
+        columns: List[str],
+        where: Optional[str] = None,
+    ) -> str:
+        """Return an md5 over a deterministic concat of the requested columns.
+
+        Used for parity comparisons between source and target. Postgres-specific:
+        casts each column to text, replaces nulls, concatenates with a delimiter,
+        then md5(string_agg(...) ORDER BY ...) to get an order-invariant digest.
+        """
+        if not columns:
+            return ""
+        if not self._connection:
+            self.connect()
+        col_exprs = ", ".join(
+            f"COALESCE(\"{c}\"::text, '')" for c in columns
+        )
+        select_sql = (
+            f"SELECT md5(string_agg(t.row_text, ',' ORDER BY t.row_text)) "
+            f"FROM (SELECT concat_ws('|', {col_exprs}) AS row_text "
+            f"FROM \"{schema}\".\"{table}\""
+        )
+        if where and where.strip():
+            select_sql += f" WHERE {where}"
+        select_sql += ") t"
+        with self._connection.cursor() as cursor:
+            cursor.execute(select_sql)
+            row = cursor.fetchone()
+            return (row[0] if row and row[0] else "") or ""
 
     def upsert_dataframe(
         self,

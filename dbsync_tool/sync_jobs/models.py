@@ -66,6 +66,19 @@ class SyncJob(models.Model):
             "Used to reduce missed rows around equal/low-precision watermark boundaries."
         ),
     )
+    verification_mode = models.CharField(
+        max_length=20,
+        choices=[
+            ('off', 'Off'),
+            ('sampled', 'Sampled (count only)'),
+            ('strict', 'Strict (count + hash, fail-on-drift)'),
+        ],
+        default='sampled',
+        help_text=(
+            "Post-run verification policy. 'strict' fails the run on parity mismatch; "
+            "'sampled' logs counts only; 'off' disables verification."
+        ),
+    )
     status = models.CharField(
         max_length=20,
         choices=[
@@ -758,3 +771,62 @@ class JobTemplate(models.Model):
     
     def __str__(self):
         return self.name
+
+
+class SyncVerificationReport(models.Model):
+    """Per-table parity report between source and target after a sync run.
+
+    Used by the verification framework to prove SQL Server -> Postgres parity
+    (count, optional hash) and to drive repair-full on drift.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.ForeignKey(
+        SyncJob,
+        on_delete=models.CASCADE,
+        related_name='verification_reports',
+    )
+    execution = models.ForeignKey(
+        SyncExecution,
+        on_delete=models.CASCADE,
+        related_name='verification_reports',
+        null=True,
+        blank=True,
+    )
+    schema_name = models.CharField(max_length=255)
+    table_name = models.CharField(max_length=255)
+    sync_mode = models.CharField(
+        max_length=20,
+        choices=[('full', 'Full'), ('incremental', 'Incremental')],
+        default='full',
+    )
+    source_count = models.BigIntegerField(default=0)
+    target_count = models.BigIntegerField(default=0)
+    sample_hash_match = models.BooleanField(null=True, blank=True)
+    decision = models.CharField(
+        max_length=20,
+        choices=[
+            ('ok', 'OK'),
+            ('repair_full', 'Repair Full'),
+            ('repair_incremental', 'Repair Incremental'),
+            ('warning', 'Warning'),
+        ],
+        default='ok',
+    )
+    details = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'sync_verification_reports'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['job', '-created_at']),
+            models.Index(fields=['job', 'schema_name', 'table_name']),
+            models.Index(fields=['decision']),
+        ]
+
+    def __str__(self):
+        return (
+            f"VerificationReport {self.schema_name}.{self.table_name} "
+            f"[{self.sync_mode}] -> {self.decision}"
+        )

@@ -44,7 +44,7 @@
         <!-- Vertical Divider -->
         <div class="w-px h-6 bg-slate-300 mx-2"></div>
 
-        <!-- Add Connection Action -->
+        <!-- Create action tab -->
         {% if not user.userprofile.is_viewer %}
             <a href="{% url 'connections:create_hub' %}" 
                class="flex items-center gap-2 px-4 py-2 rounded-lg transition-all duration-300 no-underline group

@@ -110,6 +110,16 @@ class SQLServerConnector(DBConnector):
             conn_str = self._get_connection_string(db_name)
             # Increased timeout to 30 seconds for slow networks
             self._connection = pyodbc.connect(conn_str, timeout=30)
+            try:
+                with self._connection.cursor() as cursor:
+                    cursor.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+                    cursor.execute("SET LOCK_TIMEOUT 5000")
+                    cursor.execute("SET ARITHABORT ON")
+            except Exception as session_setup_error:
+                logger.warning(
+                    "SQL Server session pragmas failed (%s); continuing with defaults.",
+                    session_setup_error,
+                )
             return self._connection
         except pyodbc.Error as e:
             error_msg = str(e)
@@ -479,6 +489,31 @@ class SQLServerConnector(DBConnector):
         finally:
             cursor.close()
     
+    @staticmethod
+    def _strip_outer_parentheses(expr: str) -> str:
+        """Strip redundant outer parentheses repeatedly: ((true)) -> true."""
+        s = (expr or "").strip()
+        if not s:
+            return s
+        while s.startswith("(") and s.endswith(")"):
+            depth = 0
+            balanced = True
+            for i, ch in enumerate(s):
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth < 0:
+                        balanced = False
+                        break
+                if depth == 0 and i < len(s) - 1:
+                    balanced = False
+                    break
+            if not balanced or depth != 0:
+                break
+            s = s[1:-1].strip()
+        return s
+
     def _format_default_value(self, default_value: str, data_type: str) -> str:
         """
         Format default value for SQL Server
@@ -493,7 +528,7 @@ class SQLServerConnector(DBConnector):
         if not default_value:
             return ''
         
-        default_value = default_value.strip()
+        default_value = self._strip_outer_parentheses(default_value.strip())
         
         # Skip PostgreSQL sequence defaults (nextval(...) syntax) - SQL Server uses IDENTITY instead
         if 'nextval' in default_value.lower() and '::regclass' in default_value.lower():
@@ -534,9 +569,13 @@ class SQLServerConnector(DBConnector):
             # For other functions, return as-is (might be SQL Server compatible)
             return default_value
         
+        # Boolean defaults: SQL Server BIT needs 1/0 (TRUE/FALSE are invalid in DEFAULT).
+        if default_value.upper() in ('TRUE', 'FALSE', '1', '0'):
+            return '1' if default_value.upper() in ('TRUE', '1') else '0'
+
         # Check if it's a SQL Server keyword/constant
-        sqlserver_constants = ['CURRENT_TIMESTAMP', 'GETDATE()', 'GETUTCDATE()', 'SYSDATETIME()', 'TRUE', 'FALSE', 'NULL']
-        if default_value.upper() in sqlserver_constants or default_value.upper() in ['GETDATE()', 'GETUTCDATE()', 'SYSDATETIME()']:
+        sqlserver_constants = ['CURRENT_TIMESTAMP', 'GETDATE()', 'GETUTCDATE()', 'SYSDATETIME()', 'NULL']
+        if default_value.upper() in sqlserver_constants:
             return default_value.upper()
         
         # Check if it's a number
@@ -545,13 +584,6 @@ class SQLServerConnector(DBConnector):
             return default_value
         except ValueError:
             pass
-        
-        # Check if it's a boolean
-        if default_value.upper() in ('TRUE', 'FALSE', '1', '0'):
-            if default_value.upper() in ('TRUE', '1'):
-                return '1'
-            else:
-                return '0'
         
         # For text types, quote the value and escape single quotes
         escaped_value = default_value.replace("'", "''")
@@ -732,6 +764,57 @@ class SQLServerConnector(DBConnector):
         cursor.execute(f"TRUNCATE TABLE [{schema}].[{table}]")
         self._connection.commit()
         cursor.close()
+
+    def count_rows(
+        self,
+        schema: str,
+        table: str,
+        where: Optional[str] = None,
+    ) -> int:
+        """Return COUNT(*) for the given table; optional raw WHERE clause."""
+        if not self._connection:
+            self.connect()
+        cursor = self._connection.cursor()
+        try:
+            sql_text = f"SELECT COUNT_BIG(*) FROM [{schema}].[{table}]"
+            if where and where.strip():
+                sql_text += f" WHERE {where}"
+            cursor.execute(sql_text)
+            row = cursor.fetchone()
+            return int(row[0]) if row and row[0] is not None else 0
+        finally:
+            cursor.close()
+
+    def aggregate_checksum_agg(
+        self,
+        schema: str,
+        table: str,
+        columns: List[str],
+        where: Optional[str] = None,
+    ) -> int:
+        """Return CHECKSUM_AGG(BINARY_CHECKSUM(...)) for parity comparisons.
+
+        Note: this is an order-invariant aggregate digest (XOR-based), useful as
+        a sampled tampering check between source and target.
+        """
+        if not columns:
+            return 0
+        if not self._connection:
+            self.connect()
+        col_list = ", ".join(f"[{c}]" for c in columns)
+        sql_text = (
+            f"SELECT CHECKSUM_AGG(BINARY_CHECKSUM({col_list})) "
+            f"FROM [{schema}].[{table}]"
+        )
+        if where and where.strip():
+            sql_text += f" WHERE {where}"
+        cursor = self._connection.cursor()
+        try:
+            cursor.execute(sql_text)
+            row = cursor.fetchone()
+            return int(row[0]) if row and row[0] is not None else 0
+        finally:
+            cursor.close()
 
     def bulk_insert(self, schema: str, table: str, columns: List[str], rows: List[Tuple]):
         """Bulk insert rows - optimized for SQL Server"""

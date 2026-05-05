@@ -13,7 +13,7 @@ from connections.connectors.base import ColumnInfo
 from connections.file_source_paths import resolve_safe_source_path
 from sync_engine.checkpoint_manager import CheckpointManager
 from sync_engine.timezone_utils import TimezoneHandler
-from sync_engine.flat_file_reader import read_csv_in_chunks
+from sync_engine.file_parsers import iter_records
 from sync_engine.flat_file_hashing import (
     compute_file_hash,
     compute_row_hash,
@@ -360,20 +360,19 @@ class FlatFileSyncExecutor:
                     self.execution.save()
                     return
 
-            headers, chunks, read_stats = read_csv_in_chunks(
-                file_path=resolved_path,
-                delimiter=file_source.delimiter,
-                encoding=file_source.encoding,
-                has_header=file_source.has_header,
+            headers, chunks, read_stats = iter_records(
+                file_source,
                 chunk_size=1000,
+                encoding=file_source.encoding,
             )
             if not headers:
                 raise TableSyncError("Empty file or no readable headers for flat-file sync.")
             if read_stats.get("single_column_warning"):
                 logger.warning(
                     "Flat-file sync detected a single parsed column for job %s. "
-                    "This can indicate delimiter mismatch (delimiter=%s).",
+                    "This can indicate parser configuration mismatch (format=%s, delimiter=%s).",
                     self.job.id,
+                    getattr(file_source, "file_format", "csv"),
                     file_source.delimiter,
                 )
 

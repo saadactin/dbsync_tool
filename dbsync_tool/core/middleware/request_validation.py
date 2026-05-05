@@ -9,6 +9,15 @@ from core.sanitization import sanitize_string
 
 logger = logging.getLogger(__name__)
 
+# Snapshot/status endpoints pass many UUIDs in one query param; keep limit high enough
+# that truncation does not trigger false "suspicious input" warnings.
+MAX_QUERY_KEY_LENGTH = 100
+MAX_QUERY_VALUE_LENGTH = getattr(
+    settings,
+    'REQUEST_VALIDATION_QUERY_VALUE_MAX_LENGTH',
+    8192,
+)
+
 
 class RequestValidationMiddleware(MiddlewareMixin):
     """
@@ -65,25 +74,26 @@ class RequestValidationMiddleware(MiddlewareMixin):
                             status_code=400
                         )
         
-        # Basic query parameter sanitization
+        # Log query params only when sanitization actually changes key or value
+        # (previous code compared param names to sanitized values by mistake).
         if request.GET:
-            sanitized_get = {}
-            for key, value in request.GET.items():
-                # Sanitize key and value
-                sanitized_key = sanitize_string(key, max_length=100)
-                sanitized_value = sanitize_string(value, max_length=1000)
-                sanitized_get[sanitized_key] = sanitized_value
-            # Note: We can't modify request.GET directly, but we log suspicious inputs
-            for key, value in request.GET.items():
-                if key != sanitized_get.get(key, key) or value != sanitized_get.get(key, value):
-                    logger.warning(
-                        f"Suspicious input detected in query parameters: {key}",
-                        extra={
-                            'path': request.path,
-                            'method': request.method,
-                            'ip': self.get_client_ip(request),
-                        }
+            for key in request.GET.keys():
+                sanitized_key = sanitize_string(key, max_length=MAX_QUERY_KEY_LENGTH)
+                key_suspicious = sanitized_key != key
+                for value in request.GET.getlist(key):
+                    sanitized_value = sanitize_string(
+                        value, max_length=MAX_QUERY_VALUE_LENGTH
                     )
+                    if key_suspicious or sanitized_value != value:
+                        logger.warning(
+                            f"Suspicious input detected in query parameters: {key}",
+                            extra={
+                                'path': request.path,
+                                'method': request.method,
+                                'ip': self.get_client_ip(request),
+                            },
+                        )
+                        break
         
         return None
     

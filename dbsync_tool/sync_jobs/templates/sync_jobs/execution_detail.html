@@ -326,7 +326,7 @@
     </div>
 </div>
 
-{% if execution.status == 'running' %}
+{% if execution.status == 'running' or execution.status == 'pending' %}
 <script src="{% static 'js/execution_detail.js' %}"></script>
 <script>
     const executionId = '{{ execution.id }}';

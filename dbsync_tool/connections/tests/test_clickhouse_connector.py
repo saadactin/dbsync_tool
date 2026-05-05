@@ -296,6 +296,51 @@ class ClickHouseConnectorTests(TestCase):
         for row in rows:
             for value in row:
                 self.assertIsNotNone(value)
+
+    def test_upsert_dataframe_deletes_by_composite_identity_and_dedupes(self):
+        """Composite upsert must delete+insert using full identity (k1,k2)."""
+        connector = ClickHouseConnector(
+            host="localhost",
+            port=9000,
+            username="default",
+            password="",
+            database_name="default",
+        )
+        connector._connection = True  # Pretend we are connected
+        connector.execute_query = Mock()
+        connector.bulk_insert = Mock()
+
+        df = pd.DataFrame(
+            [
+                {"k1": 1, "k2": "a", "v": 10},
+                {"k1": 1, "k2": "a", "v": 11},  # duplicate identity; keep latest
+                {"k1": 2, "k2": "b", "v": 20},
+            ]
+        )
+
+        connector.upsert_dataframe(
+            "Test1",
+            "composite_test",
+            df,
+            key_column="k1",
+            key_columns=["k1", "k2"],
+        )
+
+        # Delete query must target full identity.
+        connector.execute_query.assert_called()
+        delete_query = connector.execute_query.call_args_list[0][0][0]
+        self.assertIn("DELETE WHERE", delete_query)
+        self.assertIn("`k1` = 1", delete_query)
+        self.assertIn("`k2` = 'a'", delete_query)
+        self.assertIn("`k1` = 2", delete_query)
+        self.assertIn("`k2` = 'b'", delete_query)
+        self.assertIn(" OR ", delete_query)
+
+        # Bulk insert should happen once with only unique identity rows (2 identities).
+        connector.bulk_insert.assert_called_once()
+        args, kwargs = connector.bulk_insert.call_args
+        rows = kwargs.get("rows") or args[3]
+        self.assertEqual(len(rows), 2)
     
     def test_create_table_with_nullable_types(self):
         """Test table creation with Nullable types"""

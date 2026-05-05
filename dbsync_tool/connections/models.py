@@ -192,6 +192,22 @@ class DatabaseConnection(models.Model):
                 connector.close()
 
 
+FILE_FORMAT_CHOICES = [
+    ('csv', 'CSV'),
+    ('tsv', 'TSV'),
+    ('txt', 'Plain Text (delimited)'),
+    ('json', 'JSON'),
+    ('jsonl', 'JSON Lines (NDJSON)'),
+    ('xml', 'XML'),
+    ('xlsx', 'Excel Workbook (XLSX)'),
+]
+DELIMITED_FORMATS = {'csv', 'tsv', 'txt'}
+NESTED_STRATEGY_CHOICES = [
+    ('flatten', 'Flatten with dot-paths'),
+    ('json_blob', 'Keep nested values as JSON blobs'),
+]
+
+
 class FileSourceConnection(models.Model):
     """
     Model to store flat-file source connection information.
@@ -203,19 +219,52 @@ class FileSourceConnection(models.Model):
         max_length=1024,
         help_text="Path relative to FILE_SYNC_ROOT on the application server"
     )
+    file_format = models.CharField(
+        max_length=16,
+        choices=FILE_FORMAT_CHOICES,
+        default='csv',
+        help_text="File format used by the parser engine."
+    )
     delimiter = models.CharField(
         max_length=1,
         default=',',
-        help_text="CSV delimiter character (single character only)"
+        blank=True,
+        help_text="Delimiter character for CSV/TSV/TXT (ignored for JSON/XML/XLSX)."
     )
     encoding = models.CharField(
         max_length=64,
         default='utf-8',
-        help_text="File encoding (e.g., utf-8, utf-16, latin-1)"
+        help_text="File encoding (e.g., utf-8, utf-16, latin-1). Ignored for XLSX."
     )
     has_header = models.BooleanField(
         default=True,
-        help_text="Whether the first row contains column headers"
+        help_text="Whether the first row contains column headers (CSV/TSV/TXT/XLSX)."
+    )
+    record_path = models.CharField(
+        max_length=512,
+        blank=True,
+        default='',
+        help_text=(
+            "JSON: dotted path to a list of records (e.g. data.items). "
+            "XML: XPath-like record path (e.g. /root/items/item)."
+        ),
+    )
+    sheet_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text="XLSX sheet name. Empty = first sheet.",
+    )
+    nested_strategy = models.CharField(
+        max_length=16,
+        choices=NESTED_STRATEGY_CHOICES,
+        default='flatten',
+        help_text="How to handle nested JSON/XML structures.",
+    )
+    flatten_separator = models.CharField(
+        max_length=4,
+        default='.',
+        help_text="Separator for dot-path flattening (only used when nested_strategy=flatten).",
     )
     tenant = models.ForeignKey(
         User,
@@ -276,12 +325,29 @@ class FileSourceConnection(models.Model):
                 {'relative_path': 'Relative path cannot contain parent-directory traversal (..).'}
             )
 
-        delim = self.delimiter if self.delimiter is not None else ''
-        if len(delim) != 1:
-            raise ValidationError({'delimiter': 'Delimiter must be exactly one character.'})
+        fmt = (self.file_format or 'csv').lower()
+        if fmt in DELIMITED_FORMATS:
+            delim = self.delimiter if self.delimiter is not None else ''
+            if len(delim) != 1:
+                raise ValidationError(
+                    {'delimiter': 'Delimiter must be exactly one character for CSV/TSV/TXT.'}
+                )
+        if fmt != 'xlsx':
+            if not (self.encoding or '').strip():
+                raise ValidationError({'encoding': 'Encoding is required.'})
 
-        if not (self.encoding or '').strip():
-            raise ValidationError({'encoding': 'Encoding is required.'})
+        if fmt == 'xml':
+            if not (self.record_path or '').strip():
+                raise ValidationError(
+                    {'record_path': 'XML sources require a record path (e.g. /root/items/item).'}
+                )
+
+        if fmt in {'json', 'xml'} and self.nested_strategy == 'flatten':
+            sep = (self.flatten_separator or '').strip()
+            if not sep:
+                raise ValidationError(
+                    {'flatten_separator': 'Flatten separator is required when nested_strategy=flatten.'}
+                )
 
 
 class ConnectionTestLog(models.Model):

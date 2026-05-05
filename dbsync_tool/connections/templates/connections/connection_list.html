@@ -342,26 +342,38 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(({ response, text }) => {
                 const parsed = parseConnectionTestResponse(response, text);
                 if (!parsed.ok) {
-                    alert(parsed.errorMessage);
+                    showConnectionTestModal({
+                        success: false,
+                        message: parsed.errorMessage || 'Invalid response from server.',
+                        details: {}
+                    }, { title: 'Connection Test Failed' });
                     return;
                 }
                 const data = parsed.data;
                 if (!response.ok) {
-                    alert(formatConnectionTestAlertPayload({
+                    showConnectionTestModal({
                         success: false,
                         message: (data && data.message) || response.statusText,
                         latency_ms: data && data.latency_ms,
                         details: data && data.details,
-                    }));
+                    }, { title: 'Connection Test Failed' });
                     return;
                 }
-                alert(formatConnectionTestAlertPayload(data));
-                if (data.success) {
-                    window.location.reload();
-                }
+                showConnectionTestModal(data, {
+                    title: 'Connection Test Result',
+                    onClose: function (result) {
+                        if (result && result.success) {
+                            window.location.reload();
+                        }
+                    }
+                });
             })
             .catch(error => {
-                alert('Error testing connection: ' + error.message);
+                showConnectionTestModal({
+                    success: false,
+                    message: 'Error testing connection: ' + error.message,
+                    details: {}
+                }, { title: 'Connection Test Failed' });
             })
             .finally(() => {
                 button.disabled = false;

@@ -26,7 +26,7 @@ function initializeExecutionUpdates(executionId, jobId) {
                 updateInterval = null;
             }
         } else {
-            if (!updateInterval && isExecutionRunning()) {
+            if (!updateInterval && isExecutionActive()) {
                 updateInterval = setInterval(function() {
                     if (!isUpdating) {
                         updateExecutionStatus(executionId, jobId);
@@ -299,11 +299,11 @@ function stopPolling() {
     }
 }
 
-function isExecutionRunning() {
+function isExecutionActive() {
     const badge = document.querySelector('.execution-header .badge');
     if (badge) {
         const status = badge.textContent.toLowerCase();
-        return status.includes('running');
+        return status.includes('running') || status.includes('pending');
     }
     return false;
 }

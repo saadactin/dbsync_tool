@@ -204,6 +204,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 const parsed = parseConnectionTestResponse(response, text);
                 if (!parsed.ok) {
                     showTestMessage(parsed.errorMessage, 'danger');
+                    if (typeof showConnectionTestModal === 'function') {
+                        showConnectionTestModal({
+                            success: false,
+                            message: parsed.errorMessage || 'Invalid response from server.',
+                            details: {}
+                        }, { title: 'Connection Test Failed' });
+                    }
                     return;
                 }
                 const data = parsed.data;
@@ -238,6 +245,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 } else {
                     showTestMessage(formatConnectionTestMessageHtml(data), 'danger');
+                    if (typeof showConnectionTestModal === 'function') {
+                        showConnectionTestModal(data, { title: 'Connection Test Failed' });
+                    }
                     databaseSelectionSection.style.display = 'none';
                     if (databaseNameField && (!dbTypeSelect || dbTypeSelect.value !== 'oracle_adw')) {
                         databaseNameField.style.display = 'none';
@@ -252,6 +262,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (testText) testText.textContent = 'Test Connection';
                 if (testSpinner) testSpinner.classList.add('d-none');
                 showTestMessage('An error occurred while testing the connection: ' + error.message, 'danger');
+                if (typeof showConnectionTestModal === 'function') {
+                    showConnectionTestModal({
+                        success: false,
+                        message: 'An error occurred while testing the connection: ' + error.message,
+                        details: {}
+                    }, { title: 'Connection Test Failed' });
+                }
                 if (databaseSelectionSection) databaseSelectionSection.style.display = 'none';
                 if (databaseNameField && (!dbTypeSelect || dbTypeSelect.value !== 'oracle_adw')) {
                     databaseNameField.style.display = 'none';
@@ -351,6 +368,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 const parsed = parseConnectionTestResponse(response, text);
                 if (!parsed.ok) {
                     showTestMessageEdit(parsed.errorMessage, 'danger');
+                    if (typeof showConnectionTestModal === 'function') {
+                        showConnectionTestModal({
+                            success: false,
+                            message: parsed.errorMessage || 'Invalid response from server.',
+                            details: {}
+                        }, { title: 'Connection Test Failed' });
+                    }
                     return;
                 }
                 const data = parsed.data;
@@ -358,6 +382,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     formatConnectionTestMessageHtml(data),
                     data.success ? 'success' : 'danger'
                 );
+                if (!data.success && typeof showConnectionTestModal === 'function') {
+                    showConnectionTestModal(data, { title: 'Connection Test Failed' });
+                }
             })
             .catch(error => {
                 console.error('Connection test error:', error);
@@ -365,6 +392,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (testTextEdit) testTextEdit.textContent = 'Test Connection';
                 if (testSpinnerEdit) testSpinnerEdit.classList.add('d-none');
                 showTestMessageEdit('An error occurred while testing the connection: ' + error.message, 'danger');
+                if (typeof showConnectionTestModal === 'function') {
+                    showConnectionTestModal({
+                        success: false,
+                        message: 'An error occurred while testing the connection: ' + error.message,
+                        details: {}
+                    }, { title: 'Connection Test Failed' });
+                }
             });
         });
     }

@@ -40,4 +40,9 @@ class ValidationError(SyncExecutionError):
     pass
 
 
+class FlatFileReadError(SyncExecutionError):
+    """Raised when a flat-file parser cannot read or decode a file."""
+    pass
+
+
 
