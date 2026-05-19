@@ -126,13 +126,28 @@ class SyncExecutor:
             else:
                 # Database source - use existing executors
                 logger.info(f"Job {self.job.id} has database source, using database sync executors")
-                
+
                 # Get connectors with retry
                 source_connector = self._get_connector_with_retry(self.job.source_connection)
                 target_connector = self._get_connector_with_retry(self.job.target_connection)
-                
+
+                # Check for PostgreSQL → ClickHouse migration (production engine)
+                source_db_type = getattr(self.job.source_connection, 'db_type', '').lower()
+                target_db_type = getattr(self.job.target_connection, 'db_type', '').lower()
+
+                if source_db_type == 'postgres' and target_db_type == 'clickhouse':
+                    # Use production PostgreSQL → ClickHouse engine
+                    logger.info(f"PostgreSQL → ClickHouse migration detected, using production engine")
+                    from sync_engine.postgres_clickhouse_executor import PostgresClickHouseExecutor
+                    executor = PostgresClickHouseExecutor(
+                        job=self.job,
+                        execution=execution,
+                        source_connector=source_connector,
+                        target_connector=target_connector
+                    )
+                    executor.execute()
                 # Execute based on sync type
-                if self.job.sync_type == 'full':
+                elif self.job.sync_type == 'full':
                     executor = FullSyncExecutor(
                         job=self.job,
                         execution=execution,
@@ -327,6 +342,40 @@ class SyncExecutor:
         except Exception as e:  # pragma: no cover - defensive
             logger.warning(
                 "Unexpected summary email exception for execution=%s job=%s: %s",
+                execution.id,
+                execution.job_id,
+                str(e),
+            )
+
+        # Day-6: send a single batched drift alert (or log a no-drift line)
+        # *after* the summary email so a misconfigured SMTP cannot suppress
+        # the per-execution summary.  Failures here never affect sync outcome.
+        try:
+            from sync_jobs.services.sync_email_service import send_drift_alert
+
+            send_drift_alert(execution)
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning(
+                "Unexpected drift alert exception for execution=%s job=%s: %s",
+                execution.id,
+                execution.job_id,
+                str(e),
+            )
+
+        # Day-7: streak-gated SLO breach detector.  Runs *after* the drift
+        # alert so the operator always sees the per-execution context first.
+        # Wrapped in its own try/except for belt-and-braces - the executor
+        # must never fail because of an alerting side-effect.
+        try:
+            from sync_jobs.services.ops_metrics_service import detect_slo_breach
+            from sync_jobs.services.sync_email_service import send_slo_breach_email
+
+            breaches = detect_slo_breach(execution)
+            if breaches:
+                send_slo_breach_email(execution, breaches)
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning(
+                "Unexpected SLO breach detector exception for execution=%s job=%s: %s",
                 execution.id,
                 execution.job_id,
                 str(e),

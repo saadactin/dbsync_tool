@@ -71,7 +71,24 @@ def start_scheduler():
                 misfire_grace_time=60,
             )
             logger.info("Added periodic due-jobs checker (every 1 minute)")
-            
+
+            # Add daily health check: tests all connections at configured time
+            # Time is read from HEALTH_CHECK_TIME env variable (default: 02:00)
+            health_check_time = getattr(settings, 'HEALTH_CHECK_TIME', '02:00')
+            try:
+                hour, minute = health_check_time.split(':')
+                _scheduler.add_job(
+                    func=run_daily_health_check,
+                    trigger=CronTrigger(hour=int(hour), minute=int(minute), timezone=tz),
+                    id='daily_health_check',
+                    name='Daily connection health check',
+                    replace_existing=True,
+                    misfire_grace_time=3600,  # 1 hour grace
+                )
+                logger.info(f"Added daily health check (runs at {health_check_time} {timezone_str})")
+            except Exception as e:
+                logger.error(f"Failed to schedule daily health check: {e}")
+
             # Register shutdown handler
             atexit.register(stop_scheduler)
             
@@ -317,4 +334,46 @@ def trigger_due_jobs():
     except Exception as e:
         logger.error(f"Error in trigger_due_jobs: {str(e)}", exc_info=True)
         return 0
+
+
+def run_daily_health_check():
+    """
+    Run daily health check on all connections.
+    Scheduled to run at configured time (default: 02:00).
+    """
+    try:
+        logger.info("Starting daily health check...")
+
+        from connections.health_check import run_health_check
+        from connections.models import ConnectionHealthCheckLog
+
+        # Run health check for all tenants
+        results = run_health_check(tenant=None)
+
+        # Save results to database
+        log = ConnectionHealthCheckLog.objects.create(
+            tested_at=results['tested_at'],
+            total_tested=results['total_tested'],
+            total_passed=results['total_passed'],
+            total_failed=results['total_failed'],
+            results_json=results,
+            tenant=None
+        )
+
+        if results['total_failed'] > 0:
+            logger.warning(
+                f"Daily health check complete: {results['total_failed']} of {results['total_tested']} "
+                f"connections failed. Log ID: {log.id}"
+            )
+        else:
+            logger.info(
+                f"Daily health check complete: All {results['total_tested']} connections healthy. "
+                f"Log ID: {log.id}"
+            )
+
+        return log.id
+
+    except Exception as e:
+        logger.error(f"Error in daily health check: {str(e)}", exc_info=True)
+        return None
 

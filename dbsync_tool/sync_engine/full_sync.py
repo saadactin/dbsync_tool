@@ -16,6 +16,16 @@ from sync_engine.transformation_engine import TransformationEngine
 from sync_engine.transformation_validator import TransformationValidator
 from core.mongo_document_codec import build_document_from_sql_row
 from sync_engine.exceptions import TableSyncError
+from sync_engine.reliability import (
+    BatchCoordinator,
+    DeadLetterCollector,
+    DeadLetterRowError,
+    RetryPolicy,
+    classify_error,
+    is_dead_letter,
+    recover_table,
+    with_policy,
+)
 from sync_jobs.services.transform_plan_service import (
     TransformPlanValidationError,
     prepare_runtime_transform_plan,
@@ -27,6 +37,7 @@ from sync_jobs.services.transform_plan_service import (
 )
 from core.constants import DEFAULT_BATCH_SIZE, MAX_BATCH_SIZE, MIN_BATCH_SIZE
 from core.type_mapping import map_source_to_oracle_type, normalize_data_type
+from sync_engine.dq.pack import numeric_columns_from_column_infos
 import logging
 
 logger = logging.getLogger(__name__)
@@ -77,6 +88,12 @@ class FullSyncExecutor:
         # Initialize transformation engine and validator
         self.transformation_engine = TransformationEngine()
         self.transformation_validator = TransformationValidator()
+        # Day-2 reliability: full sync now also uses the dual-pointer
+        # SyncCheckpoint fields (status + last_successful_batch_id) for
+        # mid-run resume visibility, even though there is no incremental
+        # watermark to advance. The legacy ``last_value`` is left alone.
+        from sync_engine.checkpoint_manager import CheckpointManager
+        self.checkpoint_manager = CheckpointManager(job)
         # NEW: Initialize pre-migration validator and data integrity verifier
         from sync_engine.pre_migration_validator import PreMigrationValidator
         from sync_engine.data_integrity_verifier import DataIntegrityVerifier
@@ -89,6 +106,230 @@ class FullSyncExecutor:
         # Store transformed query and order_by for post-migration verification
         self._last_transformed_query = None
         self._last_order_by = None
+        self._dq_pre_pack_by_table: Dict[Tuple[str, str], Any] = {}
+
+    # ------------------------------------------------------------------
+    # Day-5: structured DQ pre/post packs (best-effort; never fails sync)
+    # ------------------------------------------------------------------
+
+    def _dq_drift_cols(self, target_schema: str, target_table: str) -> List[str]:
+        return []
+
+    def _dq_run_pre_pack(
+        self,
+        job_table: SyncJobTable,
+        schema: str,
+        table: str,
+        target_schema: str,
+        target_table: str,
+        *,
+        sync_mode: str,
+        incremental_column: Optional[str],
+        pk_columns: Optional[List[str]],
+    ) -> None:
+        try:
+            from sync_engine.dq import compute_pre_pack, persist_dq_packs
+
+            drift = self._dq_drift_cols(target_schema, target_table)
+            pre = compute_pre_pack(
+                execution=self.execution,
+                job=self.job,
+                job_table=job_table,
+                source_connector=self.source_connector,
+                source_schema=schema,
+                source_table=table,
+                sync_mode=sync_mode,
+                schema_drift_added_columns=drift or None,
+                incremental_column=incremental_column,
+                pk_columns=pk_columns or [],
+            )
+            self._dq_pre_pack_by_table[(schema, table)] = pre
+            persist_dq_packs(
+                execution=self.execution,
+                job=self.job,
+                job_table=job_table,
+                source_schema=schema,
+                source_table=table,
+                pre_pack=pre,
+                post_pack=None,
+                parity_result=None,
+            )
+        except Exception:
+            logger.exception("DQ pre-pack wiring failed for %s.%s", schema, table)
+
+    def _dq_run_post_pack(
+        self,
+        job_table: SyncJobTable,
+        schema: str,
+        table: str,
+        target_schema: str,
+        target_table: str,
+        *,
+        sync_mode: str,
+        parity,
+        verification_mode: str,
+        dl_collector,
+        log: SyncExecutionLog,
+        pk_columns: Optional[List[str]],
+        numeric_columns: Optional[List[str]] = None,
+        numeric_discovery_warnings: Optional[List[str]] = None,
+        source_pk_columns: Optional[List[str]] = None,
+        target_pk_columns: Optional[List[str]] = None,
+        flat_file: bool = False,
+    ) -> None:
+        try:
+            from sync_engine.dq import compute_post_pack, persist_dq_packs
+            from sync_engine.dq.pack import discover_numeric_or_date_columns
+
+            drift = self._dq_drift_cols(target_schema, target_table)
+            pre = self._dq_pre_pack_by_table.get((schema, table))
+            disc_warn = list(numeric_discovery_warnings or [])
+            nc = numeric_columns
+            if nc is None and not flat_file:
+                discovered, dw = discover_numeric_or_date_columns(
+                    self.source_connector, schema, table, limit=8
+                )
+                nc = discovered
+                disc_warn.extend(dw)
+
+            par = parity if verification_mode != "off" else None
+            post = compute_post_pack(
+                execution=self.execution,
+                job=self.job,
+                job_table=job_table,
+                source_connector=self.source_connector,
+                target_connector=self.target_connector,
+                source_schema=schema,
+                source_table=table,
+                target_schema=target_schema,
+                target_table=target_table,
+                sync_mode=sync_mode,
+                parity_result=par,
+                dead_letter_count=dl_collector.stats.dead_letter_count,
+                attempts=getattr(log, "attempts", 0) or 0,
+                last_error_code=getattr(log, "last_error_code", None),
+                pk_columns=pk_columns or [],
+                source_pk_columns=source_pk_columns,
+                target_pk_columns=target_pk_columns,
+                numeric_columns=nc or None,
+                schema_drift_added_columns=drift or None,
+                no_delete_propagation=getattr(self.job, "no_delete_propagation", True),
+                flat_file=flat_file,
+            )
+            mw = post.metrics.setdefault("warnings", [])
+            for w in disc_warn:
+                if w not in post.warnings:
+                    post.warnings.append(w)
+                if w not in mw:
+                    mw.append(w)
+            persist_dq_packs(
+                execution=self.execution,
+                job=self.job,
+                job_table=job_table,
+                source_schema=schema,
+                source_table=table,
+                pre_pack=pre,
+                post_pack=post,
+                parity_result=par,
+            )
+        except Exception:
+            logger.exception("DQ post-pack wiring failed for %s.%s", schema, table)
+
+    # ------------------------------------------------------------------
+    # Day-3: per-table retry policy wrapper
+    # ------------------------------------------------------------------
+
+    def _sync_table_with_policy(self, job_table: SyncJobTable) -> None:
+        """Run :meth:`sync_table` under the per-table RetryPolicy.
+
+        Composes with Day-2 ``recover_table`` + ``BatchCoordinator``:
+        already-committed batches skip on retry; orphaned ``started``
+        markers are reclassified to ``failed`` and replayed under
+        fresh markers.
+        """
+        policy = RetryPolicy.from_job_table(job_table)
+        schema_name = job_table.schema_name
+        table_name = job_table.table_name
+
+        def _on_attempt(attempt_number: int, last_error_code: Optional[str]) -> None:
+            if attempt_number < 2:
+                return
+            try:
+                SyncExecutionLog.objects.filter(
+                    execution=self.execution,
+                    schema_name=schema_name,
+                    table_name=table_name,
+                ).update(
+                    attempts=attempt_number - 1,
+                    last_error_code=last_error_code,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to bump SyncExecutionLog.attempts for %s.%s",
+                    schema_name,
+                    table_name,
+                )
+
+        with_policy(
+            lambda: self.sync_table(job_table),
+            policy,
+            on_attempt=_on_attempt,
+        )
+
+    def _record_terminal_table_error(self, job_table: SyncJobTable, exc: BaseException) -> None:
+        """Record ``last_error_code`` after the retry policy gives up."""
+        try:
+            _, code = classify_error(exc)
+            SyncExecutionLog.objects.filter(
+                execution=self.execution,
+                schema_name=job_table.schema_name,
+                table_name=job_table.table_name,
+            ).update(last_error_code=code)
+        except Exception:
+            logger.exception(
+                "Failed to record terminal last_error_code for %s.%s",
+                job_table.schema_name,
+                job_table.table_name,
+            )
+
+    # ------------------------------------------------------------------
+    # Day-4: per-table dead-letter capture + budget enforcement
+    # ------------------------------------------------------------------
+
+    def _make_dead_letter_collector(self, job_table: SyncJobTable) -> DeadLetterCollector:
+        """Build the dead-letter collector for a single ``sync_table`` run."""
+        return DeadLetterCollector(
+            execution=self.execution,
+            job=self.job,
+            job_table=job_table,
+        )
+
+    def _handle_batch_exception_with_dead_letter(
+        self,
+        exc: BaseException,
+        *,
+        dl_collector: DeadLetterCollector,
+        sample_row,
+        batch_id,
+    ) -> bool:
+        """Capture row-scope errors into the dead-letter buffer.
+
+        Returns ``True`` when the caller should ``continue`` the batch
+        loop (under budget) and ``False`` when the legacy fatal path
+        should run. Re-raises a fresh ``DeadLetterRowError`` with the
+        budget reason when the configured percentage is exceeded.
+        """
+        if not is_dead_letter(exc):
+            return False
+        row = getattr(exc, "row", None)
+        if row is None and isinstance(sample_row, dict):
+            row = sample_row
+        dl_collector.record(row=row, error=exc, batch_id=batch_id)
+        dl_collector.flush()
+        dl_collector.update_log_counters()
+        if dl_collector.should_fail():
+            dl_collector.raise_if_budget_exceeded()
+        return True
 
     @staticmethod
     def _normalize_mongo_value_for_sql(value: Any) -> Any:
@@ -424,12 +665,15 @@ class FullSyncExecutor:
             if self._is_preflight_transform_validation_enabled():
                 self._preflight_validate_transform_plans(tables)
             
-            # Sync each table
+            # Sync each table - Day-3 reliability: wrap the per-table
+            # call with the centralized RetryPolicy, populating
+            # SyncExecutionLog.attempts and last_error_code.
             for job_table in tables:
                 try:
-                    self.sync_table(job_table)
+                    self._sync_table_with_policy(job_table)
                 except TableSyncError as e:
                     logger.error(f"Table sync failed: {str(e)}")
+                    self._record_terminal_table_error(job_table, e)
                     # Continue with other tables
                     continue
                 except Exception as e:
@@ -437,6 +681,7 @@ class FullSyncExecutor:
                         f"Unexpected error syncing table: {str(e)}",
                         exc_info=True
                     )
+                    self._record_terminal_table_error(job_table, e)
                     # Continue with other tables
                     continue
             
@@ -525,31 +770,56 @@ class FullSyncExecutor:
             logger.error(f"Table creation error for {schema}.{table}: {error_msg}", exc_info=True)
             raise TableSyncError(error_msg) from e
 
-        try:
+        # Day-2 reliability: per-table coordinator for the transform path.
+        # The recovery sweep has already run in sync_table; here we only
+        # need the lifecycle ops + the "is in-flight resume" probe so we
+        # can suppress the destructive truncate on resume.
+        # Day-4: dead-letter capture for the transform path mirrors the
+        # main full-sync wiring.
+        dl_collector = self._make_dead_letter_collector(job_table)
+        transform_coordinator = BatchCoordinator(
+            execution=self.execution,
+            job=self.job,
+            schema_name=schema,
+            table_name=table,
+            target_db_type=self.table_handler.target_db_type,
+        )
+        transform_in_flight_resume = transform_coordinator.has_any_processed_batches()
+
+        if transform_in_flight_resume:
+            logger.info(
+                "Resuming in-flight execution %s (transform path) for %s.%s - "
+                "skipping truncate (prior ProcessedBatch markers detected).",
+                self.execution.id,
+                schema,
+                table,
+            )
+        else:
             try:
-                target_tables = self.target_connector.get_tables(target_schema)
-                target_db_type = self.table_handler.target_db_type
-                if target_db_type in ("sqlserver", "oracle"):
-                    table_exists = any(t.upper() == target_table.upper() for t in target_tables)
-                else:
-                    table_exists = target_table in target_tables
-                if table_exists:
+                try:
+                    target_tables = self.target_connector.get_tables(target_schema)
+                    target_db_type = self.table_handler.target_db_type
+                    if target_db_type in ("sqlserver", "oracle"):
+                        table_exists = any(t.upper() == target_table.upper() for t in target_tables)
+                    else:
+                        table_exists = target_table in target_tables
+                    if table_exists:
+                        self.target_connector.truncate_table(target_schema, target_table)
+                    else:
+                        logger.info(
+                            f"Target table {target_schema}.{target_table} does not exist yet, skipping truncate"
+                        )
+                except Exception as check_error:
+                    logger.debug(f"Could not check table existence: {check_error}, trying truncate anyway")
                     self.target_connector.truncate_table(target_schema, target_table)
-                else:
-                    logger.info(
-                        f"Target table {target_schema}.{target_table} does not exist yet, skipping truncate"
+            except Exception as e:
+                error_str = str(e)
+                if "does not exist" in error_str or "Cannot find the object" in error_str:
+                    logger.warning(
+                        f"Target table {target_schema}.{target_table} may not exist yet, skipping truncate: {error_str}"
                     )
-            except Exception as check_error:
-                logger.debug(f"Could not check table existence: {check_error}, trying truncate anyway")
-                self.target_connector.truncate_table(target_schema, target_table)
-        except Exception as e:
-            error_str = str(e)
-            if "does not exist" in error_str or "Cannot find the object" in error_str:
-                logger.warning(
-                    f"Target table {target_schema}.{target_table} may not exist yet, skipping truncate: {error_str}"
-                )
-            else:
-                raise TableSyncError(f"Failed to truncate target table: {error_str}") from e
+                else:
+                    raise TableSyncError(f"Failed to truncate target table: {error_str}") from e
 
         try:
             # Fail fast if the transform plan references non-existent physical columns.
@@ -586,6 +856,26 @@ class FullSyncExecutor:
         if "ORDER BY" not in query.upper():
             order_by_fb = column_names[0]
 
+        name_lower_tf = {n.lower() for n in column_names}
+        cfg_tf = getattr(job_table, "incremental_key_columns", None) or []
+        if not isinstance(cfg_tf, (list, tuple)):
+            cfg_tf = []
+        dq_pk_src_tf = [str(k) for k in cfg_tf if str(k).strip().lower() in name_lower_tf]
+        if not dq_pk_src_tf and column_names:
+            dq_pk_src_tf = [column_names[0]]
+        dq_pk_tgt_tf = [rename_overrides.get(k.lower(), k) for k in dq_pk_src_tf]
+        nums_tf = numeric_columns_from_column_infos(column_infos, limit=8)
+        self._dq_run_pre_pack(
+            job_table,
+            schema,
+            table,
+            target_schema,
+            target_table,
+            sync_mode="full",
+            incremental_column=getattr(job_table, "incremental_column", None),
+            pk_columns=dq_pk_src_tf,
+        )
+
         batch_number = 0
         total_rows_fetched = 0
         total_rows_inserted = 0
@@ -603,39 +893,77 @@ class FullSyncExecutor:
             total_rows_fetched += len(batch)
             self.validator.validate_batch_not_empty(batch, f"{schema}.{table}")
 
-            try:
-                bulk_kwargs = {
-                    "schema": target_schema,
-                    "table": target_table,
-                    "columns": target_column_names,
-                    "rows": batch,
-                }
-                if self.table_handler.target_db_type == "oracle":
-                    target_types = []
-                    for col in column_infos:
-                        override_type = overrides.get(col.name.lower())
-                        if override_type:
-                            target_types.append(override_type)
-                        else:
-                            _, max_len, prec, scale = normalize_data_type(
-                                col.data_type, self.table_handler.source_db_type
+            bulk_kwargs = {
+                "schema": target_schema,
+                "table": target_table,
+                "columns": target_column_names,
+                "rows": batch,
+            }
+            if self.table_handler.target_db_type == "oracle":
+                target_types = []
+                for col in column_infos:
+                    override_type = overrides.get(col.name.lower())
+                    if override_type:
+                        target_types.append(override_type)
+                    else:
+                        _, max_len, prec, scale = normalize_data_type(
+                            col.data_type, self.table_handler.source_db_type
+                        )
+                        target_types.append(
+                            map_source_to_oracle_type(
+                                col.data_type,
+                                self.table_handler.source_db_type,
+                                max_length=col.max_length or max_len,
+                                precision=prec,
+                                scale=scale,
                             )
-                            target_types.append(
-                                map_source_to_oracle_type(
-                                    col.data_type,
-                                    self.table_handler.source_db_type,
-                                    max_length=col.max_length or max_len,
-                                    precision=prec,
-                                    scale=scale,
-                                )
-                            )
-                    bulk_kwargs["target_column_types"] = target_types
-                self.target_connector.bulk_insert(**bulk_kwargs)
+                        )
+                bulk_kwargs["target_column_types"] = target_types
+
+            # Day-2 reliability: per-batch idempotency for transform full sync.
+            tf_batch_id = transform_coordinator.make_batch_id(batch_number)
+            if transform_coordinator.is_already_processed(tf_batch_id):
+                prior = transform_coordinator.get_committed_marker(tf_batch_id)
+                skipped_rows = int(prior.row_count) if prior else len(batch)
+                total_rows_inserted += skipped_rows
+                logger.info(
+                    "Skipping transform full-sync batch %s for %s.%s - already committed (rows=%s).",
+                    tf_batch_id,
+                    schema,
+                    table,
+                    skipped_rows,
+                )
+            else:
+                tf_marker = transform_coordinator.begin_batch(
+                    tf_batch_id, expected_row_count=len(batch)
+                )
+                try:
+                    dl_collector.mark_seen(len(batch) if batch else 0)
+                    self.target_connector.bulk_insert(**bulk_kwargs)
+                except Exception as e:
+                    transform_coordinator.fail_batch(
+                        tf_marker,
+                        error=e,
+                        checkpoint_manager=self.checkpoint_manager,
+                    )
+                    if self._handle_batch_exception_with_dead_letter(
+                        e,
+                        dl_collector=dl_collector,
+                        sample_row=batch[0] if batch else None,
+                        batch_id=tf_batch_id,
+                    ):
+                        continue
+                    raise TableSyncError(
+                        f"Failed to insert batch {batch_number} for {schema}.{table}: {str(e)}"
+                    ) from e
+                transform_coordinator.commit_batch(
+                    tf_marker,
+                    rows_written=len(batch),
+                    last_seen=None,
+                    last_committed=None,
+                    checkpoint_manager=self.checkpoint_manager,
+                )
                 total_rows_inserted += len(batch)
-            except Exception as e:
-                raise TableSyncError(
-                    f"Failed to insert batch {batch_number} for {schema}.{table}: {str(e)}"
-                ) from e
 
             log.batch_number = batch_number
             log.rows_fetched = total_rows_fetched
@@ -657,12 +985,86 @@ class FullSyncExecutor:
             if len(batch) < self.batch_size:
                 break
 
+        verification_mode_tf = getattr(self.job, "verification_mode", "sampled") or "sampled"
+        parity_tf = None
+        parity_text_tf = None
+        if verification_mode_tf != "off":
+            try:
+                from sync_engine.verification import verify_table_parity
+
+                parity_tf = verify_table_parity(
+                    job=self.job,
+                    execution=self.execution,
+                    source_connector=self.source_connector,
+                    target_connector=self.target_connector,
+                    source_schema=schema,
+                    source_table=table,
+                    target_schema=target_schema,
+                    target_table=target_table,
+                    sync_mode="full",
+                    source_hash_columns=column_names if verification_mode_tf == "strict" else None,
+                    target_hash_columns=target_column_names if verification_mode_tf == "strict" else None,
+                    no_delete_propagation=getattr(self.job, "no_delete_propagation", True),
+                )
+                parity_text_tf = (
+                    f"Parity[{verification_mode_tf}]: source={parity_tf.source_count} "
+                    f"target={parity_tf.target_count} decision={parity_tf.decision}"
+                )
+                if verification_mode_tf == "strict" and parity_tf.decision == "repair_full":
+                    raise TableSyncError(
+                        f"Full sync parity failed for {schema}.{table}: "
+                        f"source_count={parity_tf.source_count} != target_count={parity_tf.target_count}"
+                    )
+            except TableSyncError:
+                raise
+            except Exception as parity_error:
+                logger.warning(
+                    "Parity verification skipped (transform full) for %s.%s: %s",
+                    schema,
+                    table,
+                    parity_error,
+                )
+
+        self._dq_run_post_pack(
+            job_table,
+            schema,
+            table,
+            target_schema,
+            target_table,
+            sync_mode="full",
+            parity=parity_tf,
+            verification_mode=verification_mode_tf,
+            dl_collector=dl_collector,
+            log=log,
+            pk_columns=dq_pk_tgt_tf,
+            numeric_columns=nums_tf,
+            source_pk_columns=dq_pk_src_tf,
+            target_pk_columns=dq_pk_tgt_tf,
+        )
+
+        # Day-4: drain any buffered dead-letter rows + sync counters
+        # before the transform path completes.
+        try:
+            dl_collector.flush()
+            dl_collector.update_log_counters()
+        except Exception:
+            logger.exception(
+                "Dead-letter flush failed for transform path %s.%s.",
+                schema,
+                table,
+            )
+
         log.rows_fetched = total_rows_fetched
         log.rows_inserted = total_rows_inserted
         log.batch_number = batch_number
-        log.verification_summary = (
-            f"Transform mode={mode}; rows inserted={total_rows_inserted} (model-based full sync)"
+        log.dead_letter_count = dl_collector.stats.dead_letter_count
+        summary_tf = (
+            f"Transform mode={mode}; rows inserted={total_rows_inserted} "
+            f"(model-based full sync); dead_letters={dl_collector.stats.dead_letter_count}"
         )
+        if parity_text_tf:
+            summary_tf = f"{summary_tf}; {parity_text_tf}"
+        log.verification_summary = summary_tf
         log.status = "completed"
         log.completed_at = timezone.now()
         log.save()
@@ -725,13 +1127,45 @@ class FullSyncExecutor:
             target_schema = schema
         
         # Create execution log
-        log = SyncExecutionLog.objects.create(
+        # Day-3 reliability: per-table retry policy may invoke sync_table
+        # multiple times for the SAME (execution, schema, table). Use
+        # get_or_create so a retry reuses the existing log row instead
+        # of creating a duplicate.
+        log, _log_created = SyncExecutionLog.objects.get_or_create(
             execution=self.execution,
             schema_name=schema,
             table_name=table,
-            status='pending'
+            defaults={'status': 'pending'},
         )
-        
+
+        # Day-2 reliability: per-table batch coordinator + recovery sweep.
+        # Owns the ProcessedBatch lifecycle. recover_table flips any
+        # 'started' marker leftover from a previous crashed attempt of
+        # the same execution to 'failed'. The presence of any (non-zero
+        # status) marker for this (execution, schema, table) is also our
+        # "this is a resume of an in-flight run" signal which suppresses
+        # the destructive TRUNCATE further down.
+        batch_coordinator = BatchCoordinator(
+            execution=self.execution,
+            job=self.job,
+            schema_name=schema,
+            table_name=table,
+            target_db_type=self.table_handler.target_db_type,
+        )
+        recover_table(
+            execution=self.execution,
+            job=self.job,
+            schema_name=schema,
+            table_name=table,
+            checkpoint_manager=self.checkpoint_manager,
+        )
+        is_in_flight_resume = batch_coordinator.has_any_processed_batches()
+        # Day-4 reliability: per-table dead-letter capture. Bad rows
+        # surfaced via ``DeadLetterRowError`` (or any exception tagged
+        # ``dead_letter=True``) are isolated and bounded by the
+        # ``SyncJobTable.dead_letter_max_pct`` budget.
+        dl_collector = self._make_dead_letter_collector(job_table)
+
         try:
             log.status = 'running'
             log.started_at = timezone.now()
@@ -828,32 +1262,48 @@ class FullSyncExecutor:
             
             # Truncate target table so destination holds exactly source data (no duplicates).
             # Full sync = replace all rows: truncate then insert.
-            try:
+            #
+            # Day-2 reliability: when this execution has any ProcessedBatch
+            # markers already (i.e. we are resuming an in-flight crashed
+            # attempt of the SAME execution), skip the truncate so we do
+            # not blow away rows that were already successfully written
+            # by previous batches. A fresh execution behaves exactly as
+            # before.
+            if is_in_flight_resume:
+                logger.info(
+                    "Resuming in-flight execution %s for %s.%s - skipping truncate "
+                    "(prior ProcessedBatch markers detected).",
+                    self.execution.id,
+                    schema,
+                    table,
+                )
+            else:
                 try:
-                    target_tables = self.target_connector.get_tables(target_schema)
-                    target_db_type = self.table_handler.target_db_type
-                    # Oracle and SQL Server return uppercase/case-insensitive names; match case-insensitively.
-                    if target_db_type in ('sqlserver', 'oracle'):
-                        table_exists = any(t.upper() == target_table.upper() for t in target_tables)
-                    else:
-                        table_exists = target_table in target_tables
-                    if table_exists:
+                    try:
+                        target_tables = self.target_connector.get_tables(target_schema)
+                        target_db_type = self.table_handler.target_db_type
+                        # Oracle and SQL Server return uppercase/case-insensitive names; match case-insensitively.
+                        if target_db_type in ('sqlserver', 'oracle'):
+                            table_exists = any(t.upper() == target_table.upper() for t in target_tables)
+                        else:
+                            table_exists = target_table in target_tables
+                        if table_exists:
+                            self.target_connector.truncate_table(target_schema, target_table)
+                            logger.debug(f"Truncated {target_schema}.{target_table} for full sync replace")
+                        else:
+                            logger.info(f"Target table {target_schema}.{target_table} does not exist yet, skipping truncate")
+                    except Exception as check_error:
+                        logger.debug(f"Could not check table existence: {check_error}, trying truncate anyway")
                         self.target_connector.truncate_table(target_schema, target_table)
-                        logger.debug(f"Truncated {target_schema}.{target_table} for full sync replace")
+                except Exception as e:
+                    # If truncate fails, log warning but continue (table might not exist yet or be empty)
+                    error_str = str(e)
+                    if 'does not exist' in error_str or 'Cannot find the object' in error_str:
+                        logger.warning(f"Target table {target_schema}.{target_table} may not exist yet, skipping truncate: {error_str}")
                     else:
-                        logger.info(f"Target table {target_schema}.{target_table} does not exist yet, skipping truncate")
-                except Exception as check_error:
-                    logger.debug(f"Could not check table existence: {check_error}, trying truncate anyway")
-                    self.target_connector.truncate_table(target_schema, target_table)
-            except Exception as e:
-                # If truncate fails, log warning but continue (table might not exist yet or be empty)
-                error_str = str(e)
-                if 'does not exist' in error_str or 'Cannot find the object' in error_str:
-                    logger.warning(f"Target table {target_schema}.{target_table} may not exist yet, skipping truncate: {error_str}")
-                else:
-                    error_msg = f"Failed to truncate target table: {error_str}"
-                    logger.error(f"Table truncate error for {schema}.{table}: {error_msg}", exc_info=True)
-                    raise TableSyncError(error_msg) from e
+                        error_msg = f"Failed to truncate target table: {error_str}"
+                        logger.error(f"Table truncate error for {schema}.{table}: {error_msg}", exc_info=True)
+                        raise TableSyncError(error_msg) from e
             
             # Get primary key for ordering
             try:
@@ -969,7 +1419,23 @@ class FullSyncExecutor:
             column_transformations = job_table.column_transformations
             if not isinstance(column_transformations, dict):
                 column_transformations = {}
-            
+
+            cn_set_dq = {c.lower() for c in column_names}
+            dq_pk_src = [p for p in pk_columns if (p or "").lower() in cn_set_dq]
+            if not dq_pk_src and column_names:
+                dq_pk_src = [column_names[0]]
+            dq_pk_tgt = [rename_overrides.get(p.lower(), p) for p in dq_pk_src]
+            self._dq_run_pre_pack(
+                job_table,
+                schema,
+                table,
+                target_schema,
+                target_table,
+                sync_mode="full",
+                incremental_column=getattr(job_table, "incremental_column", None),
+                pk_columns=dq_pk_src,
+            )
+
             # Fetch and insert in batches
             batch_number = 0
             total_rows_fetched = 0
@@ -1058,41 +1524,83 @@ class FullSyncExecutor:
                     )
                 
                 # Insert batch (use target_schema for MySQL)
-                try:
-                    bulk_kwargs = {
-                        "schema": target_schema,
-                        "table": target_table,
-                        "columns": target_column_names,
-                        "rows": batch,
-                    }
-                    # Oracle: pass target column types for BLOB/CLOB value normalization
-                    if self.table_handler.target_db_type == "oracle":
-                        target_types = []
-                        overrides = getattr(job_table, "column_type_overrides", None) or {}
-                        for col in columns:
-                            override_type = overrides.get(col.name.lower())
-                            if override_type:
-                                target_types.append(override_type)
-                            else:
-                                _, max_len, prec, scale = normalize_data_type(
-                                    col.data_type, self.table_handler.source_db_type
+                bulk_kwargs = {
+                    "schema": target_schema,
+                    "table": target_table,
+                    "columns": target_column_names,
+                    "rows": batch,
+                }
+                # Oracle: pass target column types for BLOB/CLOB value normalization
+                if self.table_handler.target_db_type == "oracle":
+                    target_types = []
+                    overrides = getattr(job_table, "column_type_overrides", None) or {}
+                    for col in columns:
+                        override_type = overrides.get(col.name.lower())
+                        if override_type:
+                            target_types.append(override_type)
+                        else:
+                            _, max_len, prec, scale = normalize_data_type(
+                                col.data_type, self.table_handler.source_db_type
+                            )
+                            target_types.append(
+                                map_source_to_oracle_type(
+                                    col.data_type,
+                                    self.table_handler.source_db_type,
+                                    max_length=col.max_length or max_len,
+                                    precision=prec,
+                                    scale=scale,
                                 )
-                                target_types.append(
-                                    map_source_to_oracle_type(
-                                        col.data_type,
-                                        self.table_handler.source_db_type,
-                                        max_length=col.max_length or max_len,
-                                        precision=prec,
-                                        scale=scale,
-                                    )
-                                )
-                        bulk_kwargs["target_column_types"] = target_types
-                    self.target_connector.bulk_insert(**bulk_kwargs)
-                    total_rows_inserted += len(batch)
-                except Exception as e:
-                    raise TableSyncError(
-                        f"Failed to insert batch {batch_number} for {schema}.{table}: {str(e)}"
+                            )
+                    bulk_kwargs["target_column_types"] = target_types
+
+                # Day-2 reliability: per-batch idempotency for full sync.
+                # Skip already-committed batches (resume) and bracket the
+                # bulk_insert with begin/commit/fail markers.
+                fs_batch_id = batch_coordinator.make_batch_id(batch_number)
+                if batch_coordinator.is_already_processed(fs_batch_id):
+                    prior = batch_coordinator.get_committed_marker(fs_batch_id)
+                    skipped_rows = int(prior.row_count) if prior else len(batch)
+                    total_rows_inserted += skipped_rows
+                    logger.info(
+                        "Skipping full-sync batch %s for %s.%s - already committed (rows=%s).",
+                        fs_batch_id,
+                        schema,
+                        table,
+                        skipped_rows,
                     )
+                else:
+                    fs_marker = batch_coordinator.begin_batch(
+                        fs_batch_id, expected_row_count=len(batch)
+                    )
+                    try:
+                        # Day-4: account every row evaluated for the
+                        # dead-letter budget BEFORE the bulk insert.
+                        dl_collector.mark_seen(len(batch) if batch else 0)
+                        self.target_connector.bulk_insert(**bulk_kwargs)
+                    except Exception as e:
+                        batch_coordinator.fail_batch(
+                            fs_marker,
+                            error=e,
+                            checkpoint_manager=self.checkpoint_manager,
+                        )
+                        if self._handle_batch_exception_with_dead_letter(
+                            e,
+                            dl_collector=dl_collector,
+                            sample_row=batch[0] if batch else None,
+                            batch_id=fs_batch_id,
+                        ):
+                            continue
+                        raise TableSyncError(
+                            f"Failed to insert batch {batch_number} for {schema}.{table}: {str(e)}"
+                        )
+                    batch_coordinator.commit_batch(
+                        fs_marker,
+                        rows_written=len(batch),
+                        last_seen=None,
+                        last_committed=None,
+                        checkpoint_manager=self.checkpoint_manager,
+                    )
+                    total_rows_inserted += len(batch)
                 
                 # Update log
                 log.batch_number = batch_number
@@ -1145,8 +1653,9 @@ class FullSyncExecutor:
                                 f"Check the logs for details. Row count: {total_rows_inserted} rows inserted."
                             )
                             # Don't fail the sync - allow migration to complete
-                            # TODO: Fix comparison logic to handle all edge cases
-                            # For now, we'll log warnings but allow the sync to succeed
+                            # Note: Verification logic handles edge cases (float precision, UTC dates, NULL, whitespace)
+                            # See data_integrity_verifier.py _values_equal() for full comparison logic
+                            # We log warnings but allow the sync to succeed to avoid false-positive failures
                             
                     except Exception as verification_error:
                         # Don't fail sync if verification itself fails
@@ -1177,6 +1686,7 @@ class FullSyncExecutor:
                 log.verification_summary = "; ".join(parts)
 
             verification_mode = getattr(self.job, 'verification_mode', 'sampled') or 'sampled'
+            parity = None
             if verification_mode != 'off':
                 try:
                     from sync_engine.verification import verify_table_parity
@@ -1217,16 +1727,49 @@ class FullSyncExecutor:
                         parity_error,
                     )
 
+            nums_full = numeric_columns_from_column_infos(columns, limit=8)
+            self._dq_run_post_pack(
+                job_table,
+                schema,
+                table,
+                target_schema,
+                target_table,
+                sync_mode="full",
+                parity=parity,
+                verification_mode=verification_mode,
+                dl_collector=dl_collector,
+                log=log,
+                pk_columns=dq_pk_tgt,
+                numeric_columns=nums_full,
+                source_pk_columns=dq_pk_src,
+                target_pk_columns=dq_pk_tgt,
+            )
+
+            # Day-4: persist any buffered dead-letter rows + sync the
+            # ``dead_letter_count`` on the log row so it matches the
+            # number of ``SyncDeadLetterRow`` records for this table.
+            try:
+                dl_collector.flush()
+                dl_collector.update_log_counters()
+            except Exception:
+                logger.exception(
+                    "Dead-letter flush failed for %s.%s; counters may lag.",
+                    schema,
+                    table,
+                )
+
             # Mark log as completed
             log.status = 'completed'
             log.completed_at = timezone.now()
+            log.dead_letter_count = dl_collector.stats.dead_letter_count
             log.save()
-            
+
             logger.info(
                 f"Successfully synced table {schema}.{table}: "
-                f"{total_rows_inserted} rows in {batch_number} batches"
+                f"{total_rows_inserted} rows in {batch_number} batches "
+                f"(dead_letters={dl_collector.stats.dead_letter_count})"
             )
-            
+
         except Exception as e:
             # Capture error details; include DB types for Oracle-inclusive flows (no credentials/DSN)
             import traceback
@@ -1239,14 +1782,34 @@ class FullSyncExecutor:
                 db_context = ""
                 oracle_note = ""
             error_details = f"{oracle_note}{str(e)}{db_context}\n\nTraceback:\n{traceback.format_exc()}"
-            
+
+            # Day-4: drain buffered dead-letter rows + counters in the
+            # error path; classify the terminal exception so
+            # ``last_error_code`` is populated consistently.
+            try:
+                dl_collector.flush()
+                dl_collector.update_log_counters()
+            except Exception:
+                logger.exception(
+                    "Dead-letter flush failed in error path for %s.%s.",
+                    schema,
+                    table,
+                )
+
             log.status = 'failed'
             log.error_message = error_details[:5000]  # Limit to 5000 chars for database field
             log.completed_at = timezone.now()
+            log.dead_letter_count = dl_collector.stats.dead_letter_count
+            try:
+                _, _code = classify_error(e)
+                log.last_error_code = _code
+            except Exception:
+                pass
             log.save()
-            
+
             logger.error(
-                f"Failed to sync table {schema}.{table}: {str(e)}",
+                f"Failed to sync table {schema}.{table}: {str(e)} "
+                f"(dead_letters={dl_collector.stats.dead_letter_count})",
                 exc_info=True
             )
             raise TableSyncError(f"Table sync failed for {schema}.{table}: {str(e)}") from e

@@ -225,7 +225,11 @@ document.addEventListener('DOMContentLoaded', function() {
     let selectedTables = new Set();
     let loadedSchemas = new Set(); // Track which schemas have been expanded
     let schemaElements = new Map(); // Map schema name to DOM element
-    
+
+    // Virtual scrolling / pagination for large table lists
+    const TABLES_PER_PAGE = 50; // Show 50 tables at a time
+    let schemaPagination = new Map(); // Map schema name to pagination state {currentPage, totalPages, allTables}
+
     // Debounce search input
     let searchTimeout;
     const SEARCH_DEBOUNCE_MS = 300;
@@ -587,9 +591,123 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 return;
             }
-            
-            // Display tables
-            tables.forEach(tableInfo => {
+
+            // Initialize pagination for this schema
+            const totalTables = tables.length;
+            const totalPages = Math.ceil(totalTables / TABLES_PER_PAGE);
+
+            console.log(`Schema ${schemaName}: ${totalTables} tables, ${totalPages} pages`);
+
+            // Store all tables for this schema
+            schemaPagination.set(schemaName, {
+                currentPage: 1,
+                totalPages: totalPages,
+                allTables: tables,
+                tablesContainer: tablesContainer
+            });
+
+            // Render first page
+            renderTablesPage(schemaName, 1);
+
+            // Add pagination controls if more than one page
+            if (totalPages > 1) {
+                addPaginationControls(schemaName, tablesContainer);
+            }
+
+            loadedSchemas.add(schemaName);
+            if (loadingSpinner) {
+                try {
+                    loadingSpinner.style.display = 'none';
+                } catch (e) {
+                    console.error('Error hiding loading spinner:', e);
+                }
+            }
+
+            // Update search filter if active
+            if (tableSearch && tableSearch.value) {
+                try {
+                    filterTables(tableSearch.value);
+                } catch (e) {
+                    console.error('Error filtering tables:', e);
+                }
+            }
+
+        } catch (error) {
+            // Error handling code stays the same
+            try {
+                if (loadingSpinner && loadingSpinner.nodeType === 1) {
+                    try {
+                        loadingSpinner.style.display = 'none';
+                    } catch (e) {
+                        console.error('Error hiding loading spinner:', e);
+                    }
+                }
+
+                console.error(`Error loading tables for schema ${schemaName}:`, error);
+                const errorText = getDisplayErrorText(error, 'Unknown error');
+
+                let errorDisplayed = false;
+                if (errorElement && errorElement.nodeType === 1) {
+                    try {
+                        while (errorElement.firstChild) {
+                            errorElement.removeChild(errorElement.firstChild);
+                        }
+                        errorElement.textContent = `Failed to load tables: ${errorText}`;
+                        errorElement.style.display = 'block';
+                        errorDisplayed = true;
+                    } catch (e) {
+                        console.error('Error setting schema error element:', e);
+                    }
+                }
+
+                if (!errorDisplayed) {
+                    const mainErrorMsg = document.getElementById('error-message');
+                    if (mainErrorMsg && mainErrorMsg.nodeType === 1) {
+                        try {
+                            while (mainErrorMsg.firstChild) {
+                                mainErrorMsg.removeChild(mainErrorMsg.firstChild);
+                            }
+                            mainErrorMsg.textContent = `Error loading tables for schema ${schemaName}: ${errorText}`;
+                            mainErrorMsg.style.display = 'block';
+                            errorDisplayed = true;
+                        } catch (e) {
+                            console.error('Error setting main error message:', e);
+                        }
+                    }
+                }
+
+                if (!errorDisplayed) {
+                    alert(`Error loading tables for schema ${schemaName}: ${errorText}`);
+                }
+            } catch (fatalError) {
+                console.error('Fatal error in error handler:', fatalError);
+                try {
+                    alert(`Error loading tables: ${error.message || 'Unknown error'}`);
+                } catch (e) {
+                    console.error('Even alert failed:', e);
+                }
+            }
+        }
+    }
+
+    /**
+     * Render a specific page of tables for a schema
+     */
+    function renderTablesPage(schemaName, pageNum) {
+        const paginationState = schemaPagination.get(schemaName);
+        if (!paginationState) return;
+
+        const { allTables, tablesContainer } = paginationState;
+        const startIdx = (pageNum - 1) * TABLES_PER_PAGE;
+        const endIdx = Math.min(startIdx + TABLES_PER_PAGE, allTables.length);
+        const tablesToRender = allTables.slice(startIdx, endIdx);
+
+        // Clear existing table items (not pagination controls)
+        const existingTables = tablesContainer.querySelectorAll('.form-check');
+        existingTables.forEach(item => item.remove());
+
+        // Render tables for this page
+        tablesToRender.forEach(tableInfo => {
                 const tableName = tableInfo.name;
                 const tableKey = `${schemaName}.${tableName}`;
                 
@@ -604,7 +722,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 checkbox.value = tableKey;
                 checkbox.dataset.schema = schemaName;
                 checkbox.dataset.table = tableName;
-                
+
+                // Check if this table was previously selected (from Select All or another page)
+                if (selectedTables.has(tableKey)) {
+                    checkbox.checked = true;
+                }
+
                 checkbox.addEventListener('change', function() {
                     if (this.checked) {
                         selectedTables.add(tableKey);
@@ -645,102 +768,93 @@ document.addEventListener('DOMContentLoaded', function() {
                     tableItem.appendChild(transformPanel);
                 }
                 
+            // Insert before pagination controls if they exist
+            const paginationControls = tablesContainer.querySelector('.pagination-controls');
+            if (paginationControls) {
+                tablesContainer.insertBefore(tableItem, paginationControls);
+            } else {
                 tablesContainer.appendChild(tableItem);
-                
-                // Track table
-                allTables.push({
-                    key: tableKey,
-                    schema: schemaName,
-                    table: tableName,
-                    element: tableItem
-                });
+            }
+
+            // Track table
+            allTables.push({
+                key: tableKey,
+                schema: schemaName,
+                table: tableName,
+                element: tableItem
             });
-            
-            loadedSchemas.add(schemaName);
-            if (loadingSpinner) {
-                try {
-                    loadingSpinner.style.display = 'none';
-                } catch (e) {
-                    console.error('Error hiding loading spinner:', e);
-                }
-            }
-            
-            // Update search filter if active
-            if (tableSearch && tableSearch.value) {
-                try {
-                    filterTables(tableSearch.value);
-                } catch (e) {
-                    console.error('Error filtering tables:', e);
-                }
-            }
-            
-        } catch (error) {
-            // Completely safe error handling - no innerHTML, only textContent and DOM methods
-            try {
-                // Hide loading spinner safely
-                if (loadingSpinner && loadingSpinner.nodeType === 1) {
-                    try {
-                        loadingSpinner.style.display = 'none';
-                    } catch (e) {
-                        console.error('Error hiding loading spinner:', e);
-                    }
-                }
-                
-                console.error(`Error loading tables for schema ${schemaName}:`, error);
-                const errorText = getDisplayErrorText(error, 'Unknown error');
-                
-                // Try to display error in schema-specific error element first
-                let errorDisplayed = false;
-                if (errorElement && errorElement.nodeType === 1) {
-                    try {
-                        // Clear any existing content
-                        while (errorElement.firstChild) {
-                            errorElement.removeChild(errorElement.firstChild);
-                        }
-                        // Set text content
-                        errorElement.textContent = `Failed to load tables: ${errorText}`;
-                        errorElement.style.display = 'block';
-                        errorDisplayed = true;
-                    } catch (e) {
-                        console.error('Error setting schema error element:', e);
-                    }
-                }
-                
-                // Fallback to main error message area if schema error element failed
-                if (!errorDisplayed) {
-                    // Re-query the error message element to ensure it exists
-                    const mainErrorMsg = document.getElementById('error-message');
-                    if (mainErrorMsg && mainErrorMsg.nodeType === 1) {
-                        try {
-                            // Clear any existing content
-                            while (mainErrorMsg.firstChild) {
-                                mainErrorMsg.removeChild(mainErrorMsg.firstChild);
-                            }
-                            // Set text content
-                            mainErrorMsg.textContent = `Error loading tables for schema ${schemaName}: ${errorText}`;
-                            mainErrorMsg.style.display = 'block';
-                            errorDisplayed = true;
-                        } catch (e) {
-                            console.error('Error setting main error message:', e);
-                        }
-                    }
-                }
-                
-                // Final fallback: use alert if all else fails
-                if (!errorDisplayed) {
-                    alert(`Error loading tables for schema ${schemaName}: ${errorText}`);
-                }
-            } catch (fatalError) {
-                console.error('Fatal error in error handler:', fatalError);
-                // Last resort: alert
-                try {
-                    alert(`Error loading tables: ${error.message || 'Unknown error'}`);
-                } catch (e) {
-                    console.error('Even alert failed:', e);
-                }
-            }
-        }
+        });
+
+        // Update pagination state
+        paginationState.currentPage = pageNum;
+        updatePaginationControls(schemaName);
     }
+
+    /**
+     * Add pagination controls to schema container
+     */
+    function addPaginationControls(schemaName, tablesContainer) {
+        const paginationDiv = document.createElement('div');
+        paginationDiv.className = 'pagination-controls mt-3 mb-2 d-flex align-items-center justify-content-between border-top pt-3';
+        paginationDiv.dataset.schema = schemaName;
+
+        paginationDiv.innerHTML = `
+            <button type="button" class="btn btn-sm btn-outline-primary prev-page" data-schema="${schemaName}">
+                ← Previous
+            </button>
+            <span class="pagination-info text-muted small">
+                Page <strong class="current-page">1</strong> of <strong class="total-pages">1</strong>
+                (<strong class="table-count">0</strong> tables)
+            </span>
+            <button type="button" class="btn btn-sm btn-outline-primary next-page" data-schema="${schemaName}">
+                Next →
+            </button>
+        `;
+
+        // Add event listeners
+        paginationDiv.querySelector('.prev-page').addEventListener('click', function() {
+            const state = schemaPagination.get(schemaName);
+            if (state && state.currentPage > 1) {
+                renderTablesPage(schemaName, state.currentPage - 1);
+            }
+        });
+
+        paginationDiv.querySelector('.next-page').addEventListener('click', function() {
+            const state = schemaPagination.get(schemaName);
+            if (state && state.currentPage < state.totalPages) {
+                renderTablesPage(schemaName, state.currentPage + 1);
+            }
+        });
+
+        tablesContainer.appendChild(paginationDiv);
+        updatePaginationControls(schemaName);
+    }
+
+    /**
+     * Update pagination controls state
+     */
+    function updatePaginationControls(schemaName) {
+        const state = schemaPagination.get(schemaName);
+        if (!state) return;
+
+        const container = state.tablesContainer;
+        const paginationDiv = container.querySelector('.pagination-controls');
+        if (!paginationDiv) return;
+
+        const prevBtn = paginationDiv.querySelector('.prev-page');
+        const nextBtn = paginationDiv.querySelector('.next-page');
+        const currentPageSpan = paginationDiv.querySelector('.current-page');
+        const totalPagesSpan = paginationDiv.querySelector('.total-pages');
+        const tableCountSpan = paginationDiv.querySelector('.table-count');
+
+        if (currentPageSpan) currentPageSpan.textContent = state.currentPage;
+        if (totalPagesSpan) totalPagesSpan.textContent = state.totalPages;
+        if (tableCountSpan) tableCountSpan.textContent = state.allTables.length;
+
+        if (prevBtn) prevBtn.disabled = state.currentPage <= 1;
+        if (nextBtn) nextBtn.disabled = state.currentPage >= state.totalPages;
+    }
+
     
     /**
      * Filter tables based on search term
@@ -799,26 +913,50 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // Select all (only visible tables)
+    // Select all (ALL tables across all pages)
     if (selectAllBtn) {
         selectAllBtn.addEventListener('click', function() {
-            document.querySelectorAll('.table-checkbox').forEach(checkbox => {
-                if (checkbox.offsetParent !== null) { // Only visible checkboxes
-                    checkbox.checked = true;
-                    selectedTables.add(checkbox.value);
+            console.log('Select All clicked - selecting ALL tables across all pages...');
+
+            // Add all tables from pagination state to selected set
+            schemaPagination.forEach((state, schemaName) => {
+                if (state.allTables && Array.isArray(state.allTables)) {
+                    state.allTables.forEach(tableInfo => {
+                        const tableKey = `${schemaName}.${tableInfo.name}`;
+                        selectedTables.add(tableKey);
+                    });
                 }
             });
+
+            // Also add any currently visible tables that aren't in pagination (backwards compatibility)
+            allTables.forEach(table => {
+                selectedTables.add(table.key);
+            });
+
+            // Check all visible checkboxes
+            document.querySelectorAll('.table-checkbox').forEach(checkbox => {
+                checkbox.checked = true;
+            });
+
+            console.log(`Selected ${selectedTables.size} tables total`);
             updateNextButton();
         });
     }
-    
-    // Deselect all
+
+    // Deselect all (clears ALL selections)
     if (deselectAllBtn) {
         deselectAllBtn.addEventListener('click', function() {
+            console.log('Deselect All clicked - clearing all selections...');
+
+            // Clear the selected tables set
+            selectedTables.clear();
+
+            // Uncheck all visible checkboxes
             document.querySelectorAll('.table-checkbox').forEach(checkbox => {
                 checkbox.checked = false;
-                selectedTables.delete(checkbox.value);
             });
+
+            console.log('All tables deselected');
             updateNextButton();
         });
     }

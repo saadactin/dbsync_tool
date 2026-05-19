@@ -4,48 +4,38 @@
 {% block title %}My Profile | SyncArchitect{% endblock %}
 
 {% block content %}
-<div class="flex-1 overflow-y-auto p-6 space-y-8 no-scrollbar bg-slate-50/50">
-    <!-- Page Header - Modern Hero Style -->
-    <div class="relative overflow-hidden rounded-3xl bg-gradient-to-br 
-        {% if user.userprofile.is_super_admin %}from-red-600 to-rose-400
-        {% elif user.userprofile.is_admin %}from-blue-600 to-indigo-400
-        {% elif user.userprofile.is_operator %}from-emerald-600 to-teal-400
-        {% else %}from-amber-500 to-orange-400
-        {% endif %} p-8 text-white shadow-xl shadow-blue-500/10">
-        
-        <!-- Animated Background Blur -->
-        <div class="absolute -right-20 -top-20 w-64 h-64 bg-white/20 rounded-full blur-3xl animate-pulse"></div>
-        <div class="absolute -left-20 -bottom-20 w-48 h-48 bg-black/10 rounded-full blur-2xl"></div>
-
-        <div class="relative flex flex-col md:flex-row items-center gap-6">
+<div class="flex-1 overflow-y-auto no-scrollbar" style="background: #F3F2F1; padding: 24px;">
+    <!-- Page Header - Azure Style -->
+    <div style="background: #FFFFFF; border: 1px solid #EDEBE9; border-radius: 2px; padding: 20px 24px; box-shadow: 0 1.6px 3.6px rgba(0,0,0,0.10); margin-bottom: 20px;">
+        <div class="flex flex-col md:flex-row items-center gap-6">
             <!-- Profile Avatar -->
-            <div class="w-24 h-24 md:w-32 md:h-32 rounded-full bg-white/20 backdrop-blur-md border-4 border-white/30 flex items-center justify-center text-4xl md:text-5xl font-extrabold shadow-inner">
+            <div class="flex items-center justify-center" style="width: 80px; height: 80px; border-radius: 2px; background: #0078D4; color: #FFFFFF; font-size: 32px; font-weight: 600;">
                 {% if user.first_name or user.last_name %}
                     {{ user.first_name|first|default:"" }}{{ user.last_name|first|default:"" }}
                 {% else %}
                     {{ user.username|first|upper }}
                 {% endif %}
             </div>
-            
+
             <div class="text-center md:text-left flex-1">
-                <div class="flex flex-col md:flex-row md:items-center gap-3 mb-2">
-                    <h1 class="text-3xl md:text-4xl font-extrabold tracking-tight drop-shadow-sm">{{ user.get_full_name|default:user.username }}</h1>
-                    <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-white/20 backdrop-blur-sm border border-white/30 uppercase tracking-widest self-center md:self-auto">
+                <div class="flex flex-col md:flex-row md:items-center gap-2 mb-2">
+                    <h1 style="font-size: 20px; font-weight: 600; color: #323130; margin: 0;">{{ user.get_full_name|default:user.username }}</h1>
+                    <span style="background: #F3F2F1; color: #323130; border: 1px solid #EDEBE9; border-radius: 2px; padding: 2px 8px; font-size: 12px; font-weight: 400;">
                         {{ user.userprofile.get_role_display }}
                     </span>
                 </div>
-                <div class="flex flex-wrap justify-center md:justify-start items-center gap-4 text-white/90 font-medium">
-                    <div class="flex items-center gap-1.5">
-                        <span class="material-symbols-outlined text-lg">mail</span>
-                        <span class="text-sm">{{ user.email|default:"No email set" }}</span>
+                <div class="flex flex-wrap justify-center md:justify-start items-center gap-4" style="color: #605E5C; font-weight: 400;">
+                    <div class="flex items-center gap-1">
+                        <span class="material-symbols-outlined" style="font-size: 14px; color: #A19F9D;">mail</span>
+                        <span style="font-size: 12px;">{{ user.email|default:"No email set" }}</span>
                     </div>
-                    <div class="flex items-center gap-1.5">
-                        <span class="material-symbols-outlined text-lg">calendar_today</span>
-                        <span class="text-sm">Joined {{ user.date_joined|date:"M Y" }}</span>
+                    <div class="flex items-center gap-1">
+                        <span class="material-symbols-outlined" style="font-size: 14px; color: #A19F9D;">calendar_today</span>
+                        <span style="font-size: 12px;">Joined {{ user.date_joined|date:"M Y" }}</span>
                     </div>
-                    <div class="flex items-center gap-1.5">
-                        <span class="material-symbols-outlined text-lg">{% if user.is_active %}verified{% else %}error{% endif %}</span>
-                        <span class="text-sm">{% if user.is_active %}Active Account{% else %}Inactive{% endif %}</span>
+                    <div class="flex items-center gap-1">
+                        <span class="material-symbols-outlined" style="font-size: 14px; {% if user.is_active %}color: #107C10;{% else %}color: #A80000;{% endif %}">{% if user.is_active %}verified{% else %}error{% endif %}</span>
+                        <span style="font-size: 12px;">{% if user.is_active %}Active Account{% else %}Inactive{% endif %}</span>
                     </div>
                 </div>
             </div>
@@ -53,45 +43,45 @@
     </div>
 
     <!-- Main Grid Content -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 pb-12">
-        
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5" style="margin-bottom: 48px;">
+
         <!-- Left Column: Detailed Info -->
-        <div class="lg:col-span-2 space-y-8">
+        <div class="lg:col-span-2" style="display: flex; flex-direction: column; gap: 20px;">
             <!-- Account Details Card -->
-            <div class="bg-surface-container-lowest rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-                <div class="px-6 py-4 border-b border-slate-100 flex items-center gap-2">
-                    <span class="material-symbols-outlined text-primary text-xl">account_circle</span>
-                    <h2 class="text-lg font-bold tracking-tight">Account Information</h2>
+            <div style="background: #FFFFFF; border: 1px solid #EDEBE9; border-radius: 2px; box-shadow: 0 1.6px 3.6px rgba(0,0,0,0.10); overflow: hidden;">
+                <div class="flex items-center gap-2" style="padding: 16px 20px; border-bottom: 1px solid #EDEBE9;">
+                    <span class="material-symbols-outlined" style="font-size: 20px; color: #0078D4;">account_circle</span>
+                    <h2 style="font-size: 16px; font-weight: 600; color: #323130; margin: 0;">Account Information</h2>
                 </div>
-                <div class="p-0">
-                    <div class="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-slate-100">
-                        <div class="p-6 space-y-4">
-                            <div class="flex flex-col gap-1">
-                                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Username</span>
-                                <span class="text-sm font-semibold text-on-surface">{{ user.username }}</span>
+                <div style="padding: 0;">
+                    <div class="grid grid-cols-1 sm:grid-cols-2">
+                        <div style="padding: 20px; display: flex; flex-direction: column; gap: 16px;">
+                            <div class="flex flex-col">
+                                <span style="font-size: 12px; font-weight: 400; color: #605E5C; margin-bottom: 4px;">Username</span>
+                                <span style="font-size: 14px; font-weight: 500; color: #323130;">{{ user.username }}</span>
                             </div>
-                            <div class="flex flex-col gap-1">
-                                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Email Address</span>
-                                <span class="text-sm font-semibold text-on-surface">{{ user.email|default:"Not set" }}</span>
+                            <div class="flex flex-col">
+                                <span style="font-size: 12px; font-weight: 400; color: #605E5C; margin-bottom: 4px;">Email Address</span>
+                                <span style="font-size: 14px; font-weight: 500; color: #323130;">{{ user.email|default:"Not set" }}</span>
                             </div>
-                            <div class="flex flex-col gap-1">
-                                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Full Name</span>
-                                <span class="text-sm font-semibold text-on-surface">{{ user.get_full_name|default:"Not specified" }}</span>
+                            <div class="flex flex-col">
+                                <span style="font-size: 12px; font-weight: 400; color: #605E5C; margin-bottom: 4px;">Full Name</span>
+                                <span style="font-size: 14px; font-weight: 500; color: #323130;">{{ user.get_full_name|default:"Not specified" }}</span>
                             </div>
                         </div>
-                        <div class="p-6 space-y-4">
-                            <div class="flex flex-col gap-1">
-                                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Last Login</span>
-                                <span class="text-sm font-semibold text-on-surface">{% if user.last_login %}{{ user.last_login|date:"M d, Y H:i" }}{% else %}Never{% endif %}</span>
+                        <div style="padding: 20px; border-left: 1px solid #EDEBE9; display: flex; flex-direction: column; gap: 16px;">
+                            <div class="flex flex-col">
+                                <span style="font-size: 12px; font-weight: 400; color: #605E5C; margin-bottom: 4px;">Last Login</span>
+                                <span style="font-size: 14px; font-weight: 500; color: #323130;">{% if user.last_login %}{{ user.last_login|date:"M d, Y H:i" }}{% else %}Never{% endif %}</span>
                             </div>
-                            <div class="flex flex-col gap-1">
-                                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Member Since</span>
-                                <span class="text-sm font-semibold text-on-surface">{{ user.date_joined|date:"F d, Y" }}</span>
+                            <div class="flex flex-col">
+                                <span style="font-size: 12px; font-weight: 400; color: #605E5C; margin-bottom: 4px;">Member Since</span>
+                                <span style="font-size: 14px; font-weight: 500; color: #323130;">{{ user.date_joined|date:"F d, Y" }}</span>
                             </div>
-                            <div class="flex flex-col gap-1">
-                                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Tenant Context</span>
-                                <span class="text-sm font-semibold text-on-surface">
-                                    {% if user.userprofile.tenant %}{{ user.userprofile.tenant.username }}{% else %}Core/Platform{% endif %}
+                            <div class="flex flex-col">
+                                <span style="font-size: 12px; font-weight: 400; color: #605E5C; margin-bottom: 4px;">Tenant Context</span>
+                                <span style="font-size: 14px; font-weight: 500; color: #323130;">
+                                    {% if user.userprofile.tenant %}{{ user.userprofile.tenant.username }}{% else %}{{ user.username }}{% endif %}
                                 </span>
                             </div>
                         </div>
@@ -100,32 +90,33 @@
             </div>
 
             <!-- Permissions Card -->
-            <div class="bg-surface-container-lowest rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-                <div class="px-6 py-4 border-b border-slate-100 flex items-center gap-2">
-                    <span class="material-symbols-outlined text-primary text-xl">key</span>
-                    <h2 class="text-lg font-bold tracking-tight">Permissions & Roles</h2>
+            <div style="background: #FFFFFF; border: 1px solid #EDEBE9; border-radius: 2px; box-shadow: 0 1.6px 3.6px rgba(0,0,0,0.10); overflow: hidden;">
+                <div class="flex items-center gap-2" style="padding: 16px 20px; border-bottom: 1px solid #EDEBE9;">
+                    <span class="material-symbols-outlined" style="font-size: 20px; color: #0078D4;">key</span>
+                    <h2 style="font-size: 16px; font-weight: 600; color: #323130; margin: 0;">Permissions & Roles</h2>
                 </div>
-                <div class="p-6">
-                    <div class="mb-6">
-                        <div class="flex items-center gap-2 mb-4">
-                            <span class="material-symbols-outlined text-sm text-slate-400">shield</span>
-                            <span class="text-xs font-bold text-slate-500 uppercase tracking-widest">Effective Permissions</span>
+                <div style="padding: 20px;">
+                    <div>
+                        <div class="flex items-center gap-2 mb-3">
+                            <span class="material-symbols-outlined" style="font-size: 14px; color: #A19F9D;">shield</span>
+                            <span style="font-size: 12px; font-weight: 600; color: #605E5C;">Effective Permissions</span>
                         </div>
                         <div class="flex flex-wrap gap-2">
                             {% if user.userprofile.is_super_admin %}
-                                <span class="px-3 py-1.5 rounded-lg bg-red-50 text-red-700 text-xs font-bold border border-red-100 italic">Full System Root</span>
-                                <span class="px-3 py-1.5 rounded-lg bg-red-50 text-red-700 text-xs font-bold border border-red-100">Cross-Tenant Access</span>
-                                <span class="px-3 py-1.5 rounded-lg bg-red-50 text-red-700 text-xs font-bold border border-red-100">User Orchestration</span>
+                                <span style="padding: 4px 12px; border-radius: 2px; background: #F3F2F1; color: #323130; font-size: 12px; font-weight: 400; border: 1px solid #EDEBE9;">Tenant Management</span>
+                                <span style="padding: 4px 12px; border-radius: 2px; background: #F3F2F1; color: #323130; font-size: 12px; font-weight: 400; border: 1px solid #EDEBE9;">Configure Pipelines</span>
+                                <span style="padding: 4px 12px; border-radius: 2px; background: #F3F2F1; color: #323130; font-size: 12px; font-weight: 400; border: 1px solid #EDEBE9;">Modify Connections</span>
+                                <span style="padding: 4px 12px; border-radius: 2px; background: #F3F2F1; color: #323130; font-size: 12px; font-weight: 400; border: 1px solid #EDEBE9;">Security Actions</span>
                             {% elif user.userprofile.is_admin %}
-                                <span class="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold border border-blue-100">Tenant Management</span>
-                                <span class="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold border border-blue-100">Configure Pipelines</span>
-                                <span class="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-xs font-bold border border-blue-100">Modify Connections</span>
+                                <span style="padding: 4px 12px; border-radius: 2px; background: #F3F2F1; color: #323130; font-size: 12px; font-weight: 400; border: 1px solid #EDEBE9;">Tenant Management</span>
+                                <span style="padding: 4px 12px; border-radius: 2px; background: #F3F2F1; color: #323130; font-size: 12px; font-weight: 400; border: 1px solid #EDEBE9;">Configure Pipelines</span>
+                                <span style="padding: 4px 12px; border-radius: 2px; background: #F3F2F1; color: #323130; font-size: 12px; font-weight: 400; border: 1px solid #EDEBE9;">Modify Connections</span>
                             {% elif user.userprofile.is_operator %}
-                                <span class="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 text-xs font-bold border border-emerald-100">Run Sync Jobs</span>
-                                <span class="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 text-xs font-bold border border-emerald-100">View Telemetry</span>
+                                <span style="padding: 4px 12px; border-radius: 2px; background: #F3F2F1; color: #323130; font-size: 12px; font-weight: 400; border: 1px solid #EDEBE9;">Run Sync Jobs</span>
+                                <span style="padding: 4px 12px; border-radius: 2px; background: #F3F2F1; color: #323130; font-size: 12px; font-weight: 400; border: 1px solid #EDEBE9;">View Telemetry</span>
                             {% else %}
-                                <span class="px-3 py-1.5 rounded-lg bg-slate-50 text-slate-600 text-xs font-bold border border-slate-100">Read-Only View</span>
-                                <span class="px-3 py-1.5 rounded-lg bg-slate-50 text-slate-600 text-xs font-bold border border-slate-100">Audit Logs Access</span>
+                                <span style="padding: 4px 12px; border-radius: 2px; background: #F3F2F1; color: #323130; font-size: 12px; font-weight: 400; border: 1px solid #EDEBE9;">Read-Only View</span>
+                                <span style="padding: 4px 12px; border-radius: 2px; background: #F3F2F1; color: #323130; font-size: 12px; font-weight: 400; border: 1px solid #EDEBE9;">Audit Logs Access</span>
                             {% endif %}
                         </div>
                     </div>
@@ -134,56 +125,52 @@
         </div>
 
         <!-- Right Column: Quick Actions & Specs -->
-        <div class="space-y-8">
+        <div style="display: flex; flex-direction: column; gap: 20px;">
             <!-- Quick Actions -->
-            <div class="bg-surface-container-lowest rounded-2xl p-6 shadow-sm border border-slate-100">
-                <h2 class="text-sm font-bold text-slate-900 mb-6 uppercase tracking-wider">Security Actions</h2>
-                <div class="space-y-3">
-                    <a href="{% url 'accounts:change_password' %}" class="flex items-center justify-between w-full px-4 py-3 bg-primary text-white rounded-xl font-bold hover:bg-primary-container transition-all no-underline shadow-lg shadow-primary/20 group">
-                        <span class="flex items-center gap-3">
-                            <span class="material-symbols-outlined text-sm">lock_reset</span>
+            <div style="background: #FFFFFF; border: 1px solid #EDEBE9; border-radius: 2px; padding: 20px; box-shadow: 0 1.6px 3.6px rgba(0,0,0,0.10);">
+                <h2 style="font-size: 14px; font-weight: 600; color: #323130; margin-bottom: 16px;">Security Actions</h2>
+                <div style="display: flex; flex-direction: column; gap: 12px;">
+                    <a href="{% url 'accounts:change_password' %}" class="flex items-center justify-between w-full no-underline" style="background: #0078D4; color: #FFFFFF; border-radius: 2px; padding: 10px 16px; font-size: 14px; font-weight: 400; transition: background 0.15s;" onmouseover="this.style.background='#005A9E'" onmouseout="this.style.background='#0078D4'">
+                        <span class="flex items-center gap-2">
+                            <span class="material-symbols-outlined" style="font-size: 16px;">lock_reset</span>
                             Update Password
                         </span>
-                        <span class="material-symbols-outlined text-sm group-hover:translate-x-1 transition-transform">chevron_right</span>
+                        <span class="material-symbols-outlined" style="font-size: 16px;">chevron_right</span>
                     </a>
                     {% if user.userprofile.is_super_admin or user.userprofile.is_admin %}
-                    <a href="{% url 'accounts:user_list' %}" class="flex items-center justify-between w-full px-4 py-3 bg-slate-50 text-slate-700 rounded-xl font-bold hover:bg-slate-100 transition-all no-underline border border-slate-200 group">
-                        <span class="flex items-center gap-3">
-                            <span class="material-symbols-outlined text-sm">manage_accounts</span>
+                    <a href="{% url 'accounts:user_list' %}" class="flex items-center justify-between w-full no-underline" style="background: #FFFFFF; color: #0078D4; border: 1px solid #0078D4; border-radius: 2px; padding: 10px 16px; font-size: 14px; font-weight: 400; transition: background 0.15s;" onmouseover="this.style.background='#EFF6FC'" onmouseout="this.style.background='#FFFFFF'">
+                        <span class="flex items-center gap-2">
+                            <span class="material-symbols-outlined" style="font-size: 16px;">manage_accounts</span>
                             Directory Management
                         </span>
-                        <span class="material-symbols-outlined text-sm group-hover:translate-x-1 transition-transform">chevron_right</span>
+                        <span class="material-symbols-outlined" style="font-size: 16px;">chevron_right</span>
                     </a>
                     {% endif %}
                 </div>
             </div>
 
             <!-- Stats Card -->
-            <div class="bg-surface-container-lowest rounded-2xl p-8 shadow-sm border border-slate-100 text-center space-y-4">
-                <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-slate-50 text-primary border border-slate-100 mb-2">
-                    <span class="material-symbols-outlined text-3xl">{% if user.userprofile.is_super_admin %}hub{% else %}person{% endif %}</span>
+            <div class="text-center" style="background: #FFFFFF; border: 1px solid #EDEBE9; border-radius: 2px; padding: 24px 20px; box-shadow: 0 1.6px 3.6px rgba(0,0,0,0.10); display: flex; flex-direction: column; gap: 16px;">
+                <div class="inline-flex items-center justify-center mx-auto" style="width: 64px; height: 64px; border-radius: 2px; background: #F3F2F1; color: #0078D4; border: 1px solid #EDEBE9; margin-bottom: 8px;">
+                    <span class="material-symbols-outlined" style="font-size: 32px;">person</span>
                 </div>
                 <div>
-                    <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Accessibility Scope</h3>
-                    <div class="text-2xl font-black text-on-surface">
-                        {% if user.userprofile.is_super_admin %}Unrestricted{% else %}{{ user.userprofile.get_role_display }}{% endif %}
+                    <h3 style="font-size: 12px; font-weight: 600; color: #605E5C; margin-bottom: 4px;">Accessibility Scope</h3>
+                    <div style="font-size: 20px; font-weight: 600; color: #323130;">
+                        {{ user.userprofile.get_role_display }}
                     </div>
                 </div>
-                <p class="text-xs text-slate-500 leading-relaxed px-2">
-                    {% if user.userprofile.is_super_admin %}
-                        Full sovereign access to the SyncArchitect ecosystem and underlying infrastructure infrastructure across all nodes.
-                    {% else %}
-                        Standard workspace access restricted to your assigned tenant and shared resources allowed by your role policy.
-                    {% endif %}
+                <p style="font-size: 13px; color: #605E5C; line-height: 1.5;">
+                    Standard workspace access restricted to your assigned tenant and shared resources allowed by your role policy.
                 </p>
-                <div class="pt-4 border-t border-slate-50 flex items-center justify-center gap-8">
+                <div class="flex items-center justify-center gap-8" style="padding-top: 16px; border-top: 1px solid #EDEBE9;">
                     <div class="text-center">
-                        <div class="text-lg font-bold text-on-surface">{% if user.is_staff %}YES{% else %}NO{% endif %}</div>
-                        <div class="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Staff Status</div>
+                        <div style="font-size: 16px; font-weight: 600; color: #323130;">{% if user.is_staff %}YES{% else %}NO{% endif %}</div>
+                        <div style="font-size: 12px; color: #A19F9D;">Staff Status</div>
                     </div>
                     <div class="text-center">
-                        <div class="text-lg font-bold text-on-surface">{% if user.is_active %}Active{% else %}HOLD{% endif %}</div>
-                        <div class="text-[9px] font-bold text-slate-400 uppercase tracking-wider">System State</div>
+                        <div style="font-size: 16px; font-weight: 600; color: #323130;">{% if user.is_active %}Active{% else %}HOLD{% endif %}</div>
+                        <div style="font-size: 12px; color: #A19F9D;">System State</div>
                     </div>
                 </div>
             </div>

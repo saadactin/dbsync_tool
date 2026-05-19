@@ -438,13 +438,13 @@ class TransformationIntegrationTest(TransactionTestCase):
             connector.execute_query(create_sql)
             
             # Insert data with special characters
-            insert_sql = f'''
+            insert_sql = f"""
                 INSERT INTO {schema}.{table} (name, description)
                 VALUES
                     ('  O''Brien  ', 'Test with ''quotes'''),
                     ('José', 'Unicode: 测试'),
                     ('  Test  ', 'Special: !@#$%^&*()')
-            '''
+            """
             connector.execute_query(insert_sql)
             
             # Query with transformations

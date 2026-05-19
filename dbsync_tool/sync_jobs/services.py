@@ -219,48 +219,87 @@ class DashboardService:
     @staticmethod
     def get_execution_trends(user, days=30):
         """
-        Get execution trends over time
-        
+        Get execution trends over time - returns data for ALL days (including days with 0 executions)
+
         Returns:
-            list: Daily execution counts and success rates
+            list: Daily execution counts and success rates for all 30 days
         """
         now = timezone.now()
         start_date = now - timedelta(days=days)
-        
+
         from accounts.services.tenant_service import TenantService
         all_jobs = SyncJob.objects.all()
         user_jobs = TenantService.get_queryset_for_user(all_jobs, user)
-        
-        # Use TruncDate for database-agnostic date extraction
-        executions = SyncExecution.objects.filter(
+
+        # Get all executions and manually group by local date
+        # This avoids database timezone issues with TruncDate
+        executions_list = SyncExecution.objects.filter(
             job__in=user_jobs,
             started_at__gte=start_date
-        ).annotate(
-            day=TruncDate('started_at')
-        ).values('day').annotate(
-            total=Count('id'),
-            successful=Count('id', filter=Q(status='completed')),
-            failed=Count('id', filter=Q(status='failed')),
-            rows_synced=Sum('total_rows_synced')
-        ).order_by('day')
-        
-        # Convert to list and ensure dates are properly formatted
+        ).select_related('job').order_by('started_at')
+
+        # Manually group executions by local date
+        execution_data = {}
+        for execution in executions_list:
+            # Convert UTC to local timezone and extract date
+            local_time = timezone.localtime(execution.started_at)
+            day = local_time.date()
+
+            # Initialize day if not exists
+            if day not in execution_data:
+                execution_data[day] = {
+                    'total': 0,
+                    'successful': 0,
+                    'failed': 0,
+                    'rows_synced': 0
+                }
+
+            # Count execution
+            execution_data[day]['total'] += 1
+            if execution.status == 'completed':
+                execution_data[day]['successful'] += 1
+            elif execution.status == 'failed':
+                execution_data[day]['failed'] += 1
+
+            # Add rows synced
+            execution_data[day]['rows_synced'] += (execution.total_rows_synced or 0)
+
+        # Generate all days in the range (including days with no executions)
         trends = []
-        for trend in executions:
-            day = trend['day']
-            if day:
-                # Ensure day is a date object
-                if isinstance(day, str):
-                    from datetime import datetime
-                    day = datetime.strptime(day, '%Y-%m-%d').date()
+        current_date = start_date.date()
+        end_date = now.date()
+
+        while current_date <= end_date:
+            if current_date in execution_data:
+                # Day has execution data
                 trends.append({
-                    'day': day,
-                    'total': trend.get('total', 0) or 0,
-                    'successful': trend.get('successful', 0) or 0,
-                    'failed': trend.get('failed', 0) or 0,
-                    'rows_synced': trend.get('rows_synced', 0) or 0
+                    'day': current_date,
+                    'total': execution_data[current_date]['total'],
+                    'successful': execution_data[current_date]['successful'],
+                    'failed': execution_data[current_date]['failed'],
+                    'rows_synced': execution_data[current_date]['rows_synced']
                 })
-        
+            else:
+                # Day has no executions - add zeros
+                trends.append({
+                    'day': current_date,
+                    'total': 0,
+                    'successful': 0,
+                    'failed': 0,
+                    'rows_synced': 0
+                })
+            current_date += timedelta(days=1)
+
+        # Debug logging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Execution trends: {len(trends)} days from {start_date.date()} to {end_date}")
+        logger.info(f"Days with data: {len(execution_data)}")
+        if execution_data:
+            logger.info(f"Sample dates with executions: {list(execution_data.keys())[:5]}")
+        total_execs = sum(t['total'] for t in trends)
+        logger.info(f"Total executions in range: {total_execs}")
+
         return trends
     
     @staticmethod

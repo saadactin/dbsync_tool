@@ -111,6 +111,7 @@ TYPE_MAPPING: Dict[str, Dict[str, Dict[str, str]]] = {
             'bytea': 'VARBINARY(MAX)',
         },
         'clickhouse': {
+            # Integers
             'int4': 'Int32',
             'integer': 'Int32',
             'bigint': 'Int64',
@@ -119,33 +120,93 @@ TYPE_MAPPING: Dict[str, Dict[str, Dict[str, str]]] = {
             'int2': 'Int16',
             'serial': 'Int32',
             'bigserial': 'Int64',
+
+            # Strings
             'varchar': 'String',
             'character varying': 'String',
             'text': 'String',
             'char': 'FixedString',
+            'bpchar': 'String',  # CHAR without length
+
+            # Timestamps with microsecond precision
             'timestamp without time zone': "DateTime64(6, 'UTC')",
             'timestamp with time zone': "DateTime64(6, 'UTC')",
             'timestamp': "DateTime64(6, 'UTC')",
+            'timestamptz': "DateTime64(6, 'UTC')",
+
+            # Dates and times
             'date': 'Date32',
             'time': 'String',
+            'time without time zone': 'String',
+            'time with time zone': 'String',
+            'timetz': 'String',
             'interval': 'String',
-            'money': 'String',
+
+            # Decimals and money
+            'numeric': 'Decimal',
+            'decimal': 'Decimal',
+            'money': 'Decimal(19,4)',
+
+            # Floating point
+            'double precision': 'Float64',
+            'real': 'Float32',
+            'float4': 'Float32',
+            'float8': 'Float64',
+
+            # Boolean
+            'boolean': 'UInt8',
+            'bool': 'UInt8',
+
+            # JSON
+            'json': 'String',
+            'jsonb': 'String',
+
+            # UUID
+            'uuid': 'UUID',
+
+            # Binary
+            'bytea': 'String',
+
+            # Network types
+            'inet': 'IPv6',  # Can store both IPv4 and IPv6
+            'cidr': 'String',
+            'macaddr': 'UInt64',  # Store as integer
+            'macaddr8': 'String',
+
+            # Geometric types (stored as WKT - Well-Known Text)
+            'point': 'Tuple(Float64, Float64)',
+            'line': 'String',
+            'lseg': 'String',
+            'box': 'String',
+            'path': 'String',
+            'polygon': 'String',
+            'circle': 'String',
+
+            # Range types
             'int4range': 'String',
             'int8range': 'String',
             'numrange': 'String',
             'tsrange': 'String',
             'tstzrange': 'String',
             'daterange': 'String',
-            'boolean': 'UInt8',
-            'bool': 'UInt8',
-            'numeric': 'Decimal',
-            'decimal': 'Decimal',
-            'double precision': 'Float64',
-            'real': 'Float32',
-            'json': 'String',
-            'jsonb': 'String',
-            'uuid': 'UUID',
-            'bytea': 'String',
+
+            # Array types (handled dynamically in code)
+            'array': 'Array',  # Placeholder, actual type determined at runtime
+
+            # HSTORE (key-value)
+            'hstore': 'Map(String, String)',
+
+            # Bit strings
+            'bit': 'String',
+            'bit varying': 'String',
+            'varbit': 'String',
+
+            # Text search
+            'tsvector': 'String',
+            'tsquery': 'String',
+
+            # XML
+            'xml': 'String',
         },
     },
     'mysql': {
@@ -326,6 +387,7 @@ TYPE_MAPPING: Dict[str, Dict[str, Dict[str, str]]] = {
             'NTEXT': 'TEXT',
             'DATETIME2': 'TIMESTAMP',
             'DATETIME': 'TIMESTAMP',
+            'DATETIMEOFFSET': 'TIMESTAMP WITH TIME ZONE',
             'DATE': 'DATE',
             'TIME': 'TIME',
             'SMALLDATETIME': 'TIMESTAMP',
@@ -341,6 +403,13 @@ TYPE_MAPPING: Dict[str, Dict[str, Dict[str, str]]] = {
             'VARBINARY': 'BYTEA',
             'BINARY': 'BYTEA',
             'IMAGE': 'BYTEA',
+            'GEOGRAPHY': 'TEXT',
+            'GEOMETRY': 'TEXT',
+            'HIERARCHYID': 'TEXT',
+            'XML': 'TEXT',
+            'SQL_VARIANT': 'TEXT',
+            'TIMESTAMP': 'BYTEA',
+            'ROWVERSION': 'BYTEA',
         },
         'mysql': {
             'INT': 'INT',

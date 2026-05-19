@@ -240,6 +240,25 @@ SYNC_EXECUTION_STALE_TIMEOUT_MINUTES = int(
     os.environ.get("SYNC_EXECUTION_STALE_TIMEOUT_MINUTES", "30")
 )
 
+# Reliability + DQ SLOs (Day 7).  Read by sync_jobs.services.ops_metrics_service
+# and sync_jobs.services.sync_email_service.  Override per environment via env
+# vars; defaults are deliberately conservative for production fleets.
+SLO_RECONCILIATION_OK_RATE = float(
+    os.environ.get("SLO_RECONCILIATION_OK_RATE", "0.99")
+)
+SLO_DEAD_LETTER_PCT_MAX = float(
+    os.environ.get("SLO_DEAD_LETTER_PCT_MAX", "0.001")
+)
+SLO_RETRY_ATTEMPT_P95 = int(
+    os.environ.get("SLO_RETRY_ATTEMPT_P95", "1")
+)
+SLO_DRIFT_CONFIDENCE_FLOOR = float(
+    os.environ.get("SLO_DRIFT_CONFIDENCE_FLOOR", "0.8")
+)
+SLO_BREACH_STREAK_N = int(
+    os.environ.get("SLO_BREACH_STREAK_N", "3")
+)
+
 _file_sync_root_env = os.environ.get('FILE_SYNC_ROOT', '').strip()
 FILE_SYNC_ROOT = Path(_file_sync_root_env) if _file_sync_root_env else (BASE_DIR / 'file_sources')
 FILE_SYNC_STRICT = _env_bool('FILE_SYNC_STRICT', default=True)
@@ -268,6 +287,17 @@ LOGOUT_REDIRECT_URL = '/accounts/login/'
 # Generate once: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 # This key must remain constant or all encrypted passwords become unreadable.
 ENCRYPTION_KEY = _require_env('ENCRYPTION_KEY')
+
+# Virus Scanning for File Uploads (ClamAV)
+# Set to 'true' to enable virus scanning for uploaded files
+VIRUS_SCAN_ENABLED = os.getenv('VIRUS_SCAN_ENABLED', 'false').lower() == 'true'
+CLAMAV_SOCKET = os.getenv('CLAMAV_SOCKET', '/var/run/clamav/clamd.ctl')
+CLAMAV_HOST = os.getenv('CLAMAV_HOST', 'localhost')
+CLAMAV_PORT = int(os.getenv('CLAMAV_PORT', '3310'))
+
+# Daily Health Check
+# Time to run daily connection health checks (24-hour format HH:MM)
+HEALTH_CHECK_TIME = os.getenv('HEALTH_CHECK_TIME', '02:00')
 
 if not DEBUG:
     SECURE_SSL_REDIRECT = _env_bool('SECURE_SSL_REDIRECT', default=False)
@@ -382,6 +412,15 @@ if not DEBUG:
                 'propagate': False,
             },
             'sync_jobs': {
+                'handlers': ['file', 'rbac_audit', 'console'],
+                'level': 'INFO',
+                'propagate': False,
+            },
+            # Day-6/7: dedicated structured channel for drift alerts and SLO
+            # breaches.  Routed to the same handlers today; ops can attach a
+            # SIEM handler here later without touching the noisier ``sync_jobs``
+            # channel.
+            'sync_jobs.drift': {
                 'handlers': ['file', 'rbac_audit', 'console'],
                 'level': 'INFO',
                 'propagate': False,

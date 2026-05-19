@@ -225,6 +225,9 @@ DATABASE_COMBINATIONS = [
 ]
 
 
+class IncrementalSyncTestRunner(TestCase):
+    """Test runner for incremental sync combinations"""
+
     def _check_database_available(self, db_type):
         """Check if test database is available"""
         try:

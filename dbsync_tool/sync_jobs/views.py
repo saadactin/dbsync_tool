@@ -11,7 +11,7 @@ from django.shortcuts import render, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.conf import settings
-from django.http import JsonResponse, Http404
+from django.http import HttpResponse, JsonResponse, Http404
 from django.views.decorators.http import require_http_methods
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, DatabaseError
@@ -20,10 +20,63 @@ from datetime import datetime, timedelta
 from django.utils import timezone
 from connections.models import DatabaseConnection, APIConnection, FileSourceConnection
 from metadata.services import load_all_metadata, load_table_columns
-from .models import SyncJob, SyncJobTable, SyncSchedule, SyncCheckpoint, SyncExecution, SyncExecutionLog
+from .models import SyncJob, SyncJobTable, SyncSchedule, SyncCheckpoint, SyncExecution, SyncExecutionLog, ReconciliationReport
 from .services.execution_launcher import launch_sync_job_subprocess
 
 logger = logging.getLogger(__name__)
+
+
+def _generate_heatmap_data(user):
+    """
+    Generate heatmap data showing execution counts by day and hour (last 7 days).
+
+    Returns:
+        List of 24 hour slots, each with execution counts for 7 days:
+        [
+            {"name": "0:00", "data": [0, 2, 1, 0, 3, 1, 0]},  # Mon-Sun counts at midnight
+            {"name": "1:00", "data": [0, 0, 0, 1, 0, 0, 0]},  # Mon-Sun counts at 1am
+            ...
+        ]
+    """
+    from accounts.services.tenant_service import TenantService
+    from collections import defaultdict
+
+    # Get executions from last 7 days
+    seven_days_ago = timezone.now() - timedelta(days=7)
+    executions = SyncExecution.objects.filter(
+        started_at__gte=seven_days_ago
+    ).select_related('job')
+
+    # Filter by tenant
+    jobs = SyncJob.objects.all()
+    jobs = TenantService.get_queryset_for_user(jobs, user)
+    job_ids = list(jobs.values_list('id', flat=True))
+    executions = executions.filter(job_id__in=job_ids)
+
+    # Group executions by day of week (0=Mon, 6=Sun) and hour (0-23)
+    # Structure: {hour: {day: count}}
+    heatmap_counts = defaultdict(lambda: defaultdict(int))
+
+    for execution in executions:
+        if execution.started_at:
+            # Convert UTC timestamp to local timezone before extracting hour/day
+            local_time = timezone.localtime(execution.started_at)
+            # Get day of week (0=Monday, 6=Sunday)
+            day_of_week = local_time.weekday()
+            # Get hour (0-23) in local timezone
+            hour = local_time.hour
+            heatmap_counts[hour][day_of_week] += 1
+
+    # Format data for ApexCharts heatmap
+    heatmap_data = []
+    for hour in range(24):
+        hour_data = {
+            'name': f'{hour}:00',
+            'data': [heatmap_counts[hour][day] for day in range(7)]  # Mon-Sun
+        }
+        heatmap_data.append(hour_data)
+
+    return heatmap_data
 
 
 def _mark_execution_stale_if_inactive(execution: SyncExecution) -> SyncExecution:
@@ -178,9 +231,12 @@ def dashboard(request):
         
         # Get execution trends (last 30 days)
         trends = DashboardService.get_execution_trends(request.user, days=30)
-        
+
         # Get recent activity (last 5 jobs only)
         recent_activity = DashboardService.get_recent_activity(request.user, limit=5)
+
+        # Get heatmap data (executions by day/hour for last 7 days)
+        heatmap_data = _generate_heatmap_data(request.user)
         
         # Serialize trends data to JSON for JavaScript
         import json
@@ -195,23 +251,187 @@ def dashboard(request):
             }
             for trend in trends
         ])
+
+        # Serialize heatmap data to JSON
+        heatmap_json = json.dumps(heatmap_data)
         
+        # Day-7 reliability insights are now embedded directly into the
+        # existing dashboard (no separate ops page required).
+        reliability_rollup_24h = None
+        reliability_rollup_7d = None
+        reliability_jobs = []
+        try:
+            from sync_jobs.services import ops_metrics_service
+
+            reliability_rollup_24h = ops_metrics_service.compute_health_rollup(
+                request.user, window_hours=24,
+            )
+            reliability_rollup_7d = ops_metrics_service.compute_health_rollup(
+                request.user, window_hours=168,
+            )
+            reliability_jobs = ops_metrics_service.compute_job_health(
+                request.user, window_hours=24,
+            )[:6]
+        except Exception as rel_exc:  # pragma: no cover - defensive dashboard path
+            logger.warning("Dashboard reliability insights unavailable: %s", rel_exc)
+
+        # Prepare trends data for ApexCharts
+        trends_data = {
+            'days': [trend['day'].strftime('%m/%d') if hasattr(trend['day'], 'strftime') else str(trend['day']) for trend in trends],
+            'total': [trend.get('total', 0) for trend in trends],
+            'successful': [trend.get('successful', 0) for trend in trends],
+            'failed': [trend.get('failed', 0) for trend in trends],
+            'rows_synced': [trend.get('rows_synced', 0) or 0 for trend in trends],
+        }
+
+        # Debug: Log the last 5 days of trends
+        logger.info(f"Dashboard trends - Last 5 days:")
+        for i, trend in enumerate(trends[-5:]):
+            logger.info(f"  Day {i}: {trend['day']} -> Total={trend['total']}, Success={trend['successful']}, Failed={trend['failed']}")
+        logger.info(f"Trends data arrays - Last 5 values:")
+        logger.info(f"  Days: {trends_data['days'][-5:]}")
+        logger.info(f"  Total: {trends_data['total'][-5:]}")
+        logger.info(f"  Successful: {trends_data['successful'][-5:]}")
+        logger.info(f"  Failed: {trends_data['failed'][-5:]}")
+
+        # Get latest health check results
+        health_check_data = None
+        try:
+            from connections.models import ConnectionHealthCheckLog
+            from connections.health_check import ConnectionHealthCheck
+            from django.db.models import Q
+
+            # Get user's tenant
+            user_tenant = None
+            if hasattr(request.user, 'userprofile'):
+                user_tenant = request.user.userprofile.get_tenant()
+
+            # Get health check for current user's tenant OR global health checks (tenant=None)
+            latest_health_check = ConnectionHealthCheckLog.objects.filter(
+                Q(tenant=user_tenant) | Q(tenant__isnull=True)
+            ).order_by('-tested_at').first()
+
+            logger.info(f"Health check query - User: {request.user}, Tenant: {user_tenant}, Found: {latest_health_check is not None}")
+
+            # If no health check exists or it's older than 24 hours, run a new one automatically
+            should_auto_test = False
+            if not latest_health_check:
+                should_auto_test = True
+                logger.info("No health check found - will auto-test on first load")
+            else:
+                # Check if health check is older than 24 hours
+                age_hours = (timezone.now() - latest_health_check.tested_at).total_seconds() / 3600
+                if age_hours > 24:
+                    should_auto_test = True
+                    logger.info(f"Health check is {age_hours:.1f} hours old - will refresh")
+
+            if should_auto_test:
+                # Run health check in background
+                logger.info("Running automatic health check...")
+                health_checker = ConnectionHealthCheck()
+                results = health_checker.test_all_connections(tenant=user_tenant)
+
+                # Save to database
+                latest_health_check = ConnectionHealthCheckLog.objects.create(
+                    tenant=user_tenant,
+                    total_tested=results['total_tested'],
+                    total_passed=results['total_passed'],
+                    total_failed=results['total_failed'],
+                    results_json=results
+                )
+                logger.info(f"Auto health check completed: {latest_health_check.id}")
+
+            if latest_health_check:
+                health_check_data = {
+                    'tested_at': latest_health_check.tested_at,
+                    'total_tested': latest_health_check.total_tested,
+                    'total_passed': latest_health_check.total_passed,
+                    'total_failed': latest_health_check.total_failed,
+                    'health_percentage': latest_health_check.health_percentage(),
+                    'failed_connections': latest_health_check.get_failed_connections(),
+                }
+                logger.info(f"Health check data prepared: tested_at={health_check_data['tested_at']}, health={health_check_data['health_percentage']}%")
+        except Exception as hc_exc:
+            logger.error(f"Dashboard health check data unavailable: {hc_exc}", exc_info=True)
+
         context = {
             'page_title': 'Dashboard',
             'stats': stats,
             'trends': trends,
-            'trends_json': trends_json,  # JSON serialized for JavaScript
+            'trends_data': trends_data,  # For ApexCharts
+            'trends_json': trends_json,  # JSON serialized for JavaScript (legacy)
             'recent_activity': recent_activity,
             'user_role': profile.role,  # For template display
             'is_super_admin': profile.is_super_admin(),
             'is_admin': profile.is_admin(),
+            'reliability_rollup_24h': reliability_rollup_24h,
+            'reliability_rollup_7d': reliability_rollup_7d,
+            'reliability_jobs': reliability_jobs,
+            'health_check_data': health_check_data,  # Connection health check
+            'heatmap_data': heatmap_json,  # Execution heatmap by hour/day (JSON)
         }
-        
-        return render(request, 'sync_jobs/dashboard.html', context)
+
+        # Use advanced dashboard template with heatmaps, radar, treemaps
+        template = 'sync_jobs/dashboard_advanced.html'
+        return render(request, template, context)
     except Exception as e:
         logger.error(f"Error loading dashboard: {str(e)}", exc_info=True)
         messages.error(request, 'Error loading dashboard. Please try again.')
         return redirect('sync_jobs:list')
+
+
+@login_required
+@require_http_methods(["GET"])
+def dashboard_api(request):
+    """
+    API endpoint for AJAX partial dashboard updates
+    Returns only the data that changes (KPIs and recent activity)
+    """
+    from sync_jobs.services import DashboardService
+
+    try:
+        # Get fresh statistics
+        stats = DashboardService.get_user_statistics(request.user)
+
+        # Get recent activity
+        recent_activity = DashboardService.get_recent_activity(request.user, limit=5)
+
+        # Format recent activity for JSON
+        activity_data = []
+        for execution in recent_activity:
+            activity_data.append({
+                'id': execution.id,
+                'job_name': execution.job.name if execution.job else 'Unknown',
+                'job_id': execution.job.id if execution.job else None,
+                'started_at': execution.started_at.isoformat() if execution.started_at else None,
+                'started_at_display': execution.started_at.strftime('%Y-%m-%d %H:%M:%S') if execution.started_at else 'N/A',
+                'duration': str(execution.duration) if execution.duration else 'In progress',
+                'total_rows_synced': execution.total_rows_synced or 0,
+                'status': execution.status,
+                'status_display': execution.get_status_display()
+            })
+
+        # Return comprehensive data
+        return JsonResponse({
+            'success': True,
+            'stats': {
+                'total_jobs': stats.get('jobs', {}).get('total', 0),
+                'active_jobs': stats.get('jobs', {}).get('active', 0),
+                'success_rate': stats.get('success_rates', {}).get('last_30d', 0),
+                'executions_24h': stats.get('executions', {}).get('last_24h', 0),
+                'rows_synced_30d': stats.get('rows_synced', {}).get('last_30d', 0),
+                'avg_duration': stats.get('performance', {}).get('avg_duration_30d', 0),
+                'total_connections': stats.get('connections', {}).get('total', 0),
+            },
+            'recent_activity': activity_data,
+            'timestamp': timezone.now().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error in dashboard API: {str(e)}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': 'Failed to load dashboard data'
+        }, status=500)
 
 
 @login_required
@@ -3535,7 +3755,24 @@ def execution_detail(request, job_id, execution_id):
     from django.db.models import Sum
     total_rows_fetched = logs.aggregate(total=Sum('rows_fetched'))['total'] or 0
     total_rows_inserted = logs.aggregate(total=Sum('rows_inserted'))['total'] or 0
-    
+
+    # Day-6: per-table reconciliation decision/confidence keyed by (schema, table)
+    # for the Quality chip column. Tolerates the absence of any rows (legacy runs).
+    recon_by_table = {}
+    try:
+        for r in ReconciliationReport.objects.filter(execution=execution).only(
+            'schema_name', 'table_name', 'decision', 'confidence',
+        ):
+            recon_by_table[(r.schema_name, r.table_name)] = {
+                'decision': r.decision,
+                'confidence': r.confidence,
+            }
+    except Exception:
+        logger.exception(
+            "Failed to load ReconciliationReport rows for execution=%s",
+            execution.id,
+        )
+
     context = {
         'job': job,
         'execution': execution,
@@ -3547,10 +3784,134 @@ def execution_detail(request, job_id, execution_id):
         'pending_logs': pending_logs,
         'total_rows_fetched': total_rows_fetched,
         'total_rows_inserted': total_rows_inserted,
+        'recon_by_table': recon_by_table,
         'page_title': f'Execution: {execution.id}',
     }
     
     return render(request, 'sync_jobs/execution_detail.html', context)
+
+
+@login_required
+@require_http_methods(["GET"])
+def execution_reconciliation(request, job_id, execution_id):
+    """Day-6 download endpoint for the execution-scoped reconciliation report.
+
+    Tenant-scoped exactly like ``execution_detail``.  Returns JSON by default
+    and CSV when ``?format=csv`` is supplied.  The response is always served
+    as an attachment so the browser triggers a download dialog.
+    """
+    from accounts.services.tenant_service import TenantService
+    from sync_jobs.services import reconciliation_service
+    try:
+        jobs_qs = SyncJob.objects.all()
+        user_jobs = TenantService.get_queryset_for_user(jobs_qs, request.user)
+        job = user_jobs.get(id=job_id)
+        execution = SyncExecution.objects.select_related('job').get(
+            id=execution_id,
+            job=job,
+        )
+    except SyncJob.DoesNotExist:
+        return JsonResponse({'error': 'Job not found'}, status=404)
+    except SyncExecution.DoesNotExist:
+        return JsonResponse({'error': 'Execution not found'}, status=404)
+    except Exception as e:
+        logger.error(
+            "Error loading reconciliation report: %s", e, exc_info=True,
+        )
+        return JsonResponse({'error': 'Internal server error'}, status=500)
+
+    fmt = (request.GET.get('format') or 'json').strip().lower()
+    if fmt == 'csv':
+        body = reconciliation_service.export_csv(execution)
+        resp = HttpResponse(body, content_type='text/csv')
+        resp['Content-Disposition'] = (
+            f'attachment; filename="reconciliation_{execution.id}.csv"'
+        )
+        return resp
+    body = reconciliation_service.export_json(execution)
+    resp = HttpResponse(body, content_type='application/json')
+    resp['Content-Disposition'] = (
+        f'attachment; filename="reconciliation_{execution.id}.json"'
+    )
+    return resp
+
+
+@login_required
+@require_http_methods(["GET"])
+def ops_health(request):
+    """Legacy Day-7 endpoint kept for backward compatibility.
+
+    Reliability insights are intentionally consolidated on the main dashboard.
+    """
+    return redirect('sync_jobs:dashboard')
+
+
+@login_required
+@require_http_methods(["POST"])
+def test_all_connections(request):
+    """
+    Test all connections and return health check data.
+    Triggered by the "Test Now" button on the dashboard.
+    """
+    from connections.health_check import ConnectionHealthCheck
+    from accounts.services.tenant_service import TenantService
+
+    try:
+        # Get user's tenant for filtering
+        tenant = None
+        if hasattr(request.user, 'userprofile'):
+            tenant = request.user.userprofile.get_tenant()
+
+        # Run health check
+        health_checker = ConnectionHealthCheck()
+        results = health_checker.test_all_connections(tenant=tenant)
+
+        # Format results for dashboard display
+        tested_at = timezone.now()
+        total_tested = results['total_tested']
+        total_passed = results['total_passed']
+        total_failed = results['total_failed']
+        health_percentage = (total_passed / total_tested * 100) if total_tested > 0 else 0
+
+        # Collect failed connections for display
+        failed_connections = []
+        for conn_type in ['database', 'api', 'file']:
+            for conn in results[conn_type]:
+                if conn['status'] == 'failed':
+                    failed_connections.append({
+                        'name': conn['name'],
+                        'type': conn_type,
+                        'error': conn.get('error', 'Unknown error')
+                    })
+
+        # Save health check results to database for persistence
+        from connections.models import ConnectionHealthCheckLog
+        health_log = ConnectionHealthCheckLog.objects.create(
+            tenant=tenant,
+            total_tested=total_tested,
+            total_passed=total_passed,
+            total_failed=total_failed,
+            results_json=results  # Store full results
+        )
+        logger.info(f"Saved health check log: {health_log.id}")
+
+        return JsonResponse({
+            'success': True,
+            'tested_at': tested_at.isoformat(),
+            'tested_at_display': f"{tested_at.strftime('%B %d, %Y at %H:%M')}",
+            'total_tested': total_tested,
+            'total_passed': total_passed,
+            'total_failed': total_failed,
+            'health_percentage': round(health_percentage, 1),
+            'failed_connections': failed_connections
+        })
+
+    except Exception as e:
+        logger.error(f"Error testing connections: {str(e)}", exc_info=True)
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
 
 
 @login_required

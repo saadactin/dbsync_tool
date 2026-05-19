@@ -21,6 +21,14 @@ from sync_engine.flat_file_hashing import (
 )
 from sync_engine.full_sync import get_target_table_name
 from sync_engine.exceptions import TableSyncError
+from sync_engine.reliability import (
+    DeadLetterCollector,
+    DeadLetterRowError,
+    RetryPolicy,
+    classify_error,
+    is_dead_letter,
+    with_policy,
+)
 from sync_jobs.models import FlatFileIngestionControl, SyncExecutionLog
 
 logger = logging.getLogger(__name__)
@@ -33,6 +41,106 @@ class FlatFileSyncExecutor:
         self.job = job
         self.execution = execution
         self.target_connector = target_connector
+        self._dq_pre_pack_by_table = {}
+
+    def _dq_flat_run_pre(
+        self,
+        job_table,
+        *,
+        source_schema: str,
+        source_table: str,
+        pk_columns,
+        incremental_column: Optional[str],
+    ) -> None:
+        try:
+            from sync_engine.dq import compute_pre_pack, persist_dq_packs
+
+            pre = compute_pre_pack(
+                execution=self.execution,
+                job=self.job,
+                job_table=job_table,
+                source_connector=self.target_connector,
+                source_schema=source_schema,
+                source_table=source_table,
+                sync_mode="flat_file",
+                schema_drift_added_columns=None,
+                incremental_column=incremental_column,
+                pk_columns=pk_columns or [],
+                flat_file_skip_source_metrics=True,
+                flat_file_skip_reason="flat_file_pre_scan_disabled",
+            )
+            self._dq_pre_pack_by_table[(source_schema, source_table)] = pre
+            persist_dq_packs(
+                execution=self.execution,
+                job=self.job,
+                job_table=job_table,
+                source_schema=source_schema,
+                source_table=source_table,
+                pre_pack=pre,
+                post_pack=None,
+                parity_result=None,
+            )
+        except Exception:
+            logger.exception(
+                "DQ pre-pack wiring failed for flat-file %s.%s",
+                source_schema,
+                source_table,
+            )
+
+    def _dq_flat_run_post(
+        self,
+        job_table,
+        *,
+        source_schema: str,
+        source_table: str,
+        target_schema: str,
+        target_table: str,
+        dl_collector,
+        log,
+        tgt_pk_columns,
+        sync_mode_ff: str,
+    ) -> None:
+        try:
+            from sync_engine.dq import compute_post_pack, persist_dq_packs
+
+            pre = self._dq_pre_pack_by_table.get((source_schema, source_table))
+            post = compute_post_pack(
+                execution=self.execution,
+                job=self.job,
+                job_table=job_table,
+                source_connector=self.target_connector,
+                target_connector=self.target_connector,
+                source_schema=source_schema,
+                source_table=source_table,
+                target_schema=target_schema,
+                target_table=target_table,
+                sync_mode=sync_mode_ff,
+                parity_result=None,
+                dead_letter_count=dl_collector.stats.dead_letter_count,
+                attempts=getattr(log, "attempts", 0) or 0,
+                last_error_code=getattr(log, "last_error_code", None),
+                pk_columns=tgt_pk_columns or [],
+                numeric_columns=None,
+                schema_drift_added_columns=None,
+                no_delete_propagation=getattr(self.job, "no_delete_propagation", True),
+                flat_file=True,
+            )
+            persist_dq_packs(
+                execution=self.execution,
+                job=self.job,
+                job_table=job_table,
+                source_schema=source_schema,
+                source_table=source_table,
+                pre_pack=pre,
+                post_pack=post,
+                parity_result=None,
+            )
+        except Exception:
+            logger.exception(
+                "DQ post-pack wiring failed for flat-file %s.%s",
+                source_schema,
+                source_table,
+            )
 
     def _target_db_type(self) -> str:
         class_name = self.target_connector.__class__.__name__.lower()
@@ -268,7 +376,73 @@ class FlatFileSyncExecutor:
             },
         )
 
-    def execute(self):
+    def execute(self) -> None:
+        """Public entry point - runs the table body under the RetryPolicy.
+
+        Day-3: a flat-file job processes a single enabled table per
+        execution. We source the policy from ``tables.first().retry_policy``
+        and wrap :meth:`_execute_table_body` with :func:`with_policy`.
+        Transient I/O errors against a flaky source share trigger up to
+        ``policy.max_retries`` retries with bounded exponential backoff.
+
+        Existing callers (``SyncExecutor``) keep using
+        ``executor.execute()`` and observe no API change. On terminal
+        failure the last error code is recorded on the ``SyncExecutionLog``
+        row created inside ``_execute_table_body``.
+        """
+        try:
+            job_table = self.job.tables.filter(is_enabled=True).first()
+        except Exception:
+            job_table = None
+
+        policy = (
+            RetryPolicy.from_job_table(job_table)
+            if job_table is not None
+            else RetryPolicy.default()
+        )
+
+        schema_name = getattr(job_table, "schema_name", None)
+        table_name = getattr(job_table, "table_name", None)
+
+        def _on_attempt(attempt_number: int, last_error_code: Optional[str]) -> None:
+            if attempt_number < 2 or not (schema_name and table_name):
+                return
+            try:
+                SyncExecutionLog.objects.filter(
+                    execution=self.execution,
+                    schema_name=schema_name,
+                    table_name=table_name,
+                ).update(
+                    attempts=attempt_number - 1,
+                    last_error_code=last_error_code,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to bump SyncExecutionLog.attempts for flat-file %s.%s",
+                    schema_name,
+                    table_name,
+                )
+
+        try:
+            with_policy(self._execute_table_body, policy, on_attempt=_on_attempt)
+        except Exception as exc:
+            if schema_name and table_name:
+                try:
+                    _, code = classify_error(exc)
+                    SyncExecutionLog.objects.filter(
+                        execution=self.execution,
+                        schema_name=schema_name,
+                        table_name=table_name,
+                    ).update(last_error_code=code)
+                except Exception:
+                    logger.exception(
+                        "Failed to record terminal last_error_code for flat-file %s.%s",
+                        schema_name,
+                        table_name,
+                    )
+            raise
+
+    def _execute_table_body(self):
         self.execution.status = "running"
         self.execution.started_at = timezone.now()
         self.execution.save()
@@ -287,12 +461,17 @@ class FlatFileSyncExecutor:
         target_schema = self._target_schema(source_schema)
         target_table = get_target_table_name(self.job, source_table)
 
-        log = SyncExecutionLog.objects.create(
+        # Day-3 reliability: with_policy may retry the table body. Reuse
+        # the existing log row across retries instead of creating a
+        # duplicate per attempt.
+        log, _log_created = SyncExecutionLog.objects.get_or_create(
             execution=self.execution,
             schema_name=source_schema,
             table_name=source_table,
-            status="running",
-            started_at=timezone.now(),
+            defaults={
+                "status": "running",
+                "started_at": timezone.now(),
+            },
         )
 
         total_rows = 0
@@ -428,6 +607,20 @@ class FlatFileSyncExecutor:
                 )
             row_hash_col = "row_hash"
 
+            pk_ff_src: List[str] = []
+            if is_incremental:
+                pk_ff_src = self._resolve_effective_key_columns(job_table, effective_headers)
+
+            self._dq_flat_run_pre(
+                job_table,
+                source_schema=source_schema,
+                source_table=source_table,
+                pk_columns=pk_ff_src,
+                incremental_column=getattr(job_table, "incremental_column", None),
+            )
+
+            connector_key_target = None
+
             if not is_incremental:
                 # Preserve full-sync behavior exactly: replace table contents.
                 self.target_connector.truncate_table(target_schema, target_table)
@@ -438,8 +631,7 @@ class FlatFileSyncExecutor:
                         "Flat-file incremental requires no-delete propagation policy to be enabled."
                     )
 
-                effective_keys: List[str] = []
-                effective_keys = self._resolve_effective_key_columns(job_table, effective_headers)
+                effective_keys = pk_ff_src
                 connector_key_source = effective_keys[0] if effective_keys else None
                 connector_key_target = (
                     source_to_target.get(connector_key_source, connector_key_source)
@@ -474,33 +666,97 @@ class FlatFileSyncExecutor:
                     self.execution.save()
                     return
 
+            # Day-4 reliability: per-table dead-letter capture for the
+            # flat-file path. Row-scope parse / write errors raised as
+            # ``DeadLetterRowError`` (or tagged with ``dead_letter=True``)
+            # are isolated and bounded by the
+            # ``SyncJobTable.dead_letter_max_pct`` budget. Structural
+            # file errors (missing file, unreadable, bad header) still
+            # raise as fatal because they have no row context.
+            dl_collector = DeadLetterCollector(
+                execution=self.execution,
+                job=self.job,
+                job_table=job_table,
+            )
+
             for chunk in chunks:
                 batch_number += 1
                 rows: List[Tuple] = []
+                sample_chunk_row = chunk[0] if chunk else None
                 for row in chunk:
                     rows.append(tuple(row.get(src, "") for src in effective_headers))
+                # Day-4: account for every row the parser yielded into
+                # this chunk before attempting the target write.
+                dl_collector.mark_seen(len(rows))
                 target_columns = [source_to_target[src] for src in effective_headers]
-                if is_incremental:
-                    df = pd.DataFrame(rows, columns=target_columns)
-                    if is_hybrid_mode:
-                        source_df = pd.DataFrame(rows, columns=effective_headers)
-                        source_df[row_hash_col] = source_df.apply(
-                            lambda r: compute_row_hash(
-                                r.to_dict(),
-                                columns=hash_columns,
-                                algorithm=hash_algorithm,
-                            ),
-                            axis=1,
-                        )
-                        df[row_hash_col] = source_df[row_hash_col]
-                        if callable(getattr(self.target_connector, "add_missing_columns", None)):
-                            self.target_connector.add_missing_columns(
-                                target_schema,
-                                target_table,
-                                df[[row_hash_col]],
+                # Day-4: wrap target writes so a row-scope failure
+                # (DeadLetterRowError or any tagged exception) is
+                # captured into the dead-letter buffer and the budget
+                # decides whether to continue or fail the table.
+                try:
+                    if is_incremental:
+                        df = pd.DataFrame(rows, columns=target_columns)
+                        if is_hybrid_mode:
+                            source_df = pd.DataFrame(rows, columns=effective_headers)
+                            source_df[row_hash_col] = source_df.apply(
+                                lambda r: compute_row_hash(
+                                    r.to_dict(),
+                                    columns=hash_columns,
+                                    algorithm=hash_algorithm,
+                                ),
+                                axis=1,
                             )
+                            df[row_hash_col] = source_df[row_hash_col]
+                            if callable(getattr(self.target_connector, "add_missing_columns", None)):
+                                self.target_connector.add_missing_columns(
+                                    target_schema,
+                                    target_table,
+                                    df[[row_hash_col]],
+                                )
 
-                        if connector_key_target:
+                            if connector_key_target:
+                                if connector_key_target not in df.columns:
+                                    raise TableSyncError(
+                                        f"Flat-file incremental key column '{connector_key_target}' not present in batch."
+                                    )
+                                if df[connector_key_target].isna().any():
+                                    raise TableSyncError(
+                                        f"Flat-file incremental key column '{connector_key_target}' contains NULL/NaN values."
+                                    )
+                                existing_by_key = self._fetch_existing_hash_by_key(
+                                    schema=target_schema,
+                                    table=target_table,
+                                    key_column=connector_key_target,
+                                    row_hash_column=row_hash_col,
+                                    key_values=df[connector_key_target].tolist(),
+                                )
+                                changed_mask = []
+                                for _, row in df.iterrows():
+                                    k = str(row.get(connector_key_target))
+                                    new_hash = str(row.get(row_hash_col) or "")
+                                    old_hash = existing_by_key.get(k)
+                                    if old_hash is None:
+                                        changed_mask.append(True)
+                                    elif old_hash != new_hash:
+                                        changed_mask.append(True)
+                                        rows_updated += 1
+                                    else:
+                                        changed_mask.append(False)
+                                        rows_skipped += 1
+                                changed_df = df[changed_mask]
+                                if not changed_df.empty:
+                                    self.target_connector.upsert_dataframe(
+                                        schema=target_schema,
+                                        table=target_table,
+                                        df=changed_df,
+                                        key_column=connector_key_target,
+                                    )
+                                    rows_changed += len(changed_df)
+                            else:
+                                raise TableSyncError(
+                                    "Flat-file hybrid incremental requires key columns (mark at least one Protected column)."
+                                )
+                        else:
                             if connector_key_target not in df.columns:
                                 raise TableSyncError(
                                     f"Flat-file incremental key column '{connector_key_target}' not present in batch."
@@ -509,62 +765,33 @@ class FlatFileSyncExecutor:
                                 raise TableSyncError(
                                     f"Flat-file incremental key column '{connector_key_target}' contains NULL/NaN values."
                                 )
-                            existing_by_key = self._fetch_existing_hash_by_key(
+                            self.target_connector.upsert_dataframe(
                                 schema=target_schema,
                                 table=target_table,
+                                df=df,
                                 key_column=connector_key_target,
-                                row_hash_column=row_hash_col,
-                                key_values=df[connector_key_target].tolist(),
                             )
-                            changed_mask = []
-                            for _, row in df.iterrows():
-                                k = str(row.get(connector_key_target))
-                                new_hash = str(row.get(row_hash_col) or "")
-                                old_hash = existing_by_key.get(k)
-                                if old_hash is None:
-                                    changed_mask.append(True)
-                                elif old_hash != new_hash:
-                                    changed_mask.append(True)
-                                    rows_updated += 1
-                                else:
-                                    changed_mask.append(False)
-                                    rows_skipped += 1
-                            changed_df = df[changed_mask]
-                            if not changed_df.empty:
-                                self.target_connector.upsert_dataframe(
-                                    schema=target_schema,
-                                    table=target_table,
-                                    df=changed_df,
-                                    key_column=connector_key_target,
-                                )
-                                rows_changed += len(changed_df)
-                        else:
-                            raise TableSyncError(
-                                "Flat-file hybrid incremental requires key columns (mark at least one Protected column)."
-                            )
+                            rows_changed += len(df)
                     else:
-                        if connector_key_target not in df.columns:
-                            raise TableSyncError(
-                                f"Flat-file incremental key column '{connector_key_target}' not present in batch."
-                            )
-                        if df[connector_key_target].isna().any():
-                            raise TableSyncError(
-                                f"Flat-file incremental key column '{connector_key_target}' contains NULL/NaN values."
-                            )
-                        self.target_connector.upsert_dataframe(
+                        self.target_connector.bulk_insert(
                             schema=target_schema,
                             table=target_table,
-                            df=df,
-                            key_column=connector_key_target,
+                            columns=target_columns,
+                            rows=rows,
                         )
-                        rows_changed += len(df)
-                else:
-                    self.target_connector.bulk_insert(
-                        schema=target_schema,
-                        table=target_table,
-                        columns=target_columns,
-                        rows=rows,
-                    )
+                except Exception as chunk_err:
+                    if is_dead_letter(chunk_err):
+                        dl_collector.record(
+                            row=getattr(chunk_err, "row", None) or sample_chunk_row,
+                            error=chunk_err,
+                            batch_number=batch_number,
+                        )
+                        dl_collector.flush()
+                        dl_collector.update_log_counters()
+                        if dl_collector.should_fail():
+                            dl_collector.raise_if_budget_exceeded()
+                        continue
+                    raise
                 total_rows += len(rows)
                 logger.info(
                     "Flat-file sync batch progress job=%s batch=%s rows_total=%s",
@@ -579,6 +806,24 @@ class FlatFileSyncExecutor:
 
             if total_rows == 0 and not is_incremental:
                 raise TableSyncError("Flat-file contains no data rows to sync.")
+
+            tgt_pk_ff: List[str] = []
+            if is_incremental and connector_key_target:
+                tgt_pk_ff = [connector_key_target]
+            elif renamed_columns:
+                tgt_pk_ff = [renamed_columns[0]]
+
+            self._dq_flat_run_post(
+                job_table,
+                source_schema=source_schema,
+                source_table=source_table,
+                target_schema=target_schema,
+                target_table=target_table,
+                dl_collector=dl_collector,
+                log=log,
+                tgt_pk_columns=tgt_pk_ff,
+                sync_mode_ff="flat_file",
+            )
 
             if is_incremental:
                 prev_raw = checkpoint_manager.get_checkpoint_value(source_schema, source_table)
@@ -597,9 +842,23 @@ class FlatFileSyncExecutor:
                     f"decision={'advance' if did_advance else 'skip_not_greater'}"
                 )
 
+            # Day-4: persist any buffered dead-letter rows + sync the
+            # ``dead_letter_count`` on the log row so it matches the
+            # number of ``SyncDeadLetterRow`` records for this table.
+            try:
+                dl_collector.flush()
+                dl_collector.update_log_counters()
+            except Exception:
+                logger.exception(
+                    "Dead-letter flush failed for flat-file %s.%s.",
+                    source_schema,
+                    source_table,
+                )
+
             log.status = "completed"
             log.rows_fetched = total_rows
             log.rows_inserted = rows_changed if is_incremental else total_rows
+            log.dead_letter_count = dl_collector.stats.dead_letter_count
             if read_stats.get("rows_padded") or read_stats.get("rows_truncated"):
                 log.verification_summary = (
                     f"CSV row normalization: padded={read_stats.get('rows_padded', 0)}, "
@@ -654,9 +913,27 @@ class FlatFileSyncExecutor:
             )
         except Exception as exc:
             logger.error("Flat-file sync failed for job %s: %s", self.job.id, exc, exc_info=True)
+            # Day-4: drain dead-letter buffer + counters in error path.
+            try:
+                if "dl_collector" in locals():
+                    dl_collector.flush()
+                    dl_collector.update_log_counters()
+            except Exception:
+                logger.exception(
+                    "Dead-letter flush failed in error path for flat-file %s.%s.",
+                    source_schema,
+                    source_table,
+                )
             log.status = "failed"
             log.error_message = str(exc)
             log.completed_at = timezone.now()
+            if "dl_collector" in locals():
+                log.dead_letter_count = dl_collector.stats.dead_letter_count
+                try:
+                    _, _code = classify_error(exc)
+                    log.last_error_code = _code
+                except Exception:
+                    pass
             log.save()
             try:
                 if control_meta and is_incremental and mode == "hybrid_hash_control":

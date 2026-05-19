@@ -854,3 +854,48 @@ class APIConnection(models.Model):
             error_msg = str(e)
             logger.error(f"Connection test failed: {error_msg}")
             return (False, f"Connection test failed: {error_msg}", [])
+
+
+class ConnectionHealthCheckLog(models.Model):
+    """
+    Stores daily health check results for all connections.
+    Used by the dashboard health card to show connection status.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tested_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    total_tested = models.IntegerField(default=0)
+    total_passed = models.IntegerField(default=0)
+    total_failed = models.IntegerField(default=0)
+    results_json = models.JSONField(default=dict, help_text='Full health check results including all connection details')
+    tenant = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='health_check_logs'
+    )
+
+    class Meta:
+        db_table = 'connection_health_check_log'
+        ordering = ['-tested_at']
+        indexes = [
+            models.Index(fields=['-tested_at'], name='health_tested_at_idx'),
+        ]
+
+    def __str__(self):
+        return f"Health Check at {self.tested_at}: {self.total_passed}/{self.total_tested} passed"
+
+    def get_failed_connections(self):
+        """Get list of failed connections from results_json."""
+        failed = []
+        for conn_type in ['database', 'api', 'file']:
+            for conn in self.results_json.get(conn_type, []):
+                if conn.get('status') == 'failed':
+                    failed.append(conn)
+        return failed
+
+    def health_percentage(self):
+        """Calculate health percentage."""
+        if self.total_tested == 0:
+            return 100
+        return round((self.total_passed / self.total_tested) * 100, 1)

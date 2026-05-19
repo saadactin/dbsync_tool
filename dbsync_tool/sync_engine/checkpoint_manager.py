@@ -165,6 +165,204 @@ class CheckpointManager:
             value=value,
         )
         return True
+
+    # ------------------------------------------------------------------
+    # Day 2 - dual-pointer + status transitions
+    # ------------------------------------------------------------------
+    # These methods write only the new fields shipped by Day 1's
+    # 0031_reliability_dq_foundations migration. Existing callers
+    # continue to use last_value via maybe_advance_checkpoint.
+    # set_committed additionally keeps last_value in sync so legacy
+    # readers see the same boundary the new code is committing to.
+    # ------------------------------------------------------------------
+
+    def set_seen(
+        self,
+        schema_name: str,
+        table_name: str,
+        value: Any,
+    ) -> SyncCheckpoint:
+        """Eagerly advance ``last_seen_value``.
+
+        Tracks the highest watermark the executor has *observed* in the
+        source. Writing this carries no commit guarantee on the target.
+        """
+        if not schema_name or not table_name:
+            raise ValueError("Schema name and table name are required")
+        try:
+            value_str = str(value) if value is not None else None
+            checkpoint, _ = SyncCheckpoint.objects.update_or_create(
+                job=self.job,
+                schema_name=schema_name,
+                table_name=table_name,
+                defaults={
+                    "last_seen_value": value_str,
+                    "updated_at": timezone.now(),
+                },
+            )
+            logger.debug(
+                "Checkpoint %s.%s last_seen_value=%s",
+                schema_name,
+                table_name,
+                value_str,
+            )
+            return checkpoint
+        except Exception as e:
+            logger.error(
+                "Error setting last_seen_value for %s.%s: %s",
+                schema_name,
+                table_name,
+                e,
+                exc_info=True,
+            )
+            raise CheckpointError(
+                f"Failed to set last_seen_value: {str(e)}"
+            ) from e
+
+    def set_committed(
+        self,
+        schema_name: str,
+        table_name: str,
+        value: Any,
+        batch_id: Optional[str],
+    ) -> SyncCheckpoint:
+        """Atomically advance the committed pointer + legacy ``last_value``.
+
+        Called only by ``BatchCoordinator.commit_batch`` after the target
+        write has succeeded and we are inside its metadata transaction.
+
+        ``value=None`` semantics:
+            Used by full sync where there is no incremental watermark.
+            Only ``last_successful_batch_id`` and ``updated_at`` are
+            written, and the legacy ``last_value`` field is left alone.
+        """
+        if not schema_name or not table_name:
+            raise ValueError("Schema name and table name are required")
+        try:
+            defaults = {"updated_at": timezone.now()}
+            if value is not None:
+                value_str = str(value)
+                defaults["last_committed_value"] = value_str
+                defaults["last_value"] = value_str
+            if batch_id is not None:
+                defaults["last_successful_batch_id"] = str(batch_id)[:64]
+            checkpoint, _ = SyncCheckpoint.objects.update_or_create(
+                job=self.job,
+                schema_name=schema_name,
+                table_name=table_name,
+                defaults=defaults,
+            )
+            logger.debug(
+                "Checkpoint %s.%s last_committed_value=%s batch_id=%s",
+                schema_name,
+                table_name,
+                defaults.get("last_committed_value"),
+                batch_id,
+            )
+            return checkpoint
+        except Exception as e:
+            logger.error(
+                "Error setting last_committed_value for %s.%s: %s",
+                schema_name,
+                table_name,
+                e,
+                exc_info=True,
+            )
+            raise CheckpointError(
+                f"Failed to set last_committed_value: {str(e)}"
+            ) from e
+
+    def mark_dirty(
+        self,
+        schema_name: str,
+        table_name: str,
+        reason: Optional[str] = None,
+    ) -> SyncCheckpoint:
+        """Set ``checkpoint_status='dirty'`` and record the reason.
+
+        Does not touch any of the value pointers; only signals that the
+        most recent attempt at this table failed and a recovery pass is
+        needed before the values can be trusted again.
+        """
+        return self._set_status(
+            schema_name=schema_name,
+            table_name=table_name,
+            status="dirty",
+            reason=reason,
+        )
+
+    def mark_recovering(
+        self,
+        schema_name: str,
+        table_name: str,
+        reason: Optional[str] = None,
+    ) -> SyncCheckpoint:
+        """Set ``checkpoint_status='recovering'`` (Day-2 recovery sweep)."""
+        return self._set_status(
+            schema_name=schema_name,
+            table_name=table_name,
+            status="recovering",
+            reason=reason,
+        )
+
+    def mark_clean(
+        self,
+        schema_name: str,
+        table_name: str,
+    ) -> SyncCheckpoint:
+        """Reset ``checkpoint_status`` to ``clean`` and clear the reason."""
+        return self._set_status(
+            schema_name=schema_name,
+            table_name=table_name,
+            status="clean",
+            reason=None,
+        )
+
+    def _set_status(
+        self,
+        *,
+        schema_name: str,
+        table_name: str,
+        status: str,
+        reason: Optional[str],
+    ) -> SyncCheckpoint:
+        if not schema_name or not table_name:
+            raise ValueError("Schema name and table name are required")
+        try:
+            defaults = {
+                "checkpoint_status": status,
+                "last_status_reason": (reason or None) if reason is not None else None,
+                "updated_at": timezone.now(),
+            }
+            # Truncate reason to fit the 255-char column.
+            if defaults["last_status_reason"]:
+                defaults["last_status_reason"] = defaults["last_status_reason"][:255]
+            checkpoint, _ = SyncCheckpoint.objects.update_or_create(
+                job=self.job,
+                schema_name=schema_name,
+                table_name=table_name,
+                defaults=defaults,
+            )
+            logger.debug(
+                "Checkpoint %s.%s checkpoint_status=%s reason=%s",
+                schema_name,
+                table_name,
+                status,
+                defaults["last_status_reason"],
+            )
+            return checkpoint
+        except Exception as e:
+            logger.error(
+                "Error setting checkpoint_status=%s for %s.%s: %s",
+                status,
+                schema_name,
+                table_name,
+                e,
+                exc_info=True,
+            )
+            raise CheckpointError(
+                f"Failed to set checkpoint_status={status}: {str(e)}"
+            ) from e
     
     def delete_checkpoint(
         self,

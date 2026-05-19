@@ -105,7 +105,7 @@ class TransformationDataAccuracyTest(TransactionTestCase):
             connector.execute_query(create_sql)
             
             # Insert comprehensive test data
-            insert_sql = f'''
+            insert_sql = f"""
                 INSERT INTO {schema}.{table_name} (name, email, age, salary, is_active, created_at, description)
                 VALUES
                     ('  John Doe  ', 'JOHN@EXAMPLE.COM', 25, 50000.00, true, '2020-01-01', '  Test Description  '),
@@ -113,7 +113,7 @@ class TransformationDataAccuracyTest(TransactionTestCase):
                     ('  Bob Johnson  ', 'BOB@EXAMPLE.COM', 35, 70000.00, false, '2022-01-01', NULL),
                     ('Alice Brown', 'alice@example.com', 28, 55000.00, true, '2023-01-01', 'Test with ''quotes'''),
                     (NULL, 'nullname@example.com', 40, 80000.00, true, '2024-01-01', 'NULL name test')
-            '''
+            """
             connector.execute_query(insert_sql)
             
             return True

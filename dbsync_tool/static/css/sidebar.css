@@ -1,3 +1,8 @@
+/**
+ * Sidebar Navigation - Azure Design Language
+ * Clean, professional sidebar matching Azure Portal style
+ */
+
 .sidebar {
     position: fixed;
     top: 0;
@@ -5,39 +10,40 @@
     left: 0;
     z-index: 100;
     padding: 0;
-    box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.04), 8px 0 24px rgba(15, 23, 42, 0.16);
-    background: linear-gradient(180deg, #1f2937 0%, #111827 100%);
-    color: white;
+    box-shadow: inset -1px 0 0 rgba(237, 235, 233, 1);
+    background: #F3F2F1;
+    color: #323130;
     overflow-y: auto;
-    width: 250px;
+    width: 220px;
+    border-right: 1px solid #EDEBE9;
 }
 
 .sidebar-sticky {
     position: relative;
     top: 0;
     height: calc(100vh - 48px);
-    padding-top: .5rem;
+    padding-top: 0.5rem;
     overflow-x: hidden;
     overflow-y: auto;
 }
 
 .sidebar-header {
-    padding: 1.15rem 1.25rem 1rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(255, 255, 255, 0.02);
+    padding: 16px 16px 12px;
+    border-bottom: 1px solid #EDEBE9;
+    background: #FFFFFF;
 }
 
 .sidebar-header h4 {
     margin: 0;
-    color: white;
-    font-size: 1.15rem;
-    font-weight: 700;
-    letter-spacing: 0.02em;
+    color: #323130;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0;
 }
 
 .sidebar .nav {
-    padding: 0.85rem 0.65rem;
-    gap: 0.25rem;
+    padding: 8px 8px;
+    gap: 2px;
 }
 
 .sidebar .nav-item {
@@ -45,40 +51,42 @@
 }
 
 .sidebar .nav-link {
-    color: rgba(255, 255, 255, 0.84);
-    padding: 0.7rem 0.8rem;
+    color: #323130;
+    padding: 6px 12px;
     display: flex;
     align-items: center;
     justify-content: flex-start;
-    gap: 0.75rem;
+    gap: 8px;
     text-decoration: none;
-    transition: all 0.2s ease;
-    border-left: 3px solid transparent;
-    border-radius: 10px;
+    transition: all 0.15s ease;
+    border-left: 2px solid transparent;
+    border-radius: 0;
     flex-wrap: nowrap;
-    min-height: 44px;
+    min-height: 32px;
+    font-size: 14px;
+    font-weight: 400;
 }
 
 .sidebar .nav-link:hover {
-    color: white;
-    background-color: rgba(37, 99, 235, 0.18);
-    border-left-color: #60a5fa;
-    transform: translateX(2px);
+    color: #323130;
+    background-color: #EDEBE9;
+    border-left-color: transparent;
+    transform: none;
 }
 
 .sidebar .nav-link.active {
-    color: white;
-    background-color: rgba(37, 99, 235, 0.24);
-    border-left-color: #93c5fd;
+    color: #0078D4;
+    background-color: #FFFFFF;
+    border-left-color: #0078D4;
     font-weight: 600;
 }
 
 .sidebar .nav-link .nav-link-icon {
-    font-size: 1rem;
-    width: 22px;
+    font-size: 16px;
+    width: 16px;
     text-align: center;
     flex-shrink: 0;
-    opacity: 0.95;
+    opacity: 1;
 }
 
 .sidebar .nav-link .nav-link-text {
@@ -87,26 +95,28 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-size: 0.96rem;
-    letter-spacing: 0.01em;
+    font-size: 14px;
+    letter-spacing: 0;
 }
 
 .sidebar .nav-link .badge {
     flex-shrink: 0;
     margin-left: 8px;
-    font-size: 0.65rem;
-    padding: 0.2rem 0.4rem;
+    font-size: 12px;
+    padding: 2px 8px;
     white-space: nowrap;
     font-weight: 600;
-    border-radius: 10px;
-    min-width: 24px;
+    border-radius: 2px;
+    min-width: 20px;
     text-align: center;
+    background-color: #EFF6FC;
+    color: #0078D4;
 }
 
-/* Profile badge specific styling - inline with proper sizing */
+/* Profile badge specific styling */
 .sidebar .profile-nav-item .nav-link {
     flex-wrap: nowrap;
-    padding-right: 0.65rem;
+    padding-right: 12px;
 }
 
 .sidebar .profile-nav-item .nav-link-text {
@@ -117,15 +127,17 @@
 
 .sidebar .profile-nav-item .profile-badge {
     flex-shrink: 0;
-    font-size: 0.65rem;
-    padding: 0.2rem 0.5rem;
+    font-size: 12px;
+    padding: 2px 8px;
     white-space: nowrap;
     font-weight: 600;
-    border-radius: 12px;
-    line-height: 1.2;
+    border-radius: 2px;
+    line-height: 1.5;
     max-width: 100px;
     overflow: hidden;
     text-overflow: ellipsis;
+    background-color: #EFF6FC;
+    color: #0078D4;
 }
 
 @media (max-width: 767.98px) {
@@ -133,4 +145,3 @@
         top: 5rem;
     }
 }
-

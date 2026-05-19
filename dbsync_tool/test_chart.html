@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Execution Trends Chart</title>
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+</head>
+<body>
+    <h1>Test Chart</h1>
+    <div id="chart" style="width: 800px; height: 400px;"></div>
+
+    <script>
+        // Test with hardcoded data similar to what should come from Django
+        const trendsData = {
+            days: ['04/19', '04/20', '04/21', '04/22', '04/23', '05/15', '05/16', '05/17', '05/18', '05/19'],
+            total: [0, 0, 0, 0, 0, 0, 0, 0, 0, 2],
+            successful: [0, 0, 0, 0, 0, 0, 0, 0, 0, 2],
+            failed: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        };
+
+        console.log('Trends Data:', trendsData);
+
+        const options = {
+            series: [{
+                name: 'Total Executions',
+                data: trendsData.total
+            }, {
+                name: 'Successful',
+                data: trendsData.successful
+            }, {
+                name: 'Failed',
+                data: trendsData.failed
+            }],
+            chart: {
+                type: 'line',
+                height: 320
+            },
+            colors: ['#005A9E', '#0B5A0B', '#750B0B'],
+            stroke: {
+                width: 3,
+                curve: 'smooth'
+            },
+            xaxis: {
+                categories: trendsData.days
+            },
+            yaxis: {
+                min: 0
+            }
+        };
+
+        const chart = new ApexCharts(document.querySelector("#chart"), options);
+        chart.render();
+    </script>
+</body>
+</html>

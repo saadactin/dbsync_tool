@@ -1,0 +1,499 @@
+/**
+ * Microsoft Azure Design Language Theme
+ * Based on Azure Portal design system
+ *
+ * This file defines the complete Azure color palette, typography,
+ * spacing, and component styles used throughout the application.
+ */
+
+/* ==========================================
+   AZURE COLOR PALETTE
+   ========================================== */
+
+:root {
+    /* Primary Blue - Azure's signature color */
+    --azure-primary: #0078D4;
+    --azure-primary-dark: #005A9E;
+    --azure-primary-light: #C7E0F4;
+    --azure-primary-pale: #EFF6FC;
+
+    /* Neutral Grays */
+    --azure-white: #FFFFFF;
+    --azure-neutral-dark: #323130;
+    --azure-neutral-mid: #605E5C;
+    --azure-neutral-light: #A19F9D;
+    --azure-border: #EDEBE9;
+    --azure-sidebar-bg: #F3F2F1;
+
+    /* Status Colors */
+    --azure-error: #A80000;
+    --azure-error-bg: #FDE7E9;
+    --azure-warning: #FFB900;
+    --azure-warning-bg: #FFF4CE;
+    --azure-warning-text: #7A5700;
+    --azure-success: #107C10;
+    --azure-success-bg: #DFF6DD;
+    --azure-info-bg: #EFF6FC;
+
+    /* Spacing System (4px base) */
+    --spacing-xs: 4px;
+    --spacing-sm: 8px;
+    --spacing-md: 16px;
+    --spacing-lg: 24px;
+    --spacing-xl: 32px;
+    --spacing-xxl: 48px;
+
+    /* Typography */
+    --font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    --font-size-xs: 12px;
+    --font-size-sm: 14px;
+    --font-size-md: 16px;
+    --font-size-lg: 20px;
+
+    /* Border Radius - Azure uses minimal rounding */
+    --radius-sm: 2px;
+
+    /* Shadows - Subtle only */
+    --shadow-card: 0 1.6px 3.6px rgba(0, 0, 0, 0.13);
+    --shadow-hover: 0 3.2px 7.2px rgba(0, 0, 0, 0.13);
+}
+
+/* ==========================================
+   TYPOGRAPHY
+   ========================================== */
+
+body {
+    font-family: var(--font-family);
+    font-size: var(--font-size-sm);
+    line-height: 1.5;
+    color: var(--azure-neutral-dark);
+    background-color: var(--azure-white);
+}
+
+h1, .heading-large {
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    color: var(--azure-neutral-dark);
+    line-height: 1.3;
+}
+
+h2, .heading-medium {
+    font-size: var(--font-size-md);
+    font-weight: 600;
+    color: var(--azure-neutral-dark);
+    line-height: 1.3;
+}
+
+h3, .heading-small {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--azure-neutral-dark);
+    line-height: 1.3;
+}
+
+.caption, .label-text {
+    font-size: var(--font-size-xs);
+    font-weight: 400;
+    color: var(--azure-neutral-mid);
+}
+
+/* ==========================================
+   BUTTONS - AZURE STYLE
+   ========================================== */
+
+.azure-btn {
+    padding: 6px 16px;
+    height: 32px;
+    font-size: var(--font-size-sm);
+    font-weight: 400;
+    border-radius: var(--radius-sm);
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-sm);
+    text-decoration: none;
+    line-height: 1;
+}
+
+.azure-btn-primary {
+    background: var(--azure-primary);
+    color: var(--azure-white);
+    border: none;
+}
+
+.azure-btn-primary:hover {
+    background: var(--azure-primary-dark);
+}
+
+.azure-btn-secondary {
+    background: var(--azure-white);
+    color: var(--azure-primary);
+    border: 1px solid var(--azure-primary);
+}
+
+.azure-btn-secondary:hover {
+    background: var(--azure-primary-pale);
+}
+
+.azure-btn-danger {
+    background: var(--azure-white);
+    color: var(--azure-error);
+    border: 1px solid var(--azure-error);
+}
+
+.azure-btn-danger:hover {
+    background: var(--azure-error-bg);
+}
+
+.azure-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ==========================================
+   FORM INPUTS - AZURE STYLE
+   ========================================== */
+
+.azure-input,
+.azure-select,
+.azure-textarea {
+    width: 100%;
+    height: 32px;
+    padding: 0 var(--spacing-sm);
+    font-size: var(--font-size-sm);
+    font-family: var(--font-family);
+    color: var(--azure-neutral-dark);
+    background: var(--azure-white);
+    border: 1px solid var(--azure-neutral-light);
+    border-radius: var(--radius-sm);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.azure-textarea {
+    height: auto;
+    min-height: 64px;
+    padding: var(--spacing-sm);
+}
+
+.azure-input:focus,
+.azure-select:focus,
+.azure-textarea:focus {
+    outline: none;
+    border-color: var(--azure-primary);
+    box-shadow: 0 0 0 1px var(--azure-primary);
+}
+
+.azure-input::placeholder {
+    color: var(--azure-neutral-light);
+}
+
+.azure-label {
+    display: block;
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--azure-neutral-dark);
+    margin-bottom: var(--spacing-xs);
+}
+
+/* ==========================================
+   CARDS & PANELS
+   ========================================== */
+
+.azure-card {
+    background: var(--azure-white);
+    border: 1px solid var(--azure-border);
+    border-radius: var(--radius-sm);
+    padding: var(--spacing-md);
+    box-shadow: var(--shadow-card);
+}
+
+.azure-card-header {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--azure-neutral-dark);
+    margin-bottom: var(--spacing-md);
+    padding-bottom: var(--spacing-sm);
+    border-bottom: 1px solid var(--azure-border);
+}
+
+.azure-card-lg {
+    padding: var(--spacing-lg);
+}
+
+/* ==========================================
+   TABLES - AZURE STYLE
+   ========================================== */
+
+.azure-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--azure-white);
+    border: 1px solid var(--azure-border);
+    border-radius: var(--radius-sm);
+}
+
+.azure-table thead th {
+    background: var(--azure-sidebar-bg);
+    color: var(--azure-neutral-dark);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    text-align: left;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--azure-border);
+    height: 44px;
+}
+
+.azure-table tbody td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--azure-border);
+    color: var(--azure-neutral-dark);
+    font-size: var(--font-size-sm);
+    height: 44px;
+}
+
+.azure-table tbody tr:hover {
+    background: var(--azure-primary-pale);
+}
+
+.azure-table tbody tr.selected {
+    background: var(--azure-primary-light);
+}
+
+.azure-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+/* ==========================================
+   STATUS BADGES
+   ========================================== */
+
+.azure-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    line-height: 1.5;
+}
+
+.azure-badge-success {
+    background: var(--azure-success-bg);
+    color: var(--azure-success);
+}
+
+.azure-badge-error {
+    background: var(--azure-error-bg);
+    color: var(--azure-error);
+}
+
+.azure-badge-warning {
+    background: var(--azure-warning-bg);
+    color: var(--azure-warning-text);
+}
+
+.azure-badge-info {
+    background: var(--azure-info-bg);
+    color: var(--azure-primary);
+}
+
+.azure-badge-neutral {
+    background: var(--azure-sidebar-bg);
+    color: var(--azure-neutral-mid);
+}
+
+/* ==========================================
+   NAVIGATION / SIDEBAR - AZURE STYLE
+   ========================================== */
+
+.azure-sidebar {
+    background: var(--azure-sidebar-bg);
+    width: 220px;
+    border-right: 1px solid var(--azure-border);
+}
+
+.azure-nav-item {
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    font-size: var(--font-size-sm);
+    font-weight: 400;
+    color: var(--azure-neutral-dark);
+    text-decoration: none;
+    transition: background-color 0.15s ease;
+    border-left: 2px solid transparent;
+}
+
+.azure-nav-item:hover {
+    background: var(--azure-border);
+}
+
+.azure-nav-item.active {
+    background: var(--azure-white);
+    color: var(--azure-primary);
+    border-left-color: var(--azure-primary);
+    font-weight: 600;
+}
+
+.azure-nav-icon {
+    width: 16px;
+    height: 16px;
+    margin-right: var(--spacing-sm);
+}
+
+/* ==========================================
+   ALERTS / NOTIFICATIONS
+   ========================================== */
+
+.azure-alert {
+    padding: 12px 16px;
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-sm);
+    border-left: 4px solid;
+}
+
+.azure-alert-success {
+    background: var(--azure-success-bg);
+    color: var(--azure-success);
+    border-left-color: var(--azure-success);
+}
+
+.azure-alert-error {
+    background: var(--azure-error-bg);
+    color: var(--azure-error);
+    border-left-color: var(--azure-error);
+}
+
+.azure-alert-warning {
+    background: var(--azure-warning-bg);
+    color: var(--azure-warning-text);
+    border-left-color: var(--azure-warning);
+}
+
+.azure-alert-info {
+    background: var(--azure-info-bg);
+    color: var(--azure-primary);
+    border-left-color: var(--azure-primary);
+}
+
+/* ==========================================
+   MODALS / DIALOGS
+   ========================================== */
+
+.azure-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 1000;
+}
+
+.azure-modal {
+    background: var(--azure-white);
+    border-radius: var(--radius-sm);
+    max-width: 600px;
+    margin: 0 auto;
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+}
+
+.azure-modal-header {
+    padding: 24px 24px 0;
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    color: var(--azure-neutral-dark);
+}
+
+.azure-modal-body {
+    padding: var(--spacing-lg);
+}
+
+.azure-modal-footer {
+    padding: 16px 24px;
+    border-top: 1px solid var(--azure-border);
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-sm);
+}
+
+/* ==========================================
+   LOADING STATES
+   ========================================== */
+
+.azure-spinner {
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--azure-border);
+    border-top-color: var(--azure-primary);
+    border-radius: 50%;
+    animation: azure-spin 0.8s linear infinite;
+}
+
+@keyframes azure-spin {
+    to { transform: rotate(360deg); }
+}
+
+.azure-progress-bar {
+    height: 2px;
+    background: var(--azure-primary);
+    width: 0%;
+    transition: width 0.3s ease;
+}
+
+/* ==========================================
+   UTILITIES
+   ========================================== */
+
+.azure-divider {
+    height: 1px;
+    background: var(--azure-border);
+    margin: var(--spacing-md) 0;
+}
+
+.azure-text-primary {
+    color: var(--azure-primary);
+}
+
+.azure-text-secondary {
+    color: var(--azure-neutral-mid);
+}
+
+.azure-text-muted {
+    color: var(--azure-neutral-light);
+}
+
+.azure-bg-light {
+    background: var(--azure-sidebar-bg);
+}
+
+.azure-mt-xs { margin-top: var(--spacing-xs); }
+.azure-mt-sm { margin-top: var(--spacing-sm); }
+.azure-mt-md { margin-top: var(--spacing-md); }
+.azure-mt-lg { margin-top: var(--spacing-lg); }
+.azure-mt-xl { margin-top: var(--spacing-xl); }
+
+.azure-mb-xs { margin-bottom: var(--spacing-xs); }
+.azure-mb-sm { margin-bottom: var(--spacing-sm); }
+.azure-mb-md { margin-bottom: var(--spacing-md); }
+.azure-mb-lg { margin-bottom: var(--spacing-lg); }
+.azure-mb-xl { margin-bottom: var(--spacing-xl); }
+
+.azure-p-xs { padding: var(--spacing-xs); }
+.azure-p-sm { padding: var(--spacing-sm); }
+.azure-p-md { padding: var(--spacing-md); }
+.azure-p-lg { padding: var(--spacing-lg); }
+.azure-p-xl { padding: var(--spacing-xl); }
+
+.azure-gap-xs { gap: var(--spacing-xs); }
+.azure-gap-sm { gap: var(--spacing-sm); }
+.azure-gap-md { gap: var(--spacing-md); }
+.azure-gap-lg { gap: var(--spacing-lg); }
+
+/* Remove all animations for accessibility */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}

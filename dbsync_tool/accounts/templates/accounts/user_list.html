@@ -4,103 +4,98 @@
 {% block title %}User Management | SyncArchitect{% endblock %}
 
 {% block content %}
-<div class="flex-1 overflow-y-auto p-6 space-y-8 no-scrollbar">
+<div class="flex-1 overflow-y-auto no-scrollbar" style="background: #F3F2F1; padding: 24px;">
     <!-- Page Header -->
-    <div class="flex items-end justify-between">
+    <div class="flex items-end justify-between mb-5">
         <div>
-            <h1 class="text-3xl font-extrabold text-on-surface tracking-tight">User Management</h1>
-            <p class="text-on-surface-variant mt-1 font-medium">Manage access and roles for all workspace collaborators.</p>
+            <h1 style="font-size: 20px; font-weight: 600; color: #323130; margin: 0;">User Management</h1>
+            <p style="font-size: 13px; color: #605E5C; margin-top: 4px;">Manage access and roles for all workspace collaborators.</p>
         </div>
         {% if user.userprofile.is_super_admin or user.userprofile.is_admin %}
-        <a href="{% url 'accounts:user_create' %}" class="flex items-center gap-2 px-5 py-2.5 bg-primary text-white rounded-lg font-bold shadow-lg shadow-primary/20 hover:bg-primary-container transition-all no-underline">
-            <span class="material-symbols-outlined text-sm">person_add</span>
+        <a href="{% url 'accounts:user_create' %}" class="flex items-center gap-2 no-underline" style="background: #0078D4; color: #FFFFFF; border-radius: 2px; height: 32px; padding: 0 16px; font-size: 14px; font-weight: 400; transition: background 0.15s;" onmouseover="this.style.background='#005A9E'" onmouseout="this.style.background='#0078D4'">
+            <span class="material-symbols-outlined" style="font-size: 16px;">person_add</span>
             Create User
         </a>
         {% endif %}
     </div>
 
     <!-- Users Table Card -->
-    <div class="bg-surface-container-lowest rounded-2xl overflow-hidden shadow-sm border border-slate-100">
+    <div style="background: #FFFFFF; border: 1px solid #EDEBE9; border-radius: 2px; box-shadow: 0 1.6px 3.6px rgba(0,0,0,0.10); overflow: hidden;">
         <div class="overflow-x-auto">
             <table class="w-full text-left border-collapse">
                 <thead>
-                    <tr class="text-xs font-bold text-slate-400 uppercase tracking-widest bg-slate-50/50">
-                        <th class="px-6 py-4">User</th>
-                        <th class="px-6 py-4">Role</th>
-                        <th class="px-6 py-4">Tenant</th>
-                        <th class="px-6 py-4">Date Joined</th>
-                        <th class="px-6 py-4">Status</th>
-                        <th class="px-6 py-4 text-right">Actions</th>
+                    <tr style="background: #F3F2F1; border-bottom: 1px solid #EDEBE9; height: 40px;">
+                        <th style="font-size: 12px; font-weight: 600; color: #323130; padding: 0 12px; text-align: left;">User</th>
+                        <th style="font-size: 12px; font-weight: 600; color: #323130; padding: 0 12px; text-align: left;">Role</th>
+                        <th style="font-size: 12px; font-weight: 600; color: #323130; padding: 0 12px; text-align: left;">Tenant</th>
+                        <th style="font-size: 12px; font-weight: 600; color: #323130; padding: 0 12px; text-align: left;">Date Joined</th>
+                        <th style="font-size: 12px; font-weight: 600; color: #323130; padding: 0 12px; text-align: left;">Status</th>
+                        <th style="font-size: 12px; font-weight: 600; color: #323130; padding: 0 12px; text-align: right;">Actions</th>
                     </tr>
                 </thead>
-                <tbody class="divide-y divide-slate-100">
+                <tbody>
                     {% for user_obj in users %}
-                    <tr class="group hover:bg-blue-50/30 transition-colors">
-                        <td class="px-6 py-4">
+                    <tr class="group" style="height: 64px; border-bottom: 1px solid #EDEBE9; background: #FFFFFF; transition: background 0.15s;" onmouseover="this.style.background='#EFF6FC'" onmouseout="this.style.background='#FFFFFF'">
+                        <td style="padding: 10px 12px;">
                             <div class="flex items-center gap-3">
-                                <div class="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-primary font-bold">
+                                <div class="flex items-center justify-center" style="width: 40px; height: 40px; border-radius: 2px; background: #0078D4; color: #FFFFFF; font-size: 16px; font-weight: 600;">
                                     {{ user_obj.username|slice:":1"|upper }}
                                 </div>
                                 <div>
-                                    <div class="font-bold text-on-surface">{{ user_obj.username }}</div>
-                                    <div class="text-xs text-slate-500">{{ user_obj.email|default:"No email set" }}</div>
+                                    <div style="font-size: 13px; font-weight: 500; color: #323130;">{{ user_obj.username }}</div>
+                                    <div style="font-size: 12px; color: #605E5C;">{{ user_obj.email|default:"No email set" }}</div>
                                 </div>
                             </div>
                         </td>
-                        <td class="px-6 py-4">
-                            <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider
-                                {% if user_obj.userprofile.role == 'super_admin' %}bg-red-100 text-red-700
-                                {% elif user_obj.userprofile.role == 'admin' %}bg-blue-100 text-blue-700
-                                {% elif user_obj.userprofile.role == 'operator' %}bg-emerald-100 text-emerald-700
-                                {% else %}bg-slate-100 text-slate-600
-                                {% endif %}">
+                        <td style="padding: 10px 12px;">
+                            <span style="background: #F3F2F1; color: #323130; border: 1px solid #EDEBE9; border-radius: 2px; padding: 2px 8px; font-size: 11px; font-weight: 400;">
                                 {{ user_obj.userprofile.get_role_display }}
                             </span>
                         </td>
-                        <td class="px-6 py-4">
-                            <div class="text-sm text-slate-600">
+                        <td style="padding: 10px 12px;">
+                            <div style="font-size: 13px; color: #323130;">
                                 {% if user_obj.userprofile.tenant %}
                                     {{ user_obj.userprofile.tenant.username }}
                                 {% else %}
-                                    <span class="text-slate-300">—</span>
+                                    <span style="color: #A19F9D;">—</span>
                                 {% endif %}
                             </div>
                         </td>
-                        <td class="px-6 py-4">
-                            <div class="text-sm text-slate-500">{{ user_obj.date_joined|date:"M d, Y" }}</div>
+                        <td style="padding: 10px 12px;">
+                            <div style="font-size: 13px; color: #605E5C;">{{ user_obj.date_joined|date:"M d, Y" }}</div>
                         </td>
-                        <td class="px-6 py-4">
+                        <td style="padding: 10px 12px;">
                             {% if user_obj.is_active %}
-                            <div class="flex items-center gap-1.5 text-emerald-600 text-xs font-bold">
-                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                            <div class="flex items-center gap-2" style="color: #107C10; font-size: 12px; font-weight: 400;">
+                                <span style="width: 6px; height: 6px; border-radius: 50%; background: #107C10;"></span>
                                 Active
                             </div>
                             {% else %}
-                            <div class="flex items-center gap-1.5 text-slate-400 text-xs font-bold">
-                                <span class="w-1.5 h-1.5 rounded-full bg-slate-300"></span>
+                            <div class="flex items-center gap-2" style="color: #A19F9D; font-size: 12px; font-weight: 400;">
+                                <span style="width: 6px; height: 6px; border-radius: 50%; background: #A19F9D;"></span>
                                 Inactive
                             </div>
                             {% endif %}
                         </td>
-                        <td class="px-6 py-4 text-right">
-                            <div class="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <a href="{% url 'accounts:user_edit' user_obj.id %}" class="p-2 text-slate-400 hover:text-primary hover:bg-primary/10 rounded-lg transition-all" title="Edit">
-                                    <span class="material-symbols-outlined text-sm">edit</span>
+                        <td style="padding: 10px 12px; text-align: right;">
+                            <div class="flex items-center justify-end gap-2 group-hover:opacity-100" style="opacity: 0; transition: opacity 0.15s;">
+                                <a href="{% url 'accounts:user_edit' user_obj.id %}" title="Edit" style="padding: 8px; color: #0078D4; background: transparent; border-radius: 2px; transition: background 0.15s; display: inline-flex; align-items: center; justify-content: center;" onmouseover="this.style.background='#EFF6FC'" onmouseout="this.style.background='transparent'">
+                                    <span class="material-symbols-outlined" style="font-size: 16px;">edit</span>
                                 </a>
                                 {% if not user_obj.userprofile.is_super_admin %}
-                                <a href="{% url 'accounts:user_delete' user_obj.id %}" class="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all" title="Delete">
-                                    <span class="material-symbols-outlined text-sm">delete</span>
+                                <a href="{% url 'accounts:user_delete' user_obj.id %}" title="Delete" style="padding: 8px; color: #A80000; background: transparent; border-radius: 2px; transition: background 0.15s; display: inline-flex; align-items: center; justify-content: center;" onmouseover="this.style.background='#FDE7E9'" onmouseout="this.style.background='transparent'">
+                                    <span class="material-symbols-outlined" style="font-size: 16px;">delete</span>
                                 </a>
                                 {% endif %}
                             </div>
                         </td>
                     </tr>
                     {% empty %}
-                    <tr>
-                        <td colspan="6" class="px-6 py-12 text-center">
-                            <div class="flex flex-col items-center gap-2">
-                                <span class="material-symbols-outlined text-4xl text-slate-300">group_off</span>
-                                <p class="text-slate-500 italic">No users found in this directory.</p>
+                    <tr style="height: 120px;">
+                        <td colspan="6" style="padding: 48px 24px; text-align: center;">
+                            <div class="flex flex-col items-center gap-3">
+                                <span class="material-symbols-outlined" style="font-size: 48px; color: #EDEBE9;">group_off</span>
+                                <p style="font-size: 13px; color: #605E5C;">No users found in this directory.</p>
                             </div>
                         </td>
                     </tr>
@@ -110,20 +105,20 @@
         </div>
 
         {% if is_paginated %}
-        <div class="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
-            <div class="text-xs font-bold text-slate-500 uppercase tracking-widest">
+        <div class="flex items-center justify-between" style="padding: 16px 20px; background: #F3F2F1; border-top: 1px solid #EDEBE9;">
+            <div style="font-size: 12px; font-weight: 400; color: #605E5C;">
                 Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
             </div>
             <div class="flex gap-2">
                 {% if page_obj.has_previous %}
-                <a href="?page={{ page_obj.previous_page_number }}" class="p-2 bg-white border border-slate-200 rounded-lg hover:border-primary text-slate-600 transition-all no-underline flex items-center">
-                    <span class="material-symbols-outlined text-sm">chevron_left</span>
+                <a href="?page={{ page_obj.previous_page_number }}" class="flex items-center justify-center no-underline" style="width: 32px; height: 32px; background: #FFFFFF; border: 1px solid #EDEBE9; border-radius: 2px; color: #0078D4; transition: background 0.15s;" onmouseover="this.style.background='#EFF6FC'" onmouseout="this.style.background='#FFFFFF'">
+                    <span class="material-symbols-outlined" style="font-size: 16px;">chevron_left</span>
                 </a>
                 {% endif %}
-                
+
                 {% if page_obj.has_next %}
-                <a href="?page={{ page_obj.next_page_number }}" class="p-2 bg-white border border-slate-200 rounded-lg hover:border-primary text-slate-600 transition-all no-underline flex items-center">
-                    <span class="material-symbols-outlined text-sm">chevron_right</span>
+                <a href="?page={{ page_obj.next_page_number }}" class="flex items-center justify-center no-underline" style="width: 32px; height: 32px; background: #FFFFFF; border: 1px solid #EDEBE9; border-radius: 2px; color: #0078D4; transition: background 0.15s;" onmouseover="this.style.background='#EFF6FC'" onmouseout="this.style.background='#FFFFFF'">
+                    <span class="material-symbols-outlined" style="font-size: 16px;">chevron_right</span>
                 </a>
                 {% endif %}
             </div>

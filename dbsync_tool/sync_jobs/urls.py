@@ -1,10 +1,15 @@
 from django.urls import path
-from . import views
+from . import views, views_sse
 
 app_name = 'sync_jobs'
 
 urlpatterns = [
+    # SSE endpoints for real-time updates
+    path('sse/dashboard/', views_sse.dashboard_status_stream, name='sse_dashboard'),
+    path('sse/execution/<uuid:execution_id>/', views_sse.execution_status_stream, name='sse_execution'),
+    # Regular views
     path('', views.dashboard, name='dashboard'),
+    path('api/dashboard/', views.dashboard_api, name='dashboard_api'),
     path('jobs/', views.job_list, name='list'),
     path('create/step1/', views.create_job_step1_view, name='create_step1'),
     path('create/step2/', views.create_job_step2_view, name='create_step2'),
@@ -33,12 +38,15 @@ urlpatterns = [
     path('<uuid:job_id>/run/', views.job_run_now, name='job_run_now'),
     path('<uuid:job_id>/executions/<uuid:execution_id>/', views.execution_detail, name='execution_detail'),
     path('<uuid:job_id>/executions/<uuid:execution_id>/status/', views.execution_status_api, name='execution_status_api'),
+    path('<uuid:job_id>/executions/<uuid:execution_id>/reconciliation/', views.execution_reconciliation, name='execution_reconciliation'),
     path('status/snapshot/', views.jobs_status_snapshot_api, name='jobs_status_snapshot_api'),
     path('<uuid:job_id>/status/snapshot/', views.job_status_snapshot_api, name='job_status_snapshot_api'),
     path('<uuid:job_id>/checkpoints/reset/<str:schema_name>/<str:table_name>/', views.reset_checkpoint, name='reset_checkpoint'),
     path('<uuid:job_id>/checkpoints/', views.view_checkpoints, name='view_checkpoints'),
     path('<uuid:job_id>/report/', views.job_report, name='job_report'),
     path('reports/', views.user_report, name='user_report'),
+    path('ops/health/', views.ops_health, name='ops_health'),
+    path('api/test-all-connections/', views.test_all_connections, name='test_all_connections'),
     path('bulk/pause/', views.bulk_pause, name='bulk_pause'),
     path('bulk/resume/', views.bulk_resume, name='bulk_resume'),
     path('bulk/delete/', views.bulk_delete, name='bulk_delete'),

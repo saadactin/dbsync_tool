@@ -113,6 +113,160 @@
         </a>
     </div>
 
+    <!-- Connection Health Check Card -->
+    {% if health_check_data %}
+    <div class="tactile-glass-card relative p-6 shadow-xl shadow-primary-fixed/5 rounded-3xl overflow-hidden border border-primary-fixed/10 hover:shadow-2xl hover:shadow-primary-fixed/10 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]">
+        <div class="absolute inset-0 bg-gradient-to-br from-primary-fixed via-transparent to-secondary-fixed opacity-[0.07]"></div>
+        <div class="absolute -top-6 -right-6 w-32 h-32 bg-primary rounded-full blur-3xl opacity-20"></div>
+
+        <div class="relative z-10">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-3">
+                    <div class="w-1.5 h-8 bg-gradient-to-b from-primary to-secondary rounded-full"></div>
+                    <h3 class="text-xl font-black text-slate-800 tracking-tight font-headline">Connection Health</h3>
+                </div>
+                <div class="text-[9px] font-black uppercase tracking-widest text-slate-400">
+                    {{ health_check_data.tested_at|timesince }} ago
+                </div>
+            </div>
+
+            <!-- Health Status Summary -->
+            <div class="grid grid-cols-3 gap-3 mb-4">
+                <div class="rounded-2xl border border-slate-100 bg-white/80 p-3">
+                    <div class="text-[9px] font-black text-slate-500 uppercase tracking-widest">Total</div>
+                    <div class="mt-1 text-2xl font-black text-slate-700">{{ health_check_data.total_tested }}</div>
+                </div>
+                <div class="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-3">
+                    <div class="text-[9px] font-black text-emerald-600 uppercase tracking-widest">Passed</div>
+                    <div class="mt-1 text-2xl font-black text-emerald-700">{{ health_check_data.total_passed }}</div>
+                </div>
+                <div class="rounded-2xl border {% if health_check_data.total_failed > 0 %}border-rose-200 bg-rose-50/60{% else %}border-slate-100 bg-white/80{% endif %} p-3">
+                    <div class="text-[9px] font-black {% if health_check_data.total_failed > 0 %}text-rose-600{% else %}text-slate-500{% endif %} uppercase tracking-widest">Failed</div>
+                    <div class="mt-1 text-2xl font-black {% if health_check_data.total_failed > 0 %}text-rose-700{% else %}text-slate-700{% endif %}">{{ health_check_data.total_failed }}</div>
+                </div>
+            </div>
+
+            <!-- Health Percentage Bar -->
+            <div class="mb-4">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-[9px] font-black text-slate-500 uppercase tracking-widest">Health Status</span>
+                    <span class="text-sm font-black {% if health_check_data.health_percentage == 100 %}text-emerald-600{% elif health_check_data.health_percentage >= 80 %}text-amber-600{% else %}text-rose-600{% endif %}">
+                        {{ health_check_data.health_percentage|floatformat:0 }}%
+                    </span>
+                </div>
+                <div class="h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div class="h-full {% if health_check_data.health_percentage == 100 %}bg-gradient-to-r from-emerald-500 to-emerald-600{% elif health_check_data.health_percentage >= 80 %}bg-gradient-to-r from-amber-500 to-amber-600{% else %}bg-gradient-to-r from-rose-500 to-rose-600{% endif %} rounded-full transition-all duration-500"
+                         style="width: {{ health_check_data.health_percentage }}%"></div>
+                </div>
+            </div>
+
+            <!-- Failed Connections List -->
+            {% if health_check_data.total_failed > 0 %}
+            <div class="border-t border-slate-100 pt-4">
+                <div class="text-[9px] font-black text-rose-600 uppercase tracking-widest mb-3">Failed Connections</div>
+                <div class="space-y-2 max-h-40 overflow-y-auto">
+                    {% for conn in health_check_data.failed_connections %}
+                    <div class="rounded-xl border border-rose-200 bg-rose-50/40 p-3">
+                        <div class="flex items-start gap-2">
+                            <span class="text-rose-500 text-xs mt-0.5">✕</span>
+                            <div class="flex-1 min-w-0">
+                                <div class="text-xs font-bold text-rose-700 truncate">{{ conn.name }}</div>
+                                <div class="text-[10px] font-medium text-rose-600 mt-0.5">{{ conn.type|upper }}</div>
+                                <div class="text-[10px] text-slate-600 mt-1 break-words">{{ conn.error }}</div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% else %}
+            <div class="border-t border-slate-100 pt-4">
+                <div class="flex items-center gap-2 text-emerald-600">
+                    <span class="text-lg">✓</span>
+                    <span class="text-sm font-bold">All connections healthy</span>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if reliability_rollup_24h %}
+    <!-- Day-7 Reliability Insights (embedded into main dashboard) -->
+    <div class="bg-white rounded-3xl border border-slate-100 p-6 shadow-xl shadow-slate-200/30">
+        <div class="flex items-center justify-between mb-5">
+            <div class="flex items-center gap-3">
+                <div class="w-1.5 h-6 bg-primary rounded-full"></div>
+                <h3 class="text-xl font-black text-slate-800 tracking-tight font-headline">Reliability Insights</h3>
+            </div>
+            <span class="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                24H Window
+            </span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+            <div class="rounded-2xl border p-4 {% if reliability_rollup_24h.slo.ok_rate.ok %}border-emerald-200 bg-emerald-50/40{% else %}border-amber-200 bg-amber-50/40{% endif %}">
+                <div class="text-[10px] font-black text-slate-500 uppercase tracking-widest">OK Rate</div>
+                <div class="mt-2 text-2xl font-black {% if reliability_rollup_24h.slo.ok_rate.ok %}text-emerald-700{% else %}text-amber-700{% endif %}">
+                    {{ reliability_rollup_24h.slo.ok_rate.value|floatformat:4 }}
+                </div>
+                <div class="text-[10px] font-bold text-slate-500 uppercase mt-1">
+                    Target ≥ {{ reliability_rollup_24h.slo.ok_rate.target|floatformat:2 }}
+                </div>
+            </div>
+
+            <div class="rounded-2xl border p-4 {% if reliability_rollup_24h.slo.dead_letter_pct.ok %}border-emerald-200 bg-emerald-50/40{% else %}border-rose-200 bg-rose-50/40{% endif %}">
+                <div class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Dead-letter %</div>
+                <div class="mt-2 text-2xl font-black {% if reliability_rollup_24h.slo.dead_letter_pct.ok %}text-emerald-700{% else %}text-rose-700{% endif %}">
+                    {{ reliability_rollup_24h.slo.dead_letter_pct.value|floatformat:6 }}
+                </div>
+                <div class="text-[10px] font-bold text-slate-500 uppercase mt-1">
+                    Target ≤ {{ reliability_rollup_24h.slo.dead_letter_pct.target|floatformat:4 }}
+                </div>
+            </div>
+
+            <div class="rounded-2xl border p-4 {% if reliability_rollup_24h.slo.attempts_p95.ok %}border-emerald-200 bg-emerald-50/40{% else %}border-amber-200 bg-amber-50/40{% endif %}">
+                <div class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Retry p95</div>
+                <div class="mt-2 text-2xl font-black {% if reliability_rollup_24h.slo.attempts_p95.ok %}text-emerald-700{% else %}text-amber-700{% endif %}">
+                    {{ reliability_rollup_24h.slo.attempts_p95.value|floatformat:1 }}
+                </div>
+                <div class="text-[10px] font-bold text-slate-500 uppercase mt-1">
+                    Target ≤ {{ reliability_rollup_24h.slo.attempts_p95.target|floatformat:0 }}
+                </div>
+            </div>
+
+            <div class="rounded-2xl border p-4 {% if reliability_rollup_24h.slo.confidence_floor.ok %}border-emerald-200 bg-emerald-50/40{% else %}border-amber-200 bg-amber-50/40{% endif %}">
+                <div class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Min Confidence</div>
+                <div class="mt-2 text-2xl font-black {% if reliability_rollup_24h.slo.confidence_floor.ok %}text-emerald-700{% else %}text-amber-700{% endif %}">
+                    {{ reliability_rollup_24h.slo.confidence_floor.value|floatformat:4 }}
+                </div>
+                <div class="text-[10px] font-bold text-slate-500 uppercase mt-1">
+                    Target ≥ {{ reliability_rollup_24h.slo.confidence_floor.target|floatformat:2 }}
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-5 grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <div class="rounded-2xl border border-slate-100 p-4 bg-slate-50/40">
+                <div class="text-[10px] font-black text-slate-500 uppercase tracking-widest">24H Totals</div>
+                <div class="mt-2 text-sm font-semibold text-slate-700">
+                    Executions: <span class="font-black">{{ reliability_rollup_24h.totals.executions|intcomma }}</span>
+                    · Drift incidents: <span class="font-black">{{ reliability_rollup_24h.totals.drift_incidents|intcomma }}</span>
+                    · Dead-letter rows: <span class="font-black">{{ reliability_rollup_24h.totals.dead_letter_rows|intcomma }}</span>
+                </div>
+            </div>
+            <div class="rounded-2xl border border-slate-100 p-4 bg-slate-50/40">
+                <div class="text-[10px] font-black text-slate-500 uppercase tracking-widest">7D Baseline</div>
+                <div class="mt-2 text-sm font-semibold text-slate-700">
+                    Executions: <span class="font-black">{{ reliability_rollup_7d.totals.executions|intcomma }}</span>
+                    · OK rate: <span class="font-black">{{ reliability_rollup_7d.totals.ok_rate|floatformat:4 }}</span>
+                    · Drift incidents: <span class="font-black">{{ reliability_rollup_7d.totals.drift_incidents|intcomma }}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Main Grid Layout -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <!-- Recent Sync Activity -->

@@ -10,6 +10,20 @@ from connections.models import DatabaseConnection, APIConnection, FileSourceConn
 from core.constants import SCHEDULE_TYPE_CHOICES
 
 
+def default_retry_policy():
+    """Default per-table retry policy used by SyncJobTable.retry_policy.
+
+    Kept as a module-level callable so Django migrations and data backfills
+    can reference the same canonical defaults.
+    """
+    return {
+        "max_retries": 3,
+        "initial_delay": 1.0,
+        "backoff": 2.0,
+        "retryable_errors": ["timeout", "conn_reset", "deadlock"],
+    }
+
+
 class SyncJob(models.Model):
     """
     Main sync job model
@@ -298,7 +312,32 @@ class SyncJobTable(models.Model):
             "for flat-file hybrid incremental mode."
         ),
     )
-    
+
+    # Reliability / DQ foundations (Day 1 of the 7-day plan).
+    # Schema for retry_policy:
+    # {
+    #   "max_retries": int,
+    #   "initial_delay": float,
+    #   "backoff": float,
+    #   "retryable_errors": [str]
+    # }
+    retry_policy = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=(
+            "Per-table retry policy. Schema: "
+            "{'max_retries': int, 'initial_delay': float, 'backoff': float, "
+            "'retryable_errors': [str]}"
+        ),
+    )
+    dead_letter_max_pct = models.FloatField(
+        default=0.001,
+        help_text=(
+            "Maximum allowed dead-letter rate per run for this table "
+            "(fraction of rows seen). 0 = fail-fast on first bad row."
+        ),
+    )
+
     class Meta:
         db_table = 'sync_job_tables'
         unique_together = [['job', 'schema_name', 'table_name']]
@@ -384,8 +423,36 @@ class SyncCheckpoint(models.Model):
         blank=True,
         help_text="Last synced value (timestamp or ID) for incremental sync"
     )
+    # Reliability foundations (Day 1).
+    # Dual-pointer resume model:
+    #   last_seen_value     -> high-water mark observed at source (advances eagerly)
+    #   last_committed_value -> high-water mark whose batch was durably committed at target
+    # checkpoint_status drives resume behavior on the next run; existing executor
+    # paths keep using last_value until Day-2 cuts them over.
+    last_seen_value = models.TextField(null=True, blank=True)
+    last_committed_value = models.TextField(null=True, blank=True)
+    checkpoint_status = models.CharField(
+        max_length=20,
+        choices=[
+            ("clean", "Clean"),
+            ("dirty", "Dirty"),
+            ("recovering", "Recovering"),
+        ],
+        default="clean",
+        db_index=True,
+    )
+    last_successful_batch_id = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+    )
+    last_status_reason = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+    )
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         db_table = 'sync_checkpoints'
         unique_together = [['job', 'schema_name', 'table_name']]
@@ -558,6 +625,12 @@ class SyncExecutionLog(models.Model):
     # Verification summary for post-migration accuracy (e.g. "Rows: 100/100, Perfect accuracy: Yes")
     # Used by job/execution UI; Oracle-inclusive flows surface expected/actual counts and perfect_accuracy here.
     verification_summary = models.TextField(null=True, blank=True)
+    # Reliability foundations (Day 1) - retry + dead-letter visibility.
+    # These are written to by Day 3 (retry classifier) and Day 4 (dead-letter collector).
+    # Today they only exist as columns with safe defaults so importers remain stable.
+    attempts = models.IntegerField(default=0)
+    last_error_code = models.CharField(max_length=64, null=True, blank=True)
+    dead_letter_count = models.IntegerField(default=0)
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -814,6 +887,9 @@ class SyncVerificationReport(models.Model):
         default='ok',
     )
     details = models.TextField(null=True, blank=True)
+    # Structured DQ metrics (Day 1 of reliability + DQ plan).
+    # Written by Days 5-6 alongside the existing `details` text for back-compat.
+    metrics_json = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -829,4 +905,170 @@ class SyncVerificationReport(models.Model):
         return (
             f"VerificationReport {self.schema_name}.{self.table_name} "
             f"[{self.sync_mode}] -> {self.decision}"
+        )
+
+
+class ProcessedBatch(models.Model):
+    """Idempotency marker per (execution, schema, table, batch_id).
+
+    Reliability foundations (Day 1). Day-2's BatchCoordinator inserts a row
+    in `started` state before write, then flips to `committed` inside the
+    same atomic txn that commits the rows. A duplicate attempt at the same
+    (execution, schema, table, batch_id) hits the unique constraint and the
+    coordinator interprets that as "already done" -> safe replay.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.ForeignKey(
+        SyncJob,
+        on_delete=models.CASCADE,
+        related_name="processed_batches",
+    )
+    execution = models.ForeignKey(
+        SyncExecution,
+        on_delete=models.CASCADE,
+        related_name="processed_batches",
+    )
+    schema_name = models.CharField(max_length=255)
+    table_name = models.CharField(max_length=255)
+    batch_id = models.CharField(max_length=64)
+    row_count = models.BigIntegerField(default=0)
+    started_at = models.DateTimeField(auto_now_add=True)
+    committed_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ("started", "Started"),
+            ("committed", "Committed"),
+            ("failed", "Failed"),
+        ],
+        default="started",
+        db_index=True,
+    )
+
+    class Meta:
+        db_table = "processed_batches"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["execution", "schema_name", "table_name", "batch_id"],
+                name="uniq_processed_batch_per_run",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["job", "schema_name", "table_name"]),
+            models.Index(fields=["execution", "status"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"ProcessedBatch {self.schema_name}.{self.table_name} "
+            f"batch={self.batch_id} status={self.status}"
+        )
+
+
+class SyncDeadLetterRow(models.Model):
+    """Per-row failure capture for non-fatal data quality issues.
+
+    Reliability foundations (Day 1). Day-4's DeadLetterCollector writes
+    one row here every time a single source row fails to apply but the
+    run is allowed to continue (under the per-table `dead_letter_max_pct`
+    budget). Today this table is created empty and is not yet written to.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    execution = models.ForeignKey(
+        SyncExecution,
+        on_delete=models.CASCADE,
+        related_name="dead_letter_rows",
+    )
+    job = models.ForeignKey(
+        SyncJob,
+        on_delete=models.CASCADE,
+        related_name="dead_letter_rows",
+    )
+    schema_name = models.CharField(max_length=255)
+    table_name = models.CharField(max_length=255)
+    batch_id = models.CharField(max_length=64, null=True, blank=True)
+    source_pk_text = models.CharField(max_length=512, null=True, blank=True)
+    source_row_hash = models.CharField(max_length=128, null=True, blank=True)
+    raw_row_json = models.JSONField(null=True, blank=True)
+    error_code = models.CharField(max_length=64)
+    error_message = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "sync_dead_letter_rows"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["execution", "schema_name", "table_name"]),
+            models.Index(fields=["job", "-created_at"]),
+            models.Index(fields=["error_code"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"DeadLetter {self.schema_name}.{self.table_name} "
+            f"pk={self.source_pk_text} code={self.error_code}"
+        )
+
+
+class ReconciliationReport(models.Model):
+    """Per-table per-execution structured DQ artifact.
+
+    Reliability foundations (Day 1). Days 5-6 build this. We define the
+    schema today so callers (UI, admin, exporters) can be wired in
+    parallel without later schema churn.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    execution = models.ForeignKey(
+        SyncExecution,
+        on_delete=models.CASCADE,
+        related_name="reconciliation_reports",
+    )
+    job = models.ForeignKey(
+        SyncJob,
+        on_delete=models.CASCADE,
+        related_name="reconciliation_reports",
+    )
+    schema_name = models.CharField(max_length=255)
+    table_name = models.CharField(max_length=255)
+    decision = models.CharField(
+        max_length=24,
+        choices=[
+            ("ok", "OK"),
+            ("warning", "Warning"),
+            ("repair_full", "Repair Full"),
+            ("repair_incremental", "Repair Incremental"),
+        ],
+        default="ok",
+        db_index=True,
+    )
+    confidence = models.FloatField(default=1.0)
+    source_metrics_json = models.JSONField(default=dict, blank=True)
+    target_metrics_json = models.JSONField(default=dict, blank=True)
+    drift_json = models.JSONField(default=dict, blank=True)
+    dq_pre_json = models.JSONField(default=dict, blank=True)
+    dq_post_json = models.JSONField(default=dict, blank=True)
+    snapshots_json = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "reconciliation_reports"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["execution", "schema_name", "table_name"],
+                name="uniq_reconciliation_report_per_table",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["job", "-created_at"]),
+            models.Index(fields=["decision"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"ReconciliationReport {self.schema_name}.{self.table_name} "
+            f"-> {self.decision} (confidence={self.confidence:.2f})"
         )

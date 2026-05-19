@@ -1,0 +1,1567 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load humanize %}
+
+{% block title %}SyncArchitect | Advanced Dashboard{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Azure Dashboard Theme - Professional & Clean */
+    body {
+        background: #F3F2F1;
+        color: #323130;
+        font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+
+    /* Chart Containers - Azure Card Style */
+    .chart-container {
+        background: #FFFFFF;
+        border-radius: 2px;
+        padding: 20px 24px;
+        box-shadow: 0 1.6px 3.6px rgba(0, 0, 0, 0.10);
+        border: 1px solid #EDEBE9;
+        transition: none;
+    }
+
+    .chart-container:hover {
+        box-shadow: 0 1.6px 3.6px rgba(0, 0, 0, 0.10);
+        transform: none;
+    }
+
+    /* KPI Stat Cards - Azure Clean Style */
+    .stat-card {
+        background: #FFFFFF;
+        border-radius: 2px;
+        padding: 16px 20px;
+        color: #323130;
+        position: relative;
+        overflow: visible;
+        transition: none;
+        border: 1px solid #EDEBE9;
+        box-shadow: 0 1.6px 3.6px rgba(0, 0, 0, 0.10);
+        min-width: 180px;
+    }
+
+    .stat-card:hover {
+        transform: none;
+        box-shadow: 0 1.6px 3.6px rgba(0, 0, 0, 0.10);
+    }
+
+    .stat-card::before {
+        display: none;
+    }
+
+    /* Remove gradient backgrounds */
+    .gradient-1,
+    .gradient-2,
+    .gradient-3,
+    .gradient-4,
+    .gradient-5,
+    .gradient-6 {
+        background: #FFFFFF;
+    }
+
+    /* Azure left border accent for KPI cards */
+    .stat-card::after {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 3px;
+        border-radius: 2px 0 0 2px;
+    }
+
+    .gradient-1::after { background: #0078D4; }
+    .gradient-2::after { background: #107C10; }
+    .gradient-3::after { background: #0078D4; }
+    .gradient-4::after { background: #107C10; }
+    .gradient-5::after { background: #0078D4; }
+    .gradient-6::after { background: #0078D4; }
+
+    /* Metric Value - Azure Style */
+    .metric-value {
+        font-size: 28px;
+        font-weight: 600;
+        line-height: 1.2;
+        text-shadow: none;
+        color: #323130;
+    }
+
+    /* Metric Label - Azure Style */
+    .metric-label {
+        font-size: 12px;
+        font-weight: 400;
+        text-transform: none;
+        letter-spacing: 0;
+        opacity: 1;
+        margin-top: 4px;
+        color: #605E5C;
+    }
+
+    /* Section Header */
+    .section-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 16px;
+    }
+
+    /* Section Title - Azure Typography */
+    .section-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: #323130;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0;
+    }
+
+    /* Section Icon - Clean Azure Blue */
+    .section-icon {
+        width: 40px;
+        height: 40px;
+        background: #0078D4;
+        border-radius: 2px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #FFFFFF;
+        font-size: 20px;
+    }
+
+    /* Print styles */
+    @media print {
+        .no-print {
+            display: none !important;
+        }
+        .chart-container {
+            page-break-inside: avoid;
+            box-shadow: none;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="flex-1 overflow-y-auto p-6 space-y-8 no-scrollbar">
+    <!-- Page Header - Azure Style -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+        <div class="space-y-1">
+            <h1 class="text-xl font-semibold text-[#323130]" style="font-family: 'Segoe UI', system-ui, sans-serif;">Advanced Analytics</h1>
+            <p class="text-xs text-[#605E5C] font-normal">Comprehensive data intelligence with heatmaps, radar & treemaps</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <div class="flex items-center gap-2 px-3 py-1.5 bg-white border border-[#EDEBE9] rounded-sm">
+                <span class="w-2 h-2 rounded-full bg-[#107C10]"></span>
+                <span class="text-xs font-semibold text-[#107C10]">Live</span>
+                <div class="w-px h-3 bg-[#EDEBE9]"></div>
+                <span class="text-xs text-[#605E5C]" id="last-updated">Just now</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- KPI Stat Cards - Azure Clean Style -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4" id="kpi-cards" style="gap: 16px;">
+        <div class="stat-card gradient-1">
+            <div class="metric-label" style="margin-bottom: 4px;">Total Relays</div>
+            <div class="metric-value">{{ stats.jobs.total }}</div>
+            <div class="mt-2 text-xs" style="color: #605E5C;">{{ stats.jobs.running }} Active</div>
+        </div>
+
+        <div class="stat-card gradient-2">
+            <div class="metric-label" style="margin-bottom: 4px;">Success Rate</div>
+            <div class="metric-value">{{ stats.success_rates.last_30d }}%</div>
+            <div class="mt-2 text-xs" style="color: #605E5C;">{{ stats.executions.last_30d }} Executions</div>
+        </div>
+
+        <div class="stat-card gradient-3">
+            <div class="metric-label" style="margin-bottom: 4px;">Executions (24H)</div>
+            <div class="metric-value">{{ stats.executions.last_24h }}</div>
+            <div class="mt-2 text-xs" style="color: #605E5C;">7D: {{ stats.executions.last_7d }}</div>
+        </div>
+
+        <div class="stat-card gradient-4">
+            <div class="metric-label" style="margin-bottom: 4px;">Rows Synced</div>
+            <div class="metric-value">{{ stats.rows_synced.last_30d|intcomma }}</div>
+            <div class="mt-2 text-xs" style="color: #605E5C;">24H: {{ stats.rows_synced.last_24h|intcomma }}</div>
+        </div>
+
+        <div class="stat-card gradient-5">
+            <div class="metric-label" style="margin-bottom: 4px;">Avg Latency</div>
+            <div class="metric-value">{% if stats.performance.avg_duration_30d %}{{ stats.performance.avg_duration_30d|floatformat:0 }}s{% else %}N/A{% endif %}</div>
+            <div class="mt-2 text-xs" style="color: #605E5C;">Completion Time</div>
+        </div>
+
+        <div class="stat-card gradient-6">
+            <div class="metric-label" style="margin-bottom: 4px;">DB Clusters</div>
+            <div class="metric-value">{{ stats.connections.total }}</div>
+            <div class="mt-2 text-xs" style="color: #605E5C;">API: {{ stats.api_connections.total }}</div>
+        </div>
+    </div>
+
+    <!-- Connection Health Check Card - Azure Style -->
+    {% if health_check_data %}
+    <div class="chart-container">
+        <div class="section-header">
+            <div class="section-icon">
+                <span class="material-symbols-outlined">health_and_safety</span>
+            </div>
+            <div class="flex-1">
+                <h3 class="section-title">Connection Health</h3>
+                <p class="text-xs" style="color: #605E5C; margin-top: 2px;" id="last-check-time">Last check: {{ health_check_data.tested_at|timesince }} ago</p>
+            </div>
+            <button id="test-all-connections-btn" class="flex items-center gap-2" style="background: #0078D4; color: #FFFFFF; border: none; border-radius: 2px; height: 32px; padding: 0 16px; font-size: 14px; font-weight: 400; cursor: pointer; transition: background 0.15s;" onmouseover="this.style.background='#005A9E'" onmouseout="this.style.background='#0078D4'">
+                <span class="material-symbols-outlined" style="font-size: 16px;">refresh</span>
+                <span>Test Now</span>
+            </button>
+        </div>
+
+        <!-- Health Status Summary - Azure Clean Cards -->
+        <div class="grid grid-cols-3 gap-4 mb-5" style="gap: 16px; margin-bottom: 20px;">
+            <div style="background: #F3F2F1; border-radius: 2px; padding: 12px 16px; border: 1px solid #EDEBE9;">
+                <div class="text-xs font-normal mb-1" style="color: #605E5C;">Total</div>
+                <div class="text-2xl font-semibold" style="color: #323130;" id="health-total">{{ health_check_data.total_tested }}</div>
+            </div>
+            <div id="health-passed-card" style="background: #DFF6DD; border-radius: 2px; padding: 12px 16px; border: 1px solid #107C10;">
+                <div class="text-xs font-normal mb-1" style="color: #107C10;">Passed</div>
+                <div class="text-2xl font-semibold" style="color: #107C10;" id="health-passed">{{ health_check_data.total_passed }}</div>
+            </div>
+            <div id="health-failed-card" style="background: {% if health_check_data.total_failed > 0 %}#FDE7E9{% else %}#F3F2F1{% endif %}; border-radius: 2px; padding: 12px 16px; border: 1px solid {% if health_check_data.total_failed > 0 %}#A80000{% else %}#EDEBE9{% endif %};">
+                <div class="text-xs font-normal mb-1" style="color: {% if health_check_data.total_failed > 0 %}#A80000{% else %}#605E5C{% endif %};" id="health-failed-label">Failed</div>
+                <div class="text-2xl font-semibold" style="color: {% if health_check_data.total_failed > 0 %}#A80000{% else %}#323130{% endif %};" id="health-failed">{{ health_check_data.total_failed }}</div>
+            </div>
+        </div>
+
+        <!-- Health Percentage Bar - Azure Style -->
+        <div>
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-sm font-semibold" style="color: #323130;">Health Status</span>
+                <span class="text-base font-semibold" id="health-percentage-text" style="color: {% if health_check_data.health_percentage == 100 %}#107C10{% elif health_check_data.health_percentage >= 80 %}#FFB900{% else %}#A80000{% endif %};">
+                    {{ health_check_data.health_percentage|floatformat:0 }}%
+                </span>
+            </div>
+            <div style="height: 4px; background: #EDEBE9; border-radius: 2px; overflow: hidden;">
+                <div id="health-percentage-bar" style="height: 100%; background: {% if health_check_data.health_percentage == 100 %}#107C10{% elif health_check_data.health_percentage >= 80 %}#FFB900{% else %}#A80000{% endif %}; border-radius: 2px; transition: width 0.3s ease; width: {{ health_check_data.health_percentage }}%;"></div>
+            </div>
+        </div>
+
+        <!-- Failed Connections List -->
+        <div id="failed-connections-container">
+        {% if health_check_data.total_failed > 0 %}
+        <div style="border-top: 1px solid #EDEBE9; padding-top: 24px; margin-top: 20px;">
+            <div style="font-size: 14px; font-weight: 600; color: #A80000; margin-bottom: 16px;">FAILED CONNECTIONS</div>
+            <div style="display: flex; flex-direction: column; gap: 12px; max-height: 240px; overflow-y: auto;">
+                {% for conn in health_check_data.failed_connections %}
+                <div style="border-radius: 2px; border: 1px solid #A80000; background: #FDE7E9; padding: 16px;">
+                    <div class="flex items-start gap-3">
+                        <span class="material-symbols-outlined" style="color: #A80000; font-size: 20px;">error</span>
+                        <div class="flex-1 min-w-0">
+                            <div style="font-size: 14px; font-weight: 600; color: #A80000; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ conn.name }}</div>
+                            <div style="font-size: 12px; font-weight: 400; color: #A80000; margin-top: 4px;">{{ conn.type|upper }}</div>
+                            <div style="font-size: 13px; color: #605E5C; margin-top: 8px; word-wrap: break-word;">{{ conn.error }}</div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% else %}
+        <div style="border-top: 1px solid #EDEBE9; padding-top: 24px; margin-top: 20px;">
+            <div class="flex items-center gap-3" style="color: #107C10; background: #DFF6DD; border-radius: 2px; padding: 16px;">
+                <span class="material-symbols-outlined" style="font-size: 24px;">check_circle</span>
+                <span style="font-size: 14px; font-weight: 600;">All connections healthy</span>
+            </div>
+        </div>
+        {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Advanced Charts Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6" id="charts-grid">
+
+        <!-- Execution Heatmap (Activity by Hour & Day) -->
+        <div class="chart-container xl:col-span-2">
+            <div class="section-header">
+                <div class="section-icon">
+                    <span class="material-symbols-outlined">grid_view</span>
+                </div>
+                <div>
+                    <h3 class="section-title">Activity Heatmap</h3>
+                    <p class="text-xs text-slate-500 font-medium">Execution patterns by day & hour (last 7 days)</p>
+                </div>
+            </div>
+            <div id="heatmapChart"></div>
+        </div>
+
+        <!-- Performance Radar Chart -->
+        <div class="chart-container">
+            <div class="section-header">
+                <div class="section-icon">
+                    <span class="material-symbols-outlined">radar</span>
+                </div>
+                <div>
+                    <h3 class="section-title">System Health Score</h3>
+                    <p class="text-xs font-medium" style="color: var(--text-secondary);">Key performance indicators (0-100%)</p>
+                </div>
+            </div>
+            <div id="radarChart"></div>
+            <!-- Legend with actual values -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 1px solid #EDEBE9;">
+                <div>
+                    <div style="font-size: 11px; color: #A19F9D; margin-bottom: 2px;">Success Rate (30d)</div>
+                    <div style="font-size: 16px; font-weight: 600; color: #323130;">{{ stats.success_rates.last_30d|floatformat:1 }}%</div>
+                </div>
+                <div>
+                    <div style="font-size: 11px; color: #A19F9D; margin-bottom: 2px;">Reliability Score</div>
+                    <div style="font-size: 16px; font-weight: 600; color: #323130;" id="reliability-score">—</div>
+                </div>
+                <div>
+                    <div style="font-size: 11px; color: #A19F9D; margin-bottom: 2px;">Data Throughput</div>
+                    <div style="font-size: 16px; font-weight: 600; color: #323130;" id="throughput-score">—</div>
+                </div>
+                <div>
+                    <div style="font-size: 11px; color: #A19F9D; margin-bottom: 2px;">Activity Level (24h)</div>
+                    <div style="font-size: 16px; font-weight: 600; color: #323130;">{{ stats.executions.last_24h }} runs</div>
+                </div>
+                <div>
+                    <div style="font-size: 11px; color: #A19F9D; margin-bottom: 2px;">Speed Score</div>
+                    <div style="font-size: 16px; font-weight: 600; color: #323130;" id="speed-score">—</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Treemap (Database Usage by Size) -->
+        <div class="chart-container xl:col-span-2">
+            <div class="section-header">
+                <div class="section-icon">
+                    <span class="material-symbols-outlined">dashboard</span>
+                </div>
+                <div>
+                    <h3 class="section-title">Data Volume Treemap</h3>
+                    <p class="text-xs font-medium" style="color: var(--text-secondary);">Rows synced by database type</p>
+                </div>
+            </div>
+            <div id="treemapChart"></div>
+        </div>
+
+        <!-- Execution Trends (Line Chart) -->
+        <div class="chart-container">
+            <div class="section-header">
+                <div class="section-icon">
+                    <span class="material-symbols-outlined">trending_up</span>
+                </div>
+                <div>
+                    <h3 class="section-title">Execution Trends</h3>
+                    <p class="text-xs font-medium" style="color: var(--text-secondary);">30-day performance</p>
+                </div>
+            </div>
+            <div id="executionTrendsChart"></div>
+        </div>
+
+        <!-- Success Rate Radial Bar -->
+        <div class="chart-container">
+            <div class="section-header">
+                <div class="section-icon">
+                    <span class="material-symbols-outlined">donut_small</span>
+                </div>
+                <div>
+                    <h3 class="section-title">Success Rate</h3>
+                    <p class="text-xs font-medium" style="color: var(--text-secondary);">30-day distribution</p>
+                </div>
+            </div>
+            <div id="successRateChart"></div>
+        </div>
+
+        <!-- Database Usage Bar Chart -->
+        <div class="chart-container">
+            <div class="section-header">
+                <div class="section-icon">
+                    <span class="material-symbols-outlined">storage</span>
+                </div>
+                <div>
+                    <h3 class="section-title">Database Usage</h3>
+                    <p class="text-xs font-medium" style="color: var(--text-secondary);">Tables by cluster</p>
+                </div>
+            </div>
+            <div id="databaseUsageChart"></div>
+        </div>
+
+        <!-- Data Volume Area Chart -->
+        <div class="chart-container">
+            <div class="section-header">
+                <div class="section-icon">
+                    <span class="material-symbols-outlined">analytics</span>
+                </div>
+                <div>
+                    <h3 class="section-title">Data Volume</h3>
+                    <p class="text-xs font-medium" style="color: var(--text-secondary);">Rows over time</p>
+                </div>
+            </div>
+            <div id="dataVolumeChart"></div>
+        </div>
+    </div>
+
+    <!-- Recent Activity Table - Azure Style -->
+    <div class="chart-container" id="recent-activity-table">
+        <div class="section-header mb-0" style="border-bottom: 1px solid #EDEBE9; padding-bottom: 16px;">
+            <div class="section-icon">
+                <span class="material-symbols-outlined">history</span>
+            </div>
+            <div class="flex-1">
+                <h3 class="section-title">Recent Activity</h3>
+                <p class="text-xs" style="color: #605E5C; margin-top: 2px;">Latest sync executions</p>
+            </div>
+            <a href="{% url 'sync_jobs:list' %}" class="flex items-center gap-2 px-3 py-1.5 text-white rounded-sm text-xs font-normal hover:bg-opacity-90 transition-all no-underline no-print" style="background: #0078D4; height: 32px;">
+                View All
+                <span class="material-symbols-outlined text-sm">arrow_forward</span>
+            </a>
+        </div>
+
+        <div class="overflow-x-auto" style="margin-top: 20px;">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr style="background: #F3F2F1; border-bottom: 1px solid #EDEBE9;">
+                        <th class="px-4 py-3 text-xs font-semibold" style="color: #323130; min-height: 44px;">Relay</th>
+                        <th class="px-4 py-3 text-xs font-semibold" style="color: #323130;">Time</th>
+                        <th class="px-4 py-3 text-xs font-semibold" style="color: #323130;">Volume</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-right" style="color: #323130;">Status</th>
+                    </tr>
+                </thead>
+                <tbody style="border-top: 1px solid #EDEBE9;">
+                    {% for execution in recent_activity %}
+                    <tr class="transition-all cursor-pointer" style="border-bottom: 1px solid #EDEBE9; background: #FFFFFF;" onmouseover="this.style.background='#EFF6FC'" onmouseout="this.style.background='#FFFFFF'" onclick="window.location='{% url 'sync_jobs:execution_detail' job_id=execution.job.id execution_id=execution.id %}'">
+                        <td class="px-4 py-3" style="min-height: 44px;">
+                            <div class="flex items-center gap-3">
+                                <div class="text-sm font-semibold" style="color: #323130;">{{ execution.job.name }}</div>
+                            </div>
+                        </td>
+                        <td class="px-4 py-3">
+                            <div class="text-xs" style="color: #605E5C;">
+                                {{ execution.started_at|timesince }} ago
+                            </div>
+                        </td>
+                        <td class="px-4 py-3">
+                            <div class="text-xs tabular-nums" style="color: #323130;">
+                                {{ execution.total_rows_synced|default:0|intcomma }} rows
+                            </div>
+                        </td>
+                        <td class="px-4 py-3 text-right">
+                            {% if execution.status == 'completed' %}
+                            <span class="inline-flex items-center px-2 py-1 rounded-sm text-xs font-semibold" style="background: #DFF6DD; color: #107C10; border-radius: 2px;">
+                                Success
+                            </span>
+                            {% elif execution.status == 'failed' %}
+                            <span class="inline-flex items-center px-2 py-1 rounded-sm text-xs font-semibold" style="background: #FDE7E9; color: #A80000; border-radius: 2px;">
+                                Failed
+                            </span>
+                            {% elif execution.status == 'running' %}
+                            <span class="inline-flex items-center px-2 py-1 rounded-sm text-xs font-semibold" style="background: #EFF6FC; color: #0078D4; border-radius: 2px;">
+                                Running
+                            </span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="4" class="px-4 py-12 text-center">
+                            <div class="flex flex-col items-center gap-3">
+                                <span class="material-symbols-outlined text-4xl" style="color: #A19F9D;">inventory_2</span>
+                                <p class="text-sm" style="color: #605E5C;">No recent activity detected</p>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ApexCharts Library -->
+<script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+
+<script>
+// ==========================================
+// AZURE CHART CONFIGURATION
+// ==========================================
+// Azure Professional Color Palette - NO gradients, NO rainbow colors
+const azureChartColors = ['#0078D4', '#50E6FF', '#773ADC', '#038387', '#C239B3', '#107C10', '#A80000', '#A19F9D'];
+
+const commonOptions = {
+    chart: {
+        fontFamily: '"Segoe UI", system-ui, -apple-system, sans-serif',
+        toolbar: {
+            show: true,
+            tools: {
+                download: true,
+                selection: false,
+                zoom: false,
+                zoomin: false,
+                zoomout: false,
+                pan: false,
+                reset: false
+            }
+        },
+        animations: {
+            enabled: true,
+            easing: 'easeinout',
+            speed: 500
+        },
+        background: 'transparent'
+    },
+    theme: {
+        mode: 'light'
+    },
+    colors: azureChartColors,
+    dataLabels: {
+        enabled: false
+    },
+    grid: {
+        borderColor: '#EDEBE9',
+        strokeDashArray: 0
+    },
+    tooltip: {
+        theme: 'light',
+        style: {
+            fontSize: '12px',
+            fontFamily: '"Segoe UI", system-ui, sans-serif'
+        },
+        x: {
+            show: true
+        },
+        y: {
+            formatter: function(value) {
+                return value !== undefined && value !== null ? value.toLocaleString() : '0';
+            }
+        }
+    }
+};
+
+// Prepare real data from Django
+const trendsData = {
+    days: [{% for day in trends_data.days %}'{{ day }}'{% if not forloop.last %},{% endif %}{% endfor %}],
+    total: [{{ trends_data.total|join:"," }}],
+    successful: [{{ trends_data.successful|join:"," }}],
+    failed: [{{ trends_data.failed|join:"," }}],
+    rowsSynced: [{{ trends_data.rows_synced|join:"," }}]
+};
+
+console.log('Trends Data:', {
+    daysCount: trendsData.days.length,
+    totalCount: trendsData.total.length,
+    lastDay: trendsData.days[trendsData.days.length - 1],
+    lastTotal: trendsData.total[trendsData.total.length - 1],
+    lastSuccess: trendsData.successful[trendsData.successful.length - 1],
+    lastFailed: trendsData.failed[trendsData.failed.length - 1]
+});
+
+const dbUsageData = [
+    {% for item in stats.database_usage|slice:":6" %}
+    { x: "{{ item.label }}", y: {{ item.tables_synced }}, rows: {{ item.rows_synced|default:0 }} }{% if not forloop.last %},{% endif %}
+    {% endfor %}
+];
+
+// ==========================================
+// 1. HEATMAP CHART (Activity by Hour & Day)
+// ==========================================
+// Use real heatmap data from backend (executions by hour/day for last 7 days)
+const heatmapData = {{ heatmap_data|safe }};
+const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+const heatmapOptions = {
+    ...commonOptions,
+    series: heatmapData,
+    chart: {
+        ...commonOptions.chart,
+        type: 'heatmap',
+        height: 350
+    },
+    plotOptions: {
+        heatmap: {
+            shadeIntensity: 0.5,
+            radius: 0,
+            colorScale: {
+                ranges: [
+                    { from: 0, to: 0, name: 'None', color: '#F3F2F1' },
+                    { from: 1, to: 5, name: 'Low', color: '#C7E0F4' },
+                    { from: 6, to: 15, name: 'Medium', color: '#0078D4' },
+                    { from: 16, to: 50, name: 'High', color: '#005A9E' }
+                ]
+            }
+        }
+    },
+    xaxis: {
+        categories: days,
+        labels: {
+            style: {
+                fontSize: '12px',
+                fontWeight: 400,
+                colors: '#A19F9D'
+            }
+        }
+    },
+    yaxis: {
+        labels: {
+            style: {
+                fontSize: '12px',
+                fontWeight: 400,
+                colors: '#A19F9D'
+            }
+        }
+    },
+    dataLabels: {
+        enabled: false
+    }
+};
+
+// Initialize charts when DOM is ready
+let heatmapChart, radarChart, treemapChart, executionTrendsChart, successRateChart, databaseUsageChart, dataVolumeChart;
+
+function initializeCharts() {
+    console.log('Initializing charts...');
+
+    // Heatmap Chart
+    const heatmapEl = document.querySelector("#heatmapChart");
+    if (heatmapEl) {
+        console.log('Creating heatmap chart');
+        heatmapChart = new ApexCharts(heatmapEl, heatmapOptions);
+        heatmapChart.render();
+    } else {
+        console.error('Heatmap element not found');
+    }
+
+// ==========================================
+// 2. RADAR CHART (System Health Score)
+// ==========================================
+// Calculate meaningful scores
+const successRate = {{ stats.success_rates.last_30d }};
+const totalExecs30d = {{ stats.executions.last_30d|default:1 }};
+const failedExecs30d = {{ stats.executions.failed_30d|default:0 }};
+const rowsSynced30d = {{ stats.rows_synced.last_30d|default:0 }};
+const avgDuration30d = {% if stats.performance.avg_duration_30d %}{{ stats.performance.avg_duration_30d }}{% else %}0{% endif %};
+const executions24h = {{ stats.executions.last_24h }};
+
+// Reliability: Based on failure rate (fewer failures = higher score)
+const failureRate = totalExecs30d > 0 ? (failedExecs30d / totalExecs30d) * 100 : 0;
+const reliabilityScore = Math.max(0, Math.min(100, 100 - failureRate));
+
+// Data Throughput: Normalized rows synced (log scale for better visualization)
+const throughputScore = rowsSynced30d > 0
+    ? Math.min(100, (Math.log10(rowsSynced30d + 1) / Math.log10(10000000)) * 100)
+    : 0;
+
+// Activity Score: Based on 24h executions (normalized to 0-100, assuming 10+ is excellent)
+const activityScore = Math.min(100, (executions24h / 10) * 100);
+
+// Speed Score: Based on avg duration (faster = higher score, assuming 60min is baseline)
+const speedScore = avgDuration30d > 0
+    ? Math.max(0, Math.min(100, 100 - (avgDuration30d / 60) * 100))
+    : 50;
+
+// Update legend values
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('reliability-score').textContent = reliabilityScore.toFixed(1) + '%';
+    document.getElementById('throughput-score').textContent = throughputScore.toFixed(1) + '%';
+    document.getElementById('speed-score').textContent = speedScore.toFixed(1) + '%';
+});
+
+const radarOptions = {
+    ...commonOptions,
+    series: [{
+        name: 'Score',
+        data: [successRate, reliabilityScore, throughputScore, activityScore, speedScore]
+    }],
+    chart: {
+        ...commonOptions.chart,
+        type: 'radar',
+        height: 300
+    },
+    xaxis: {
+        categories: ['Success Rate', 'Reliability', 'Data Throughput', 'Activity (24h)', 'Speed'],
+        labels: {
+            style: {
+                fontSize: '12px',
+                fontWeight: 400,
+                colors: ['#605E5C']
+            }
+        }
+    },
+    yaxis: {
+        show: true,
+        min: 0,
+        max: 100,
+        tickAmount: 5,
+        labels: {
+            formatter: function(val) {
+                return val.toFixed(0) + '%';
+            },
+            style: {
+                fontSize: '11px',
+                fontWeight: 400,
+                colors: ['#A19F9D']
+            }
+        }
+    },
+    fill: {
+        opacity: 0.15
+    },
+    markers: {
+        size: 4,
+        colors: ['#0078D4'],
+        strokeColors: '#FFFFFF',
+        strokeWidth: 2
+    },
+    colors: ['#0078D4'],
+    stroke: {
+        show: true,
+        width: 2,
+        colors: ['#0078D4']
+    },
+    tooltip: {
+        enabled: true,
+        y: {
+            formatter: function(val, opts) {
+                const category = opts.w.globals.labels[opts.dataPointIndex];
+                let detail = '';
+
+                if (category === 'Success Rate') {
+                    detail = ' — ' + {{ stats.executions.successful_30d|default:0 }} + ' of ' + totalExecs30d + ' successful';
+                } else if (category === 'Reliability') {
+                    detail = ' — ' + failedExecs30d + ' failures in 30 days';
+                } else if (category === 'Data Throughput') {
+                    detail = ' — ' + rowsSynced30d.toLocaleString() + ' rows synced';
+                } else if (category === 'Activity (24h)') {
+                    detail = ' — ' + executions24h + ' executions today';
+                } else if (category === 'Speed') {
+                    detail = ' — Avg ' + avgDuration30d.toFixed(1) + ' min duration';
+                }
+
+                return val.toFixed(1) + '%' + detail;
+            }
+        },
+        style: {
+            fontSize: '12px',
+            fontFamily: '"Segoe UI", system-ui, -apple-system, sans-serif'
+        }
+    },
+    dataLabels: {
+        enabled: true,
+        background: {
+            enabled: true,
+            borderRadius: 2,
+            padding: 4,
+            borderWidth: 0
+        },
+        style: {
+            fontSize: '11px',
+            fontWeight: 600,
+            colors: ['#323130']
+        },
+        formatter: function(val) {
+            return val.toFixed(0) + '%';
+        }
+    }
+};
+
+    // Radar Chart
+    const radarEl = document.querySelector("#radarChart");
+    if (radarEl) {
+        console.log('Creating radar chart');
+        radarChart = new ApexCharts(radarEl, radarOptions);
+        radarChart.render();
+    } else {
+        console.error('Radar element not found');
+    }
+
+// ==========================================
+// 3. TREEMAP CHART (Data Volume by Database)
+// ==========================================
+const treemapData = [
+    {% for item in stats.database_usage|slice:":10" %}
+    {
+        x: '{{ item.label }}',
+        y: {{ item.rows_synced|default:0 }}
+    }{% if not forloop.last %},{% endif %}
+    {% endfor %}
+];
+
+const treemapOptions = {
+    ...commonOptions,
+    series: [{
+        data: treemapData
+    }],
+    chart: {
+        ...commonOptions.chart,
+        type: 'treemap',
+        height: 300
+    },
+    plotOptions: {
+        treemap: {
+            distributed: true,
+            enableShades: false
+        }
+    },
+    dataLabels: {
+        enabled: true,
+        style: {
+            fontSize: '12px',
+            fontWeight: 700
+        },
+        formatter: function(text, op) {
+            return [text, op.value.toLocaleString() + ' rows'];
+        }
+    },
+    legend: {
+        show: false
+    }
+};
+
+    // Treemap Chart
+    const treemapEl = document.querySelector("#treemapChart");
+    if (treemapEl) {
+        console.log('Creating treemap chart');
+        treemapChart = new ApexCharts(treemapEl, treemapOptions);
+        treemapChart.render();
+    } else {
+        console.error('Treemap element not found');
+    }
+
+// ==========================================
+// 4. EXECUTION TRENDS LINE CHART (30 Days - All Days Shown)
+// ==========================================
+const executionTrendsOptions = {
+    ...commonOptions,
+    series: [{
+        name: 'Total Executions',
+        data: trendsData.total
+    }, {
+        name: 'Successful',
+        data: trendsData.successful
+    }, {
+        name: 'Failed',
+        data: trendsData.failed
+    }],
+    chart: {
+        ...commonOptions.chart,
+        type: 'line',
+        height: 320
+    },
+    colors: ['#0D8BFF', '#00C853', '#FF1744'],  // Vivid Blue, Vivid Green, Vivid Red
+    stroke: {
+        width: 3,
+        curve: 'smooth',
+        opacity: 1.0
+    },
+    xaxis: {
+        categories: trendsData.days,
+        labels: {
+            rotate: -45,
+            rotateAlways: false,
+            hideOverlappingLabels: true,
+            style: {
+                fontSize: '11px',
+                fontWeight: 400,
+                colors: '#A19F9D'
+            }
+        },
+        axisBorder: {
+            show: true,
+            color: '#EDEBE9'
+        },
+        axisTicks: {
+            show: false
+        },
+        tickAmount: 10  // Show ~10 date labels to avoid crowding
+    },
+    yaxis: {
+        min: 0,
+        forceNiceScale: true,
+        labels: {
+            formatter: function(val) {
+                return Math.floor(val);  // Show whole numbers only
+            },
+            style: {
+                fontSize: '12px',
+                fontWeight: 400,
+                colors: '#A19F9D'
+            }
+        },
+        axisBorder: {
+            show: true,
+            color: '#EDEBE9'
+        }
+    },
+    grid: {
+        borderColor: '#EDEBE9',
+        strokeDashArray: 0,
+        padding: {
+            left: 10,
+            right: 10
+        }
+    },
+    fill: {
+        type: 'solid',
+        opacity: 0.15
+    },
+    legend: {
+        position: 'top',
+        horizontalAlign: 'center',
+        fontSize: '12px',
+        fontWeight: 400,
+        markers: {
+            width: 10,
+            height: 10,
+            radius: 0
+        }
+    },
+    markers: {
+        size: 0,
+        hover: {
+            size: 5
+        }
+    },
+    tooltip: {
+        shared: true,
+        intersect: false,
+        y: {
+            formatter: function(val, opts) {
+                if (val === null || val === undefined) return '0';
+                return val + ' executions';
+            }
+        }
+    }
+};
+
+    // Execution Trends Chart
+    const executionTrendsEl = document.querySelector("#executionTrendsChart");
+    if (executionTrendsEl) {
+        console.log('Creating execution trends chart');
+        executionTrendsChart = new ApexCharts(executionTrendsEl, executionTrendsOptions);
+        executionTrendsChart.render();
+    } else {
+        console.error('Execution trends element not found');
+    }
+
+// ==========================================
+// 5. SUCCESS RATE RADIAL BAR
+// ==========================================
+const successRateOptions = {
+    ...commonOptions,
+    series: [{{ stats.success_rates.last_30d }}],
+    chart: {
+        ...commonOptions.chart,
+        type: 'radialBar',
+        height: 280
+    },
+    plotOptions: {
+        radialBar: {
+            hollow: {
+                size: '60%'
+            },
+            dataLabels: {
+                name: {
+                    show: true,
+                    fontSize: '14px',
+                    fontWeight: 600,
+                    color: '#323130'
+                },
+                value: {
+                    show: true,
+                    fontSize: '28px',
+                    fontWeight: 600,
+                    color: '#323130',
+                    formatter: function(val) {
+                        return val + '%';
+                    }
+                }
+            },
+            track: {
+                background: '#EDEBE9',
+                strokeWidth: '100%'
+            }
+        }
+    },
+    labels: ['Success Rate'],
+    colors: ['#107C10']
+};
+
+    // Success Rate Chart
+    const successRateEl = document.querySelector("#successRateChart");
+    if (successRateEl) {
+        console.log('Creating success rate chart');
+        successRateChart = new ApexCharts(successRateEl, successRateOptions);
+        successRateChart.render();
+    } else {
+        console.error('Success rate element not found');
+    }
+
+// ==========================================
+// 6. DATABASE USAGE BAR CHART
+// ==========================================
+const databaseUsageOptions = {
+    ...commonOptions,
+    series: [{
+        name: 'Tables Synced',
+        data: dbUsageData
+    }],
+    chart: {
+        ...commonOptions.chart,
+        type: 'bar',
+        height: 280
+    },
+    colors: ['#0078D4'],
+    plotOptions: {
+        bar: {
+            borderRadius: 0,
+            horizontal: true,
+            distributed: false,
+            dataLabels: {
+                position: 'top'
+            }
+        }
+    },
+    dataLabels: {
+        enabled: true,
+        formatter: function(val) {
+            return val.toLocaleString();
+        },
+        offsetX: 30,
+        style: {
+            fontSize: '12px',
+            fontWeight: 600,
+            colors: ['#323130']
+        }
+    },
+    xaxis: {
+        labels: {
+            style: {
+                fontSize: '12px',
+                fontWeight: 400,
+                colors: '#A19F9D'
+            }
+        },
+        axisBorder: {
+            show: true,
+            color: '#EDEBE9'
+        }
+    },
+    yaxis: {
+        labels: {
+            style: {
+                fontSize: '12px',
+                fontWeight: 400,
+                colors: '#605E5C'
+            }
+        }
+    },
+    legend: {
+        show: false
+    }
+};
+
+    // Database Usage Chart
+    const databaseUsageEl = document.querySelector("#databaseUsageChart");
+    if (databaseUsageEl) {
+        console.log('Creating database usage chart');
+        databaseUsageChart = new ApexCharts(databaseUsageEl, databaseUsageOptions);
+        databaseUsageChart.render();
+    } else {
+        console.error('Database usage element not found');
+    }
+
+// ==========================================
+// 7. DATA VOLUME AREA CHART
+// ==========================================
+const dataVolumeOptions = {
+    ...commonOptions,
+    series: [{
+        name: 'Rows Synced',
+        data: trendsData.rowsSynced
+    }],
+    chart: {
+        ...commonOptions.chart,
+        type: 'area',
+        height: 280
+    },
+    colors: ['#0078D4'],
+    stroke: {
+        curve: 'smooth',
+        width: 2
+    },
+    fill: {
+        type: 'solid',
+        opacity: 0.10
+    },
+    xaxis: {
+        categories: trendsData.days,
+        labels: {
+            rotate: -45,
+            style: {
+                fontSize: '12px',
+                fontWeight: 400,
+                colors: '#A19F9D'
+            }
+        },
+        axisBorder: {
+            show: true,
+            color: '#EDEBE9'
+        }
+    },
+    yaxis: {
+        labels: {
+            style: {
+                fontSize: '12px',
+                fontWeight: 400,
+                colors: '#A19F9D'
+            },
+            formatter: function(val) {
+                if (val >= 1000000) {
+                    return (val / 1000000).toFixed(1) + 'M';
+                } else if (val >= 1000) {
+                    return (val / 1000).toFixed(1) + 'K';
+                }
+                return val.toFixed(0);
+            }
+        }
+    },
+    markers: {
+        size: 0,
+        hover: {
+            size: 4
+        }
+    }
+};
+
+    // Data Volume Chart
+    const dataVolumeEl = document.querySelector("#dataVolumeChart");
+    if (dataVolumeEl) {
+        console.log('Creating data volume chart');
+        dataVolumeChart = new ApexCharts(dataVolumeEl, dataVolumeOptions);
+        dataVolumeChart.render();
+    } else {
+        console.error('Data volume element not found');
+    }
+
+    console.log('All charts initialized successfully');
+}
+
+// Call initialization when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeCharts);
+} else {
+    initializeCharts();
+}
+
+// ==========================================
+// UPDATE ALL CHARTS THEME
+// ==========================================
+function updateAllChartsTheme(theme) {
+    const mode = theme === 'dark' ? 'dark' : 'light';
+    const gridColor = theme === 'dark' ? '#334155' : '#e2e8f0';
+
+    const charts = [
+        heatmapChart,
+        radarChart,
+        treemapChart,
+        executionTrendsChart,
+        successRateChart,
+        databaseUsageChart,
+        dataVolumeChart
+    ];
+
+    charts.forEach(chart => {
+        chart.updateOptions({
+            theme: { mode: mode },
+            grid: { borderColor: gridColor },
+            tooltip: { theme: mode }
+        });
+    });
+}
+
+// Auto-update timestamp
+function updateTimestamp() {
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    document.getElementById('last-updated').textContent = timeStr;
+}
+
+setInterval(updateTimestamp, 60000);
+
+// ==========================================
+// REAL-TIME DASHBOARD UPDATES VIA SSE
+// ==========================================
+let dashboardSSE = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 5;
+
+function connectDashboardSSE() {
+    if (dashboardSSE) {
+        dashboardSSE.close();
+    }
+
+    dashboardSSE = new EventSource("{% url 'sync_jobs:sse_dashboard' %}");
+
+    dashboardSSE.onmessage = function(event) {
+        try {
+            const data = JSON.parse(event.data);
+
+            if (data.type === 'update' || data.type === 'initial') {
+                updateDashboardWithNewData(data);
+                reconnectAttempts = 0; // Reset on successful connection
+            }
+        } catch (error) {
+            console.error('Error parsing SSE data:', error);
+        }
+    };
+
+    dashboardSSE.onerror = function(error) {
+        console.error('SSE connection error:', error);
+        dashboardSSE.close();
+
+        // Exponential backoff reconnect
+        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+            reconnectAttempts++;
+            console.log(`Reconnecting in ${delay}ms... (attempt ${reconnectAttempts})`);
+            setTimeout(connectDashboardSSE, delay);
+        }
+    };
+}
+
+function updateDashboardWithNewData(data) {
+    if (!data.stats) return;
+
+    // Update KPI Cards
+    updateKPICards(data.stats);
+
+    // Update Charts with new data
+    if (data.trends) {
+        updateChartsWithTrends(data.trends, data.heatmap_data);
+    }
+
+    // Update Recent Activity Table
+    if (data.recent_activity) {
+        updateRecentActivityTable(data.recent_activity);
+    }
+
+    // Update timestamp
+    document.getElementById('last-updated').textContent = 'Just now';
+}
+
+function updateKPICards(stats) {
+    console.log('Updating KPI cards with stats:', stats);
+
+    if (!stats) {
+        console.warn('No stats provided to updateKPICards');
+        return;
+    }
+
+    // Total Relays - matches stats.jobs.total
+    const totalRelaysCard = document.querySelector('.stat-card.gradient-1 .metric-value');
+    if (totalRelaysCard) {
+        const total = stats.jobs?.total || 0;
+        console.log('Total Relays:', total);
+        totalRelaysCard.textContent = total;
+    }
+
+    // Active Relays - matches stats.jobs.running
+    const activeRelaysText = document.querySelector('.stat-card.gradient-1 .text-\\[10px\\]');
+    if (activeRelaysText) {
+        const active = stats.jobs?.running || 0;
+        console.log('Active Relays:', active);
+        activeRelaysText.textContent = `${active} Active`;
+    }
+
+    // Success Rate - matches stats.success_rates.last_30d
+    const successRateCard = document.querySelector('.stat-card.gradient-2 .metric-value');
+    if (successRateCard) {
+        const successRate = parseFloat(stats.success_rates?.last_30d || 0).toFixed(1);
+        console.log('Success Rate:', successRate);
+        successRateCard.textContent = successRate + '%';
+    }
+
+    // Executions 24H - matches stats.executions.last_24h
+    const exec24hCard = document.querySelector('.stat-card.gradient-3 .metric-value');
+    if (exec24hCard) {
+        const exec24h = stats.executions?.last_24h || 0;
+        console.log('Executions 24H:', exec24h);
+        exec24hCard.textContent = exec24h;
+    }
+
+    // Rows Synced - matches stats.rows_synced.last_30d
+    const rowsSyncedCard = document.querySelector('.stat-card.gradient-4 .metric-value');
+    if (rowsSyncedCard) {
+        const rowsSynced = stats.rows_synced?.last_30d || 0;
+        console.log('Rows Synced:', rowsSynced);
+        rowsSyncedCard.textContent = rowsSynced.toLocaleString();
+    }
+
+    // Avg Latency - matches stats.performance.avg_duration_30d
+    const avgLatencyCard = document.querySelector('.stat-card.gradient-5 .metric-value');
+    if (avgLatencyCard) {
+        const avgLatency = stats.performance?.avg_duration_30d || 0;
+        const avgLatencyText = avgLatency ? Math.round(avgLatency) + 's' : 'N/A';
+        console.log('Avg Latency:', avgLatencyText);
+        avgLatencyCard.textContent = avgLatencyText;
+    }
+
+    // DB Clusters - matches stats.connections.total
+    const dbClustersCard = document.querySelector('.stat-card.gradient-6 .metric-value');
+    if (dbClustersCard) {
+        const dbClusters = stats.connections?.total || 0;
+        console.log('DB Clusters:', dbClusters);
+        dbClustersCard.textContent = dbClusters;
+    }
+
+    console.log('KPI cards updated successfully');
+}
+
+function updateChartsWithTrends(trends, heatmapData) {
+    if (!trends || trends.length === 0) return;
+
+    // Prepare data arrays
+    const days = trends.map(t => t.day);
+    const totals = trends.map(t => t.total || 0);
+    const successful = trends.map(t => t.successful || 0);
+    const failed = trends.map(t => t.failed || 0);
+    const rowsSynced = trends.map(t => t.rows_synced || 0);
+
+    // Update Execution Trends Line Chart
+    if (executionTrendsChart) {
+        executionTrendsChart.updateSeries([
+            { name: 'Total', data: totals },
+            { name: 'Successful', data: successful },
+            { name: 'Failed', data: failed }
+        ]);
+        executionTrendsChart.updateOptions({
+            xaxis: { categories: days }
+        });
+    }
+
+    // Update Data Volume Area Chart
+    if (dataVolumeChart) {
+        dataVolumeChart.updateSeries([
+            { name: 'Rows Synced', data: rowsSynced }
+        ]);
+        dataVolumeChart.updateOptions({
+            xaxis: { categories: days }
+        });
+    }
+
+    // Update Success Rate Radial Bar
+    if (successRateChart && totals.length > 0) {
+        const totalExecs = totals.reduce((a, b) => a + b, 0);
+        const totalSuccess = successful.reduce((a, b) => a + b, 0);
+        const successRate = totalExecs > 0 ? ((totalSuccess / totalExecs) * 100).toFixed(1) : 0;
+        successRateChart.updateSeries([parseFloat(successRate)]);
+    }
+
+    // Update Heatmap with real execution data
+    if (heatmapChart && heatmapData && heatmapData.length > 0) {
+        heatmapChart.updateSeries(heatmapData);
+    }
+}
+
+function updateHeatmapWithExecutions() {
+    // Fetch fresh heatmap data
+    fetch("{% url 'sync_jobs:dashboard' %}")
+        .then(response => response.text())
+        .then(html => {
+            // Extract heatmap data from the fresh page load
+            // This is a simple approach - in production, create a dedicated API endpoint
+            console.log('Heatmap data refreshed');
+        })
+        .catch(error => console.error('Error refreshing heatmap:', error));
+}
+
+function updateRecentActivityTable(activities) {
+    const tableBody = document.querySelector('#recent-activity-table tbody');
+    if (!tableBody || !activities || activities.length === 0) return;
+
+    tableBody.innerHTML = activities.map(activity => `
+        <tr class="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+            <td class="py-4 px-6">
+                <div class="flex items-center gap-3">
+                    <span class="material-symbols-outlined text-primary text-xl">router</span>
+                    <div>
+                        <div class="font-bold text-slate-800 text-sm">${activity.job_name || 'N/A'}</div>
+                        <div class="text-[10px] text-slate-500 font-medium">ID: ${activity.job_id ? activity.job_id.substring(0, 8) : 'N/A'}</div>
+                    </div>
+                </div>
+            </td>
+            <td class="py-4 px-6">
+                <div class="flex items-center gap-2 text-slate-600 text-xs">
+                    <span class="material-symbols-outlined text-sm">schedule</span>
+                    <span>${activity.time_ago || 'N/A'}</span>
+                </div>
+            </td>
+            <td class="py-4 px-6">
+                <div class="font-bold text-slate-700 text-sm">${(activity.rows_synced || 0).toLocaleString()} Rows</div>
+            </td>
+            <td class="py-4 px-6">
+                <span class="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider ${
+                    activity.status === 'success' ? 'bg-emerald-100 text-emerald-700' :
+                    activity.status === 'failed' ? 'bg-rose-100 text-rose-700' :
+                    'bg-amber-100 text-amber-700'
+                }">
+                    ${activity.status || 'Unknown'}
+                </span>
+            </td>
+        </tr>
+    `).join('');
+}
+
+// Start SSE connection after charts are initialized
+function startRealtimeUpdates() {
+    // Wait a bit for charts to fully render before connecting SSE
+    setTimeout(() => {
+        console.log('Starting real-time SSE connection...');
+        connectDashboardSSE();
+    }, 1000);
+}
+
+// Start everything when DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM ready - starting initialization...');
+    startRealtimeUpdates();
+});
+
+// Clean up on page unload
+window.addEventListener('beforeunload', function() {
+    if (dashboardSSE) {
+        dashboardSSE.close();
+    }
+});
+
+// ==========================================
+// CONNECTION HEALTH TEST NOW
+// ==========================================
+document.addEventListener('DOMContentLoaded', function() {
+    const testBtn = document.getElementById('test-all-connections-btn');
+    if (!testBtn) return;
+
+    testBtn.addEventListener('click', function() {
+        // Disable button and show loading state
+        const originalHTML = testBtn.innerHTML;
+        testBtn.disabled = true;
+        testBtn.style.cursor = 'not-allowed';
+        testBtn.style.opacity = '0.6';
+        testBtn.innerHTML = '<span class="material-symbols-outlined" style="font-size: 16px; animation: spin 1s linear infinite;">refresh</span><span>Testing...</span>';
+
+        // Add spinning animation
+        const style = document.createElement('style');
+        style.textContent = '@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }';
+        document.head.appendChild(style);
+
+        // Call the API
+        fetch('{% url "sync_jobs:test_all_connections" %}', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Update last check time
+                document.getElementById('last-check-time').textContent = 'Last check: just now';
+
+                // Update counts
+                document.getElementById('health-total').textContent = data.total_tested;
+                document.getElementById('health-passed').textContent = data.total_passed;
+                document.getElementById('health-failed').textContent = data.total_failed;
+
+                // Update failed card styling
+                const failedCard = document.getElementById('health-failed-card');
+                const failedLabel = document.getElementById('health-failed-label');
+                const failedValue = document.getElementById('health-failed');
+
+                if (data.total_failed > 0) {
+                    failedCard.style.background = '#FDE7E9';
+                    failedCard.style.borderColor = '#A80000';
+                    failedLabel.style.color = '#A80000';
+                    failedValue.style.color = '#A80000';
+                } else {
+                    failedCard.style.background = '#F3F2F1';
+                    failedCard.style.borderColor = '#EDEBE9';
+                    failedLabel.style.color = '#605E5C';
+                    failedValue.style.color = '#323130';
+                }
+
+                // Update health percentage
+                const percentage = data.health_percentage;
+                const percentageText = document.getElementById('health-percentage-text');
+                const percentageBar = document.getElementById('health-percentage-bar');
+
+                percentageText.textContent = percentage + '%';
+                percentageBar.style.width = percentage + '%';
+
+                // Color based on health
+                let color = '#107C10'; // Green
+                if (percentage < 100 && percentage >= 80) color = '#FFB900'; // Yellow
+                else if (percentage < 80) color = '#A80000'; // Red
+
+                percentageText.style.color = color;
+                percentageBar.style.background = color;
+
+                // Update failed connections list
+                const container = document.getElementById('failed-connections-container');
+                if (data.total_failed > 0) {
+                    let html = '<div style="border-top: 1px solid #EDEBE9; padding-top: 24px; margin-top: 20px;">';
+                    html += '<div style="font-size: 14px; font-weight: 600; color: #A80000; margin-bottom: 16px;">FAILED CONNECTIONS</div>';
+                    html += '<div style="display: flex; flex-direction: column; gap: 12px; max-height: 240px; overflow-y: auto;">';
+
+                    data.failed_connections.forEach(conn => {
+                        html += `
+                            <div style="border-radius: 2px; border: 1px solid #A80000; background: #FDE7E9; padding: 16px;">
+                                <div class="flex items-start gap-3">
+                                    <span class="material-symbols-outlined" style="color: #A80000; font-size: 20px;">error</span>
+                                    <div class="flex-1 min-w-0">
+                                        <div style="font-size: 14px; font-weight: 600; color: #A80000; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${conn.name}</div>
+                                        <div style="font-size: 12px; font-weight: 400; color: #A80000; margin-top: 4px;">${conn.type.toUpperCase()}</div>
+                                        <div style="font-size: 13px; color: #605E5C; margin-top: 8px; word-wrap: break-word;">${conn.error}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    });
+
+                    html += '</div></div>';
+                    container.innerHTML = html;
+                } else {
+                    container.innerHTML = `
+                        <div style="border-top: 1px solid #EDEBE9; padding-top: 24px; margin-top: 20px;">
+                            <div class="flex items-center gap-3" style="color: #107C10; background: #DFF6DD; border-radius: 2px; padding: 16px;">
+                                <span class="material-symbols-outlined" style="font-size: 24px;">check_circle</span>
+                                <span style="font-size: 14px; font-weight: 600;">All connections healthy</span>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                // Show success notification (optional)
+                console.log('Health check completed successfully');
+            } else {
+                alert('Error testing connections: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Failed to test connections. Please try again.');
+        })
+        .finally(() => {
+            // Re-enable button
+            testBtn.disabled = false;
+            testBtn.style.cursor = 'pointer';
+            testBtn.style.opacity = '1';
+            testBtn.innerHTML = originalHTML;
+            document.head.removeChild(style);
+        });
+    });
+});
+</script>
+{% endblock %}

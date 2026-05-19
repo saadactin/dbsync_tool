@@ -16,6 +16,16 @@ from sync_engine.checkpoint_manager import CheckpointManager
 from sync_engine.timezone_utils import TimezoneHandler
 from sync_engine.exceptions import TableSyncError, CheckpointError
 from sync_engine.retry import retry_on_error
+from sync_engine.reliability import (
+    BatchCoordinator,
+    DeadLetterCollector,
+    DeadLetterRowError,
+    RetryPolicy,
+    classify_error,
+    is_dead_letter,
+    recover_table,
+    with_policy,
+)
 from sync_engine.full_sync import get_target_table_name
 from sync_jobs.services.transform_plan_service import (
     TransformPlanValidationError,
@@ -96,6 +106,248 @@ class IncrementalSyncExecutor:
         )
         self._did_add_missing_columns: Dict[Tuple[str, str], bool] = {}
         self._last_schema_drift_added_columns: Dict[Tuple[str, str], List[str]] = {}
+        self._dq_pre_pack_by_table: Dict[Tuple[str, str], Any] = {}
+
+    # ------------------------------------------------------------------
+    # Day-5: structured DQ pre/post packs (best-effort; never fails sync)
+    # ------------------------------------------------------------------
+
+    def _dq_drift_cols(self, target_schema: str, target_table: str) -> List[str]:
+        return list(self._last_schema_drift_added_columns.get((target_schema, target_table), []) or [])
+
+    def _dq_run_pre_pack(
+        self,
+        job_table: SyncJobTable,
+        schema: str,
+        table: str,
+        target_schema: str,
+        target_table: str,
+        *,
+        sync_mode: str,
+        incremental_column: Optional[str],
+        pk_columns: Optional[List[str]],
+    ) -> None:
+        try:
+            from sync_engine.dq import compute_pre_pack, persist_dq_packs
+
+            drift = self._dq_drift_cols(target_schema, target_table)
+            pre = compute_pre_pack(
+                execution=self.execution,
+                job=self.job,
+                job_table=job_table,
+                source_connector=self.source_connector,
+                source_schema=schema,
+                source_table=table,
+                sync_mode=sync_mode,
+                schema_drift_added_columns=drift or None,
+                incremental_column=incremental_column,
+                pk_columns=pk_columns or [],
+            )
+            self._dq_pre_pack_by_table[(schema, table)] = pre
+            persist_dq_packs(
+                execution=self.execution,
+                job=self.job,
+                job_table=job_table,
+                source_schema=schema,
+                source_table=table,
+                pre_pack=pre,
+                post_pack=None,
+                parity_result=None,
+            )
+        except Exception:
+            logger.exception("DQ pre-pack wiring failed for %s.%s", schema, table)
+
+    def _dq_run_post_pack(
+        self,
+        job_table: SyncJobTable,
+        schema: str,
+        table: str,
+        target_schema: str,
+        target_table: str,
+        *,
+        sync_mode: str,
+        parity,
+        verification_mode: str,
+        dl_collector,
+        log: SyncExecutionLog,
+        pk_columns: Optional[List[str]],
+        numeric_columns: Optional[List[str]] = None,
+        numeric_discovery_warnings: Optional[List[str]] = None,
+        source_pk_columns: Optional[List[str]] = None,
+        target_pk_columns: Optional[List[str]] = None,
+        flat_file: bool = False,
+    ) -> None:
+        try:
+            from sync_engine.dq import compute_post_pack, persist_dq_packs
+            from sync_engine.dq.pack import discover_numeric_or_date_columns
+
+            drift = self._dq_drift_cols(target_schema, target_table)
+            pre = self._dq_pre_pack_by_table.get((schema, table))
+            disc_warn = list(numeric_discovery_warnings or [])
+            nc = numeric_columns
+            if nc is None and not flat_file:
+                discovered, dw = discover_numeric_or_date_columns(
+                    self.source_connector, schema, table, limit=8
+                )
+                nc = discovered
+                disc_warn.extend(dw)
+
+            par = parity if verification_mode != "off" else None
+            post = compute_post_pack(
+                execution=self.execution,
+                job=self.job,
+                job_table=job_table,
+                source_connector=self.source_connector,
+                target_connector=self.target_connector,
+                source_schema=schema,
+                source_table=table,
+                target_schema=target_schema,
+                target_table=target_table,
+                sync_mode=sync_mode,
+                parity_result=par,
+                dead_letter_count=dl_collector.stats.dead_letter_count,
+                attempts=getattr(log, "attempts", 0) or 0,
+                last_error_code=getattr(log, "last_error_code", None),
+                pk_columns=pk_columns or [],
+                source_pk_columns=source_pk_columns,
+                target_pk_columns=target_pk_columns,
+                numeric_columns=nc or None,
+                schema_drift_added_columns=drift or None,
+                no_delete_propagation=getattr(self.job, "no_delete_propagation", True),
+                flat_file=flat_file,
+            )
+            mw = post.metrics.setdefault("warnings", [])
+            for w in disc_warn:
+                if w not in post.warnings:
+                    post.warnings.append(w)
+                if w not in mw:
+                    mw.append(w)
+            persist_dq_packs(
+                execution=self.execution,
+                job=self.job,
+                job_table=job_table,
+                source_schema=schema,
+                source_table=table,
+                pre_pack=pre,
+                post_pack=post,
+                parity_result=par,
+            )
+        except Exception:
+            logger.exception("DQ post-pack wiring failed for %s.%s", schema, table)
+
+    # ------------------------------------------------------------------
+    # Day-3: per-table retry policy wrapper
+    # ------------------------------------------------------------------
+
+    def _sync_table_with_policy(self, job_table: SyncJobTable) -> None:
+        """Run :meth:`sync_table` under the per-table RetryPolicy.
+
+        The whole table call is one logical attempt. ``recover_table()``
+        (Day 2) at the start of ``sync_table`` flips any leftover
+        ``started`` markers from the previous attempt, and the
+        BatchCoordinator skips ``committed`` ones, so retries are
+        replay-safe.
+        """
+        policy = RetryPolicy.from_job_table(job_table)
+        schema_name = job_table.schema_name
+        table_name = job_table.table_name
+
+        def _on_attempt(attempt_number: int, last_error_code: Optional[str]) -> None:
+            # Attempt 1 is the initial attempt; the log row may not even
+            # exist yet (sync_table creates it). For retries (>=2) we
+            # update the existing row's attempts counter + last code.
+            if attempt_number < 2:
+                return
+            try:
+                SyncExecutionLog.objects.filter(
+                    execution=self.execution,
+                    schema_name=schema_name,
+                    table_name=table_name,
+                ).update(
+                    attempts=attempt_number - 1,
+                    last_error_code=last_error_code,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to bump SyncExecutionLog.attempts for %s.%s",
+                    schema_name,
+                    table_name,
+                )
+
+        with_policy(
+            lambda: self.sync_table(job_table),
+            policy,
+            on_attempt=_on_attempt,
+        )
+
+    def _record_terminal_table_error(self, job_table: SyncJobTable, exc: BaseException) -> None:
+        """Record ``last_error_code`` after the retry policy gives up.
+
+        The category (transient/fatal/dead_letter) was already evaluated
+        inside :func:`with_policy`. Here we only need to make the final
+        code visible on the table's log row so the execution detail UI
+        and downstream alerting can display it.
+        """
+        try:
+            _, code = classify_error(exc)
+            SyncExecutionLog.objects.filter(
+                execution=self.execution,
+                schema_name=job_table.schema_name,
+                table_name=job_table.table_name,
+            ).update(last_error_code=code)
+        except Exception:
+            logger.exception(
+                "Failed to record terminal last_error_code for %s.%s",
+                job_table.schema_name,
+                job_table.table_name,
+            )
+
+    # ------------------------------------------------------------------
+    # Day-4: per-table dead-letter capture + budget enforcement
+    # ------------------------------------------------------------------
+
+    def _make_dead_letter_collector(self, job_table: SyncJobTable) -> DeadLetterCollector:
+        """Build the dead-letter collector for a single ``sync_table`` run.
+
+        Reads ``SyncJobTable.dead_letter_max_pct`` (Day 1 default 0.001)
+        for the budget. Safe to call inside legacy mock-driven tests:
+        the collector auto-detects non-persisted instances and skips
+        DB writes while still tracking the budget.
+        """
+        return DeadLetterCollector(
+            execution=self.execution,
+            job=self.job,
+            job_table=job_table,
+        )
+
+    def _handle_batch_exception_with_dead_letter(
+        self,
+        exc: BaseException,
+        *,
+        dl_collector: DeadLetterCollector,
+        sample_row,
+        batch_id,
+    ) -> bool:
+        """Handle a per-batch upsert exception through the Day-4 path.
+
+        Returns ``True`` if the caller should ``continue`` the batch
+        loop (row recorded, still under budget) and ``False`` if the
+        exception is not row-scope and the legacy fatal path should
+        run. Re-raises a fresh :class:`DeadLetterRowError` when the
+        budget is exhausted so Day-3's ``with_policy`` aborts the
+        table without retry.
+        """
+        if not is_dead_letter(exc):
+            return False
+        row = getattr(exc, "row", None)
+        if row is None and isinstance(sample_row, dict):
+            row = sample_row
+        dl_collector.record(row=row, error=exc, batch_id=batch_id)
+        dl_collector.flush()
+        dl_collector.update_log_counters()
+        if dl_collector.should_fail():
+            dl_collector.raise_if_budget_exceeded()
+        return True
 
     def _is_datetime_like(self, data_type: str) -> bool:
         dt = (data_type or "").lower()
@@ -451,12 +703,17 @@ class IncrementalSyncExecutor:
                 logger.error(error_msg, exc_info=True)
                 raise TableSyncError(error_msg) from e
             
-            # Sync each table
+            # Sync each table - Day-3 reliability: every per-table call
+            # is governed by the centralized RetryPolicy (read from
+            # SyncJobTable.retry_policy) instead of bare exception
+            # handling. SyncExecutionLog.attempts and last_error_code
+            # are populated for the first time here.
             for job_table in tables:
                 try:
-                    self.sync_table(job_table)
+                    self._sync_table_with_policy(job_table)
                 except TableSyncError as e:
                     logger.error(f"Table sync failed for {job_table.schema_name}.{job_table.table_name}: {str(e)}")
+                    self._record_terminal_table_error(job_table, e)
                     # Continue with other tables
                     continue
                 except Exception as e:
@@ -464,6 +721,7 @@ class IncrementalSyncExecutor:
                         f"Unexpected error syncing table {job_table.schema_name}.{job_table.table_name}: {str(e)}",
                         exc_info=True
                     )
+                    self._record_terminal_table_error(job_table, e)
                     # Continue with other tables
                     continue
             
@@ -786,6 +1044,33 @@ class IncrementalSyncExecutor:
         total_rows_inserted = 0
         max_incremental_value = checkpoint_value
 
+        # Day-2 reliability: per-batch idempotency for the model-transform
+        # path. The recovery sweep already ran in sync_table; we just
+        # need a coordinator instance scoped to this (execution, table).
+        transform_coordinator = BatchCoordinator(
+            execution=self.execution,
+            job=self.job,
+            schema_name=schema,
+            table_name=table,
+            target_db_type=self.table_handler.target_db_type,
+        )
+        # Day-4 dead-letter capture for the transform path. Mirrors the
+        # main sync_table wiring so per-row errors raised by the
+        # transform query / batch upsert are isolated and bounded by the
+        # per-table budget.
+        dl_collector = self._make_dead_letter_collector(job_table)
+
+        self._dq_run_pre_pack(
+            job_table,
+            schema,
+            table,
+            target_schema,
+            target_table,
+            sync_mode="incremental",
+            incremental_column=None,
+            pk_columns=list(pk_source) if pk_source else [],
+        )
+
         while True:
             batch = self._fetch_batch_with_retry(
                 query=query,
@@ -805,21 +1090,60 @@ class IncrementalSyncExecutor:
             max_incremental_value = self._get_max_incremental_value(
                 batch, incremental_col_index, max_incremental_value
             )
-            try:
-                total_rows_inserted += self._upsert_batch_with_retry(
-                    schema=target_schema,
-                    table=target_table,
-                    columns=target_column_names,
-                    rows=batch,
-                    key_columns=(
-                            [rename_overrides.get(k.lower(), k) for k in effective_key_aliases]
-                    ),
+
+            batch_id = transform_coordinator.make_batch_id(batch_number)
+            if transform_coordinator.is_already_processed(batch_id):
+                prior = transform_coordinator.get_committed_marker(batch_id)
+                inserted = int(prior.row_count) if prior else 0
+                total_rows_inserted += inserted
+                logger.info(
+                    "Skipping transform batch %s for %s.%s - already committed (rows=%s).",
+                    batch_id,
+                    schema,
+                    table,
+                    inserted,
                 )
-            except Exception as e:
-                error_msg = f"Failed to upsert batch {batch_number} for {schema}.{table}: {str(e)}"
-                logger.error(error_msg, exc_info=True)
-                self._handle_partial_batch_failure(schema, table, batch_number, batch)
-                raise TableSyncError(error_msg) from e
+            else:
+                marker = transform_coordinator.begin_batch(
+                    batch_id, expected_row_count=len(batch)
+                )
+                try:
+                    dl_collector.mark_seen(len(batch) if batch else 0)
+                    inserted = self._upsert_batch_with_retry(
+                        schema=target_schema,
+                        table=target_table,
+                        columns=target_column_names,
+                        rows=batch,
+                        key_columns=(
+                                [rename_overrides.get(k.lower(), k) for k in effective_key_aliases]
+                        ),
+                    )
+                    total_rows_inserted += inserted
+                except Exception as e:
+                    transform_coordinator.fail_batch(
+                        marker,
+                        error=e,
+                        checkpoint_manager=self.checkpoint_manager,
+                    )
+                    if self._handle_batch_exception_with_dead_letter(
+                        e,
+                        dl_collector=dl_collector,
+                        sample_row=batch[0] if batch else None,
+                        batch_id=batch_id,
+                    ):
+                        self._handle_partial_batch_failure(schema, table, batch_number, batch)
+                        continue
+                    error_msg = f"Failed to upsert batch {batch_number} for {schema}.{table}: {str(e)}"
+                    logger.error(error_msg, exc_info=True)
+                    self._handle_partial_batch_failure(schema, table, batch_number, batch)
+                    raise TableSyncError(error_msg) from e
+                transform_coordinator.commit_batch(
+                    marker,
+                    rows_written=inserted,
+                    last_seen=max_incremental_value,
+                    last_committed=max_incremental_value,
+                    checkpoint_manager=self.checkpoint_manager,
+                )
 
             log.batch_number = batch_number
             log.rows_fetched = total_rows_fetched
@@ -878,9 +1202,77 @@ class IncrementalSyncExecutor:
             f"; schema_drift_added_columns={','.join(schema_drift_added)}"
             if schema_drift_added else ""
         )
-        log.verification_summary = (
-            f"Transform incremental mode={mode}; rows upserted={total_rows_inserted}; {checkpoint_decision_text}{schema_drift_suffix}"
+
+        verification_mode = getattr(self.job, "verification_mode", "sampled") or "sampled"
+        parity = None
+        parity_text = None
+        if verification_mode != "off":
+            try:
+                from sync_engine.verification import verify_table_parity
+
+                parity = verify_table_parity(
+                    job=self.job,
+                    execution=self.execution,
+                    source_connector=self.source_connector,
+                    target_connector=self.target_connector,
+                    source_schema=schema,
+                    source_table=table,
+                    target_schema=target_schema,
+                    target_table=target_table,
+                    sync_mode="incremental",
+                    source_hash_columns=column_names if verification_mode == "strict" else None,
+                    target_hash_columns=target_column_names if verification_mode == "strict" else None,
+                    no_delete_propagation=getattr(self.job, "no_delete_propagation", True),
+                )
+                parity_text = (
+                    f"Parity[{verification_mode}]: source={parity.source_count} "
+                    f"target={parity.target_count} decision={parity.decision}"
+                )
+            except TableSyncError:
+                raise
+            except Exception as parity_error:
+                logger.warning(
+                    "Parity verification skipped (transform incremental) for %s.%s: %s",
+                    schema,
+                    table,
+                    parity_error,
+                )
+
+        tgt_dq_keys = [rename_overrides.get(k.lower(), k) for k in effective_key_aliases]
+        self._dq_run_post_pack(
+            job_table,
+            schema,
+            table,
+            target_schema,
+            target_table,
+            sync_mode="incremental",
+            parity=parity,
+            verification_mode=verification_mode,
+            dl_collector=dl_collector,
+            log=log,
+            pk_columns=tgt_dq_keys,
+            source_pk_columns=list(pk_source) if pk_source else None,
+            target_pk_columns=tgt_dq_keys,
         )
+
+        try:
+            dl_collector.flush()
+            dl_collector.update_log_counters()
+        except Exception:
+            logger.exception(
+                "Dead-letter flush failed for transform incremental %s.%s.",
+                schema,
+                table,
+            )
+
+        summary_core = (
+            f"Transform incremental mode={mode}; rows upserted={total_rows_inserted}; "
+            f"{checkpoint_decision_text}{schema_drift_suffix}"
+        )
+        if parity_text:
+            summary_core = f"{summary_core}; {parity_text}"
+        log.verification_summary = summary_core
+        log.dead_letter_count = dl_collector.stats.dead_letter_count
         log.status = "completed"
         log.completed_at = timezone.now()
         log.save()
@@ -962,13 +1354,44 @@ class IncrementalSyncExecutor:
             target_schema = schema
         
         # Create execution log
-        log = SyncExecutionLog.objects.create(
+        # Day-3 reliability: per-table retry policy may invoke sync_table
+        # multiple times for the SAME (execution, schema, table). Use
+        # get_or_create so a retry reuses the existing log row instead
+        # of creating a duplicate.
+        log, _log_created = SyncExecutionLog.objects.get_or_create(
             execution=self.execution,
             schema_name=schema,
             table_name=table,
-            status='pending'
+            defaults={'status': 'pending'},
         )
-        
+
+        # Day-2 reliability: per-table batch coordinator + recovery sweep.
+        # The coordinator owns the ProcessedBatch lifecycle and dual-pointer
+        # checkpoint updates inside the batch loop. recover_table flips any
+        # 'started' marker leftover from a previous crashed attempt of the
+        # same execution to 'failed' so the new attempt re-runs them safely
+        # under fresh markers (idempotent target upserts make this safe).
+        batch_coordinator = BatchCoordinator(
+            execution=self.execution,
+            job=self.job,
+            schema_name=schema,
+            table_name=table,
+            target_db_type=self.table_handler.target_db_type,
+        )
+        recover_table(
+            execution=self.execution,
+            job=self.job,
+            schema_name=schema,
+            table_name=table,
+            checkpoint_manager=self.checkpoint_manager,
+        )
+        # Day-4 reliability: per-table dead-letter capture. Bad rows are
+        # routed here when they raise ``DeadLetterRowError`` (or expose a
+        # truthy ``dead_letter`` attribute). The collector enforces
+        # ``SyncJobTable.dead_letter_max_pct`` and updates
+        # ``SyncExecutionLog.dead_letter_count``.
+        dl_collector = self._make_dead_letter_collector(job_table)
+
         try:
             log.status = 'running'
             log.started_at = timezone.now()
@@ -1076,6 +1499,21 @@ class IncrementalSyncExecutor:
                     table,
                 )
 
+                cn_lower_fb = {c.lower() for c in column_names}
+                dq_fb_src_keys = [
+                    k for k in effective_key_columns if (k or "").lower() in cn_lower_fb
+                ]
+                self._dq_run_pre_pack(
+                    job_table,
+                    schema,
+                    table,
+                    target_schema,
+                    target_table,
+                    sync_mode="incremental",
+                    incremental_column=None,
+                    pk_columns=dq_fb_src_keys,
+                )
+
                 batch_number = 0
                 total_rows_fetched = 0
                 total_rows_inserted = 0
@@ -1095,12 +1533,51 @@ class IncrementalSyncExecutor:
                     batch_number += 1
                     total_rows_fetched += len(batch)
                     self.validator.validate_batch_not_empty(batch, f"{schema}.{table}")
-                    inserted = self._upsert_batch_with_retry(
-                        schema=target_schema,
-                        table=target_table,
-                        columns=target_column_names,
-                        rows=batch,
-                        key_columns=[rename_overrides.get(k.lower(), k) for k in effective_key_columns],
+
+                    # Day-2 reliability: idempotent keyed-snapshot path.
+                    # No incremental watermark, so last_committed=None;
+                    # only the marker + last_successful_batch_id move.
+                    fb_batch_id = batch_coordinator.make_batch_id(batch_number)
+                    if batch_coordinator.is_already_processed(fb_batch_id):
+                        prior = batch_coordinator.get_committed_marker(fb_batch_id)
+                        inserted = int(prior.row_count) if prior else 0
+                        total_rows_inserted += inserted
+                        log.batch_number = batch_number
+                        continue
+
+                    fb_marker = batch_coordinator.begin_batch(
+                        fb_batch_id, expected_row_count=len(batch)
+                    )
+                    try:
+                        # Day-4 dead-letter accounting (keyed snapshot path).
+                        dl_collector.mark_seen(len(batch) if batch else 0)
+                        inserted = self._upsert_batch_with_retry(
+                            schema=target_schema,
+                            table=target_table,
+                            columns=target_column_names,
+                            rows=batch,
+                            key_columns=[rename_overrides.get(k.lower(), k) for k in effective_key_columns],
+                        )
+                    except Exception as fb_err:
+                        batch_coordinator.fail_batch(
+                            fb_marker,
+                            error=fb_err,
+                            checkpoint_manager=self.checkpoint_manager,
+                        )
+                        if self._handle_batch_exception_with_dead_letter(
+                            fb_err,
+                            dl_collector=dl_collector,
+                            sample_row=batch[0] if batch else None,
+                            batch_id=fb_batch_id,
+                        ):
+                            continue
+                        raise
+                    batch_coordinator.commit_batch(
+                        fb_marker,
+                        rows_written=inserted,
+                        last_seen=None,
+                        last_committed=None,
+                        checkpoint_manager=self.checkpoint_manager,
                     )
                     total_rows_inserted += inserted
                     log.batch_number = batch_number
@@ -1118,11 +1595,76 @@ class IncrementalSyncExecutor:
                     if len(batch) < self.batch_size:
                         break
 
-                log.verification_summary = (
+                verification_mode_fb = getattr(self.job, "verification_mode", "sampled") or "sampled"
+                parity_fb = None
+                parity_text_fb = None
+                if verification_mode_fb != "off":
+                    try:
+                        from sync_engine.verification import verify_table_parity
+
+                        parity_fb = verify_table_parity(
+                            job=self.job,
+                            execution=self.execution,
+                            source_connector=self.source_connector,
+                            target_connector=self.target_connector,
+                            source_schema=schema,
+                            source_table=table,
+                            target_schema=target_schema,
+                            target_table=target_table,
+                            sync_mode="incremental",
+                            source_hash_columns=column_names if verification_mode_fb == "strict" else None,
+                            target_hash_columns=target_column_names if verification_mode_fb == "strict" else None,
+                            no_delete_propagation=getattr(self.job, "no_delete_propagation", True),
+                        )
+                        parity_text_fb = (
+                            f"Parity[{verification_mode_fb}]: source={parity_fb.source_count} "
+                            f"target={parity_fb.target_count} decision={parity_fb.decision}"
+                        )
+                    except TableSyncError:
+                        raise
+                    except Exception as parity_error:
+                        logger.warning(
+                            "Parity verification skipped (keyed snapshot) for %s.%s: %s",
+                            schema,
+                            table,
+                            parity_error,
+                        )
+
+                tgt_fb_keys = [rename_overrides.get(k.lower(), k) for k in effective_key_columns]
+                self._dq_run_post_pack(
+                    job_table,
+                    schema,
+                    table,
+                    target_schema,
+                    target_table,
+                    sync_mode="incremental",
+                    parity=parity_fb,
+                    verification_mode=verification_mode_fb,
+                    dl_collector=dl_collector,
+                    log=log,
+                    pk_columns=tgt_fb_keys,
+                    source_pk_columns=dq_fb_src_keys,
+                    target_pk_columns=tgt_fb_keys,
+                )
+                try:
+                    dl_collector.flush()
+                    dl_collector.update_log_counters()
+                except Exception:
+                    logger.exception(
+                        "Dead-letter flush failed for keyed snapshot %s.%s.",
+                        schema,
+                        table,
+                    )
+
+                summary_fb = (
                     "Incremental fallback mode (no safe incremental column): "
                     f"rows upserted={total_rows_inserted}; checkpoint unchanged."
                 )
-                log.status = 'completed'
+                if parity_text_fb:
+                    summary_fb = f"{summary_fb}; {parity_text_fb}"
+                log.verification_summary = summary_fb
+                log.dead_letter_count = dl_collector.stats.dead_letter_count
+                log.status = "completed"
                 log.completed_at = timezone.now()
                 log.save()
                 logger.info(
@@ -1507,7 +2049,21 @@ class IncrementalSyncExecutor:
                 query = transformed_query
             else:
                 query = base_query
-            
+
+            cn_lower_dq = {c.lower() for c in column_names}
+            dq_pk_src = [k for k in effective_key_columns if (k or "").lower() in cn_lower_dq]
+            dq_pk_tgt = [rename_overrides.get(k.lower(), k) for k in dq_pk_src]
+            self._dq_run_pre_pack(
+                job_table,
+                schema,
+                table,
+                target_schema,
+                target_table,
+                sync_mode="incremental",
+                incremental_column=incremental_column,
+                pk_columns=dq_pk_src,
+            )
+
             # Fetch and insert in batches
             batch_number = 0
             total_rows_fetched = 0
@@ -1599,29 +2155,80 @@ class IncrementalSyncExecutor:
                     batch, incremental_col_index, max_incremental_value
                 )
                 
-                # Upsert batch with retry (incremental must handle inserts + updates)
-                try:
-                    inserted = self._upsert_batch_with_retry(
-                        schema=target_schema,
-                        table=target_table,
-                        columns=target_column_names,
-                        rows=batch,
-                        key_columns=(
-                            [rename_overrides.get(k.lower(), k) for k in effective_key_columns]
-                        ),
-                    )
+                # Day-2 reliability: per-batch idempotency marker. If the
+                # same (execution, schema, table, batch_id) was already
+                # committed in a previous attempt, skip the target write
+                # entirely. Otherwise begin a 'started' marker, do the
+                # upsert, then commit the marker + advance the
+                # dual-pointer checkpoint atomically.
+                batch_id = batch_coordinator.make_batch_id(batch_number)
+                if batch_coordinator.is_already_processed(batch_id):
+                    prior = batch_coordinator.get_committed_marker(batch_id)
+                    inserted = int(prior.row_count) if prior else 0
                     total_rows_inserted += inserted
-                    net_new_in_batch = self._count_rows_newer_than_checkpoint(
-                        rows=batch,
-                        incremental_col_index=incremental_col_index,
-                        checkpoint_value=checkpoint_value,
+                    logger.info(
+                        "Skipping batch %s for %s.%s - already committed in this execution (rows=%s).",
+                        batch_id,
+                        schema,
+                        table,
+                        inserted,
                     )
-                    total_rows_net_new += net_new_in_batch
-                except Exception as e:
-                    error_msg = f"Failed to upsert batch {batch_number} for {schema}.{table}: {str(e)}"
-                    logger.error(error_msg, exc_info=True)
-                    self._handle_partial_batch_failure(schema, table, batch_number, batch)
-                    raise TableSyncError(error_msg) from e
+                else:
+                    marker = batch_coordinator.begin_batch(
+                        batch_id, expected_row_count=len(batch)
+                    )
+                    try:
+                        # Day-4: account every row evaluated for the
+                        # dead-letter budget BEFORE the upsert call.
+                        dl_collector.mark_seen(len(batch) if batch else 0)
+                        inserted = self._upsert_batch_with_retry(
+                            schema=target_schema,
+                            table=target_table,
+                            columns=target_column_names,
+                            rows=batch,
+                            key_columns=(
+                                [rename_overrides.get(k.lower(), k) for k in effective_key_columns]
+                            ),
+                        )
+                        total_rows_inserted += inserted
+                        net_new_in_batch = self._count_rows_newer_than_checkpoint(
+                            rows=batch,
+                            incremental_col_index=incremental_col_index,
+                            checkpoint_value=checkpoint_value,
+                        )
+                        total_rows_net_new += net_new_in_batch
+                    except Exception as e:
+                        batch_coordinator.fail_batch(
+                            marker,
+                            error=e,
+                            checkpoint_manager=self.checkpoint_manager,
+                        )
+                        # Day-4: row-scope errors get captured in the
+                        # dead-letter table; fall through to legacy fatal
+                        # behaviour only for non-row failures or budget
+                        # breaches.
+                        if self._handle_batch_exception_with_dead_letter(
+                            e,
+                            dl_collector=dl_collector,
+                            sample_row=batch[0] if batch else None,
+                            batch_id=batch_id,
+                        ):
+                            self._handle_partial_batch_failure(schema, table, batch_number, batch)
+                            continue
+                        error_msg = f"Failed to upsert batch {batch_number} for {schema}.{table}: {str(e)}"
+                        logger.error(error_msg, exc_info=True)
+                        self._handle_partial_batch_failure(schema, table, batch_number, batch)
+                        raise TableSyncError(error_msg) from e
+                    # Commit marker + advance dual-pointer checkpoint in
+                    # a single atomic metadata transaction. last_committed
+                    # is the latest keyset boundary we just wrote.
+                    batch_coordinator.commit_batch(
+                        marker,
+                        rows_written=inserted,
+                        last_seen=current_checkpoint if use_keyset else None,
+                        last_committed=current_checkpoint if use_keyset else None,
+                        checkpoint_manager=self.checkpoint_manager,
+                    )
                 
                 # Update log
                 log.batch_number = batch_number
@@ -1733,6 +2340,7 @@ class IncrementalSyncExecutor:
                 )
 
             verification_mode = getattr(self.job, 'verification_mode', 'sampled') or 'sampled'
+            parity = None
             if verification_mode != 'off':
                 try:
                     from sync_engine.verification import verify_table_parity
@@ -1808,14 +2416,45 @@ class IncrementalSyncExecutor:
                         parity_error,
                     )
 
+            self._dq_run_post_pack(
+                job_table,
+                schema,
+                table,
+                target_schema,
+                target_table,
+                sync_mode="incremental",
+                parity=parity,
+                verification_mode=verification_mode,
+                dl_collector=dl_collector,
+                log=log,
+                pk_columns=dq_pk_tgt,
+                source_pk_columns=dq_pk_src,
+                target_pk_columns=dq_pk_tgt,
+            )
+
+            # Day-4: persist any buffered dead-letter rows + sync the
+            # ``dead_letter_count`` on the log row so it matches the
+            # number of ``SyncDeadLetterRow`` records for this table.
+            try:
+                dl_collector.flush()
+                dl_collector.update_log_counters()
+            except Exception:
+                logger.exception(
+                    "Dead-letter flush failed for %s.%s; counters may lag.",
+                    schema,
+                    table,
+                )
+
             # Mark log as completed
             log.status = 'completed'
             log.completed_at = timezone.now()
+            log.dead_letter_count = dl_collector.stats.dead_letter_count
             log.save()
-            
+
             logger.info(
                 f"Successfully synced table {schema}.{table} incrementally: "
-                f"upserted={total_rows_inserted}, net_new={total_rows_net_new} "
+                f"upserted={total_rows_inserted}, net_new={total_rows_net_new}, "
+                f"dead_letters={dl_collector.stats.dead_letter_count} "
                 f"in {batch_number} batches"
             )
 
@@ -1848,13 +2487,34 @@ class IncrementalSyncExecutor:
             except Exception:
                 db_context = ""
                 oracle_note = ""
+            # Day-4: drain any buffered dead-letter rows + sync counters
+            # before the table run terminates. Day-3's classify_error
+            # routes ``DeadLetterRowError`` to last_error_code=ROW_ERROR
+            # via the executor wrapper; we still record the count here
+            # so a partial-progress run is auditable.
+            try:
+                dl_collector.flush()
+                dl_collector.update_log_counters()
+            except Exception:
+                logger.exception(
+                    "Dead-letter flush failed in error path for %s.%s.",
+                    schema,
+                    table,
+                )
             log.status = 'failed'
             log.error_message = f"{oracle_note}{str(e)}{db_context}"[:5000]
             log.completed_at = timezone.now()
+            log.dead_letter_count = dl_collector.stats.dead_letter_count
+            try:
+                _, _code = classify_error(e)
+                log.last_error_code = _code
+            except Exception:
+                pass
             log.save()
-            
+
             logger.error(
-                f"Failed to sync table {schema}.{table} incrementally: {str(e)}",
+                f"Failed to sync table {schema}.{table} incrementally: {str(e)} "
+                f"(dead_letters={dl_collector.stats.dead_letter_count})",
                 exc_info=True
             )
             raise TableSyncError(f"Incremental sync failed for {schema}.{table}: {str(e)}") from e

@@ -1,0 +1,373 @@
+/**
+ * Dashboard Enhanced - Azure Design Language
+ * Clean, professional styles for the dashboard
+ */
+
+/* ==========================================
+   STATUS INDICATORS
+   ========================================== */
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    position: relative;
+}
+
+.status-dot.active {
+    background: #107C10;
+}
+
+.status-dot.warning {
+    background: #FFB900;
+}
+
+.status-dot.error {
+    background: #A80000;
+}
+
+/* ==========================================
+   METRIC COUNTERS
+   ========================================== */
+
+.metric-counter {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+}
+
+.metric-value {
+    font-size: 32px;
+    font-weight: 600;
+    color: #323130;
+}
+
+/* ==========================================
+   SKELETON LOADERS
+   ========================================== */
+
+.skeleton {
+    background: linear-gradient(
+        90deg,
+        #F3F2F1 25%,
+        #EDEBE9 50%,
+        #F3F2F1 75%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-loading 1.5s ease-in-out infinite;
+}
+
+@keyframes skeleton-loading {
+    0% {
+        background-position: 200% 0;
+    }
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+.skeleton-text {
+    height: 16px;
+    border-radius: 2px;
+    margin-bottom: 8px;
+}
+
+.skeleton-circle {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+}
+
+/* ==========================================
+   PROGRESS BARS
+   ========================================== */
+
+.progress-bar-modern {
+    height: 4px;
+    background: #EDEBE9;
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+}
+
+.progress-bar-fill {
+    height: 100%;
+    background: #0078D4;
+    border-radius: 2px;
+    transition: width 0.3s ease;
+}
+
+/* ==========================================
+   CHART CONTAINER ENHANCEMENTS
+   ========================================== */
+
+.chart-container {
+    position: relative;
+    overflow: hidden;
+    background: #FFFFFF;
+    border: 1px solid #EDEBE9;
+    border-radius: 2px;
+    padding: 16px;
+    box-shadow: 0 1.6px 3.6px rgba(0, 0, 0, 0.13);
+}
+
+.section-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.section-icon {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 2px;
+    background: #0078D4;
+    color: #FFFFFF;
+}
+
+.section-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #323130;
+    margin: 0;
+}
+
+/* ==========================================
+   STAT CARDS
+   ========================================== */
+
+.stat-card {
+    background: #FFFFFF;
+    border: 1px solid #EDEBE9;
+    border-radius: 2px;
+    padding: 16px;
+    box-shadow: 0 1.6px 3.6px rgba(0, 0, 0, 0.13);
+}
+
+.stat-card-header {
+    font-size: 12px;
+    font-weight: 600;
+    color: #605E5C;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+.stat-card-value {
+    font-size: 32px;
+    font-weight: 600;
+    color: #323130;
+    margin-bottom: 4px;
+}
+
+.stat-card-subtitle {
+    font-size: 12px;
+    color: #605E5C;
+}
+
+.stat-card-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 2px;
+    background: #EFF6FC;
+    color: #0078D4;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+}
+
+/* ==========================================
+   RECENT ACTIVITY TABLE
+   ========================================== */
+
+.recent-activity-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.recent-activity-table thead th {
+    background: #F3F2F1;
+    color: #323130;
+    font-size: 14px;
+    font-weight: 600;
+    text-align: left;
+    padding: 12px 16px;
+    border-bottom: 1px solid #EDEBE9;
+}
+
+.recent-activity-table tbody td {
+    padding: 12px 16px;
+    border-bottom: 1px solid #EDEBE9;
+    color: #323130;
+    font-size: 14px;
+}
+
+.recent-activity-table tbody tr:hover {
+    background: #EFF6FC;
+}
+
+/* ==========================================
+   BADGE STYLES
+   ========================================== */
+
+.azure-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 2px;
+}
+
+.badge-running {
+    background-color: #EFF6FC;
+    color: #0078D4;
+}
+
+.badge-completed {
+    background-color: #DFF6DD;
+    color: #107C10;
+}
+
+.badge-failed {
+    background-color: #FDE7E9;
+    color: #A80000;
+}
+
+.badge-pending {
+    background-color: #FFF4CE;
+    color: #7A5700;
+}
+
+/* ==========================================
+   RESPONSIVE UTILITIES
+   ========================================== */
+
+@media (max-width: 768px) {
+    .stat-card {
+        padding: 12px;
+    }
+
+    .metric-value {
+        font-size: 24px;
+    }
+
+    .chart-container {
+        padding: 12px;
+    }
+
+    .section-title {
+        font-size: 14px;
+    }
+
+    .section-icon {
+        width: 32px;
+        height: 32px;
+        font-size: 18px;
+    }
+}
+
+@media (max-width: 640px) {
+    .section-title {
+        font-size: 14px;
+    }
+
+    .stat-card-value {
+        font-size: 24px;
+    }
+}
+
+/* ==========================================
+   ACCESSIBILITY IMPROVEMENTS
+   ========================================== */
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+}
+
+.focus-visible:focus {
+    outline: 2px solid #0078D4;
+    outline-offset: 2px;
+}
+
+/* Reduce motion for accessibility */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+/* ==========================================
+   LOADING SPINNER
+   ========================================== */
+
+.azure-spinner {
+    width: 20px;
+    height: 20px;
+    border: 2px solid #EDEBE9;
+    border-top-color: #0078D4;
+    border-radius: 50%;
+    animation: azure-spin 0.8s linear infinite;
+}
+
+@keyframes azure-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ==========================================
+   UTILITIES
+   ========================================== */
+
+.azure-divider {
+    height: 1px;
+    background: #EDEBE9;
+    margin: 16px 0;
+}
+
+.text-primary {
+    color: #0078D4;
+}
+
+.text-secondary {
+    color: #605E5C;
+}
+
+.text-muted {
+    color: #A19F9D;
+}
+
+.text-success {
+    color: #107C10;
+}
+
+.text-danger {
+    color: #A80000;
+}
+
+.text-warning {
+    color: #7A5700;
+}
+
+.bg-light {
+    background-color: #F3F2F1;
+}
+
+.bg-primary-light {
+    background-color: #EFF6FC;
+}

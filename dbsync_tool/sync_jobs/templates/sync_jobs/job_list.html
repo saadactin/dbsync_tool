@@ -3,84 +3,323 @@
 
 {% block title %}Sync Jobs | SyncArchitect{% endblock %}
 
+{% block extra_css %}
+<style>
+    /* Azure Sync Jobs Page Theme */
+    .az-page-container {
+        font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+        background: #F3F2F1;
+        padding: 24px;
+    }
+
+    /* Azure KPI Cards */
+    .az-stat-card {
+        background: #FFFFFF;
+        border: 1px solid #EDEBE9;
+        border-radius: 2px;
+        padding: 16px 20px;
+        box-shadow: 0 1.6px 3.6px rgba(0,0,0,0.10);
+        display: flex;
+        flex-direction: column;
+        min-width: 140px;
+    }
+
+    .az-stat-icon {
+        width: 20px;
+        height: 20px;
+        margin-bottom: 8px;
+    }
+
+    .az-stat-value {
+        font-size: 28px;
+        font-weight: 600;
+        color: #323130;
+        line-height: 1.1;
+        margin-bottom: 4px;
+    }
+
+    .az-stat-value.failed-count {
+        color: #A80000;
+    }
+
+    .az-stat-label {
+        font-size: 12px;
+        font-weight: 400;
+        color: #605E5C;
+        text-transform: none;
+    }
+
+    /* Azure Filter Bar */
+    .az-filter-bar {
+        background: #FFFFFF;
+        border: 1px solid #EDEBE9;
+        border-radius: 2px;
+        padding: 12px 16px;
+        display: flex;
+        align-items: flex-end;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    .az-input,
+    .az-select {
+        border: 1px solid #A19F9D;
+        border-radius: 2px;
+        height: 32px;
+        padding: 0 8px;
+        font-size: 14px;
+        color: #323130;
+        background: #FFFFFF;
+        font-family: "Segoe UI", system-ui, sans-serif;
+    }
+
+    .az-input {
+        padding-left: 32px;
+    }
+
+    .az-input:focus,
+    .az-select:focus {
+        outline: none;
+        border-color: #0078D4;
+        box-shadow: 0 0 0 1px #0078D4;
+    }
+
+    .az-input::placeholder {
+        color: #A19F9D;
+    }
+
+    .az-filter-label {
+        font-size: 12px;
+        font-weight: 600;
+        color: #323130;
+        margin-bottom: 4px;
+        display: block;
+    }
+
+    /* Azure Table */
+    .az-table-container {
+        background: #FFFFFF;
+        border: 1px solid #EDEBE9;
+        border-radius: 2px;
+        box-shadow: 0 1.6px 3.6px rgba(0,0,0,0.10);
+        overflow: hidden;
+    }
+
+    .az-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .az-table thead {
+        background: #F3F2F1;
+        border-bottom: 1px solid #EDEBE9;
+    }
+
+    .az-table th {
+        font-size: 13px;
+        font-weight: 600;
+        color: #323130;
+        padding: 10px 12px;
+        text-align: left;
+        white-space: nowrap;
+        height: 40px;
+    }
+
+    .az-table tbody tr {
+        border-bottom: 1px solid #EDEBE9;
+        background: #FFFFFF;
+        min-height: 52px;
+    }
+
+    .az-table tbody tr:hover {
+        background: #EFF6FC;
+    }
+
+    .az-table td {
+        padding: 10px 12px;
+    }
+
+    /* Azure Badges */
+    .az-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        font-size: 12px;
+        font-weight: 600;
+        border-radius: 2px;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+    }
+
+    .az-badge-completed {
+        background: #DFF6DD;
+        color: #107C10;
+    }
+
+    .az-badge-failed {
+        background: #FDE7E9;
+        color: #A80000;
+    }
+
+    .az-badge-running {
+        background: #C7E0F4;
+        color: #004578;
+    }
+
+    .az-badge-pending {
+        background: #FFF4CE;
+        color: #797600;
+    }
+
+    .az-badge-paused {
+        background: #FFF4CE;
+        color: #797600;
+    }
+
+    .az-badge-neutral {
+        background: #F3F2F1;
+        color: #605E5C;
+    }
+
+    /* Azure Buttons */
+    .az-btn-primary {
+        background: #0078D4;
+        color: #FFFFFF;
+        border: none;
+        border-radius: 2px;
+        padding: 6px 16px;
+        height: 32px;
+        font-size: 14px;
+        font-weight: 400;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        text-decoration: none;
+        transition: background-color 0.15s ease;
+    }
+
+    .az-btn-primary:hover {
+        background: #005A9E;
+        color: #FFFFFF;
+    }
+
+    .az-btn-secondary {
+        background: transparent;
+        color: #0078D4;
+        border: 1px solid #0078D4;
+        border-radius: 2px;
+        padding: 0 10px;
+        height: 28px;
+        font-size: 13px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        text-decoration: none;
+        transition: background-color 0.15s ease;
+    }
+
+    .az-btn-secondary:hover {
+        background: #EFF6FC;
+        color: #0078D4;
+    }
+
+    /* Job ID Monospace */
+    .az-job-id {
+        font-family: "Consolas", "Courier New", monospace;
+        font-size: 11px;
+        color: #A19F9D;
+        font-weight: 400;
+    }
+
+    /* Data Gateway Chips */
+    .az-gateway-chip {
+        background: #F3F2F1;
+        border: 1px solid #EDEBE9;
+        border-radius: 2px;
+        padding: 2px 8px;
+        font-size: 13px;
+        font-weight: 500;
+        color: #323130;
+        display: inline-block;
+    }
+
+    /* Icon Sizing */
+    .az-icon-sm {
+        font-size: 14px;
+    }
+
+    .az-icon-md {
+        font-size: 16px;
+    }
+
+    .az-icon-lg {
+        font-size: 20px;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="flex-1 overflow-y-auto p-8 space-y-12 no-scrollbar">
-    <!-- Page Header & Action -->
-    <div class="flex items-end justify-between">
+<div class="az-page-container">
+    <!-- Page Header - Azure Style -->
+    <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px;">
         <div>
-            <h1 class="text-4xl font-extrabold text-on-surface tracking-tight">Sync Jobs</h1>
-            <p class="text-on-surface-variant mt-2 font-semibold text-lg">Monitor and manage your data orchestration pipelines.</p>
+            <h1 style="font-size: 20px; font-weight: 600; color: #323130; margin: 0 0 4px 0;">Sync Jobs</h1>
+            <p style="font-size: 13px; color: #605E5C; font-weight: 400; margin: 0;">Monitor and manage your data orchestration pipelines.</p>
         </div>
-        <a href="{% url 'sync_jobs:create_step1' %}" class="flex items-center gap-3 px-6 py-3 bg-primary text-white rounded-2xl font-bold shadow-xl shadow-primary/20 hover:bg-primary-container active:scale-95 transition-all no-underline text-base">
-            <span class="material-symbols-outlined text-[24px]">add_task</span>
+        <a href="{% url 'sync_jobs:create_step1' %}" class="az-btn-primary">
+            <span class="material-symbols-outlined az-icon-md">add</span>
             Create New Sync Job
         </a>
     </div>
 
-    <!-- KPI Metrics -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+    <!-- KPI Stats - Azure Cards -->
+    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px;">
         <!-- Total Jobs -->
-        <div class="bg-surface-container-lowest p-8 rounded-3xl shadow-sm border border-slate-100 flex items-center gap-6 group hover:shadow-lg transition-all border-b-4 border-b-primary/50">
-            <div class="w-16 h-16 rounded-2xl bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary group-hover:text-white transition-colors">
-                <span class="material-symbols-outlined text-3xl">inventory</span>
-            </div>
-            <div>
-                <div class="text-4xl font-black text-on-surface leading-none">{{ stats.total }}</div>
-                <div class="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Total Jobs</div>
-            </div>
+        <div class="az-stat-card">
+            <span class="material-symbols-outlined az-stat-icon" style="color: #0078D4;">inventory</span>
+            <div class="az-stat-value">{{ stats.total }}</div>
+            <div class="az-stat-label">Total Jobs</div>
         </div>
 
         <!-- Pending -->
-        <div class="bg-surface-container-lowest p-8 rounded-3xl shadow-sm border border-slate-100 flex items-center gap-6 group hover:shadow-lg transition-all border-b-4 border-b-orange-400/50">
-            <div class="w-16 h-16 rounded-2xl bg-orange-100 text-orange-600 flex items-center justify-center group-hover:bg-orange-500 group-hover:text-white transition-colors">
-                <span class="material-symbols-outlined text-3xl">schedule</span>
-            </div>
-            <div>
-                <div class="text-4xl font-black text-on-surface leading-none">{{ stats.pending }}</div>
-                <div class="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Pending</div>
-            </div>
+        <div class="az-stat-card">
+            <span class="material-symbols-outlined az-stat-icon" style="color: #A19F9D;">schedule</span>
+            <div class="az-stat-value">{{ stats.pending }}</div>
+            <div class="az-stat-label">Pending</div>
         </div>
 
         <!-- Running -->
-        <div class="bg-surface-container-lowest p-8 rounded-3xl shadow-sm border border-slate-100 flex items-center gap-6 group hover:shadow-lg transition-all border-b-4 border-b-blue-400/50">
-            <div class="w-16 h-16 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center group-hover:bg-blue-500 group-hover:text-white transition-colors">
-                <span class="material-symbols-outlined text-3xl animate-spin-slow">sync</span>
-            </div>
-            <div>
-                <div class="text-4xl font-black text-on-surface leading-none">{{ stats.running }}</div>
-                <div class="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Running</div>
-            </div>
+        <div class="az-stat-card">
+            <span class="material-symbols-outlined az-stat-icon" style="color: #A19F9D;">sync</span>
+            <div class="az-stat-value">{{ stats.running }}</div>
+            <div class="az-stat-label">Running</div>
         </div>
 
         <!-- Failed -->
-        <div class="bg-surface-container-lowest p-8 rounded-3xl shadow-sm border border-slate-100 flex items-center gap-6 group hover:shadow-lg transition-all border-b-4 border-b-red-400/50">
-            <div class="w-16 h-16 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center group-hover:bg-red-500 group-hover:text-white transition-colors">
-                <span class="material-symbols-outlined text-3xl">report_problem</span>
-            </div>
-            <div>
-                <div class="text-4xl font-black text-on-surface leading-none">{{ stats.failed }}</div>
-                <div class="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Failed</div>
-            </div>
+        <div class="az-stat-card">
+            <span class="material-symbols-outlined az-stat-icon" style="color: #A80000;">report_problem</span>
+            <div class="az-stat-value{% if stats.failed > 0 %} failed-count{% endif %}">{{ stats.failed }}</div>
+            <div class="az-stat-label">Failed</div>
         </div>
     </div>
 
-    <!-- Filters -->
-    <div class="bg-surface-container-lowest rounded-3xl shadow-sm border border-slate-100 p-8">
-        <form method="get" action="{% url 'sync_jobs:list' %}" class="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-6 gap-8 items-end">
+    <!-- Filter Bar - Azure Style -->
+    <div class="az-filter-bar" style="margin-bottom: 20px;">
+        <form method="get" action="{% url 'sync_jobs:list' %}" style="display: contents;">
             <!-- Search -->
-            <div class="lg:col-span-2 space-y-2">
-                <label class="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Search Pipeline</label>
-                <div class="relative">
-                    <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-xl pointer-events-none">search</span>
-                    <input type="text" name="search" placeholder="Search by job name..." value="{{ search_query }}"
-                        class="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-base focus:bg-white focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all outline-none">
+            <div style="min-width: 240px;">
+                <label class="az-filter-label">Search Pipeline</label>
+                <div style="position: relative;">
+                    <span class="material-symbols-outlined" style="position: absolute; left: 8px; top: 50%; transform: translateY(-50%); font-size: 16px; color: #A19F9D; pointer-events: none;">search</span>
+                    <input type="text" name="search" placeholder="Search by job name..." value="{{ search_query }}" class="az-input" style="width: 100%;">
                 </div>
             </div>
 
             <!-- Status -->
-            <div class="space-y-2">
-                <label class="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Status</label>
-                <select name="status" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-base font-medium outline-none focus:bg-white focus:border-primary transition-all appearance-none cursor-pointer">
+            <div style="min-width: 140px;">
+                <label class="az-filter-label">Status</label>
+                <select name="status" class="az-select" style="width: 100%;">
                     <option value="">All Statuses</option>
                     <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
                     <option value="running" {% if status_filter == 'running' %}selected{% endif %}>Running</option>
@@ -90,20 +329,20 @@
                 </select>
             </div>
 
-            <!-- Sync Type -->
-            <div class="space-y-2">
-                <label class="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Sync Strategy</label>
-                <select name="sync_type" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-base font-medium outline-none focus:bg-white focus:border-primary transition-all appearance-none cursor-pointer">
+            <!-- Sync Strategy -->
+            <div style="min-width: 140px;">
+                <label class="az-filter-label">Sync Strategy</label>
+                <select name="sync_type" class="az-select" style="width: 100%;">
                     <option value="">All Types</option>
                     <option value="full" {% if sync_type_filter == 'full' %}selected{% endif %}>Full Sync</option>
                     <option value="incremental" {% if sync_type_filter == 'incremental' %}selected{% endif %}>Incremental</option>
                 </select>
             </div>
 
-            <!-- Source -->
-            <div class="space-y-2">
-                <label class="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Source Interface</label>
-                <select name="source_type" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-base font-medium outline-none focus:bg-white focus:border-primary transition-all appearance-none cursor-pointer">
+            <!-- Source Interface -->
+            <div style="min-width: 140px;">
+                <label class="az-filter-label">Source Interface</label>
+                <select name="source_type" class="az-select" style="width: 100%;">
                     <option value="">All</option>
                     <option value="database" {% if source_type_filter == 'database' %}selected{% endif %}>Database</option>
                     <option value="api" {% if source_type_filter == 'api' %}selected{% endif %}>API (All)</option>
@@ -113,161 +352,133 @@
                 </select>
             </div>
 
-            <!-- Action Buttons -->
-            <div class="flex gap-3">
-                <button type="submit" class="flex-1 px-6 py-3 bg-slate-900 text-white rounded-2xl font-bold hover:bg-slate-800 transition-all text-base shadow-lg shadow-slate-200">
-                    Apply
-                </button>
-                <a href="{% url 'sync_jobs:list' %}" class="px-4 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200 transition-all text-base no-underline flex items-center justify-center">
-                    <span class="material-symbols-outlined">close</span>
-                </a>
-            </div>
+            <!-- Apply Button -->
+            <button type="submit" class="az-btn-primary" style="margin-top: 20px;">Apply</button>
+            <a href="{% url 'sync_jobs:list' %}" class="az-btn-secondary" style="margin-top: 20px; height: 32px; padding: 0 12px;">
+                <span class="material-symbols-outlined" style="font-size: 16px;">close</span>
+            </a>
         </form>
     </div>
 
-    <!-- Jobs List -->
-    <div class="bg-surface-container-lowest rounded-[2rem] shadow-sm border border-slate-100 overflow-hidden">
-        <div class="overflow-x-auto">
-            <table class="w-full text-left border-collapse">
-                <thead>
-                    <tr class="text-xs font-black text-slate-400 uppercase tracking-[0.2em] bg-slate-50/50">
-                        <th class="px-8 py-5">Pipeline Name</th>
-                        <th class="px-8 py-5">Data Gateway</th>
-                        <th class="px-8 py-5 text-center">Config</th>
-                        <th class="px-8 py-5 text-center">Health</th>
-                        <th class="px-8 py-5">Last Activity</th>
-                        <th class="px-8 py-5 text-right">Operations</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-slate-100">
-                    {% for job in jobs %}
-                    <tr class="group hover:bg-slate-50/60 transition-colors" data-job-row-id="{{ job.id }}">
-                        <!-- Job Name & Created -->
-                        <td class="px-8 py-6">
-                            <div class="flex flex-col">
-                                <span class="text-lg font-bold text-on-surface group-hover:text-primary transition-colors">{{ job.name }}</span>
-                                <span class="text-xs font-bold text-slate-400 mt-1 uppercase tracking-wider">ID: {{ job.id|slice:":8"|default:"LEGACY" }}</span>
-                            </div>
-                        </td>
+    <!-- Jobs Table - Azure Style -->
+    <div class="az-table-container">
+        <table class="az-table">
+            <thead>
+                <tr>
+                    <th>Pipeline Name</th>
+                    <th>Data Gateway</th>
+                    <th>Config</th>
+                    <th style="text-align: center;">Health</th>
+                    <th>Last Activity</th>
+                    <th style="text-align: right;">Operations</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for job in jobs %}
+                <tr data-job-row-id="{{ job.id }}">
+                    <!-- Pipeline Name -->
+                    <td>
+                        <div style="font-size: 14px; font-weight: 600; color: #0078D4; margin-bottom: 2px;">{{ job.name }}</div>
+                        <div class="az-job-id">ID: {{ job.id|slice:":8"|default:"LEGACY" }}</div>
+                    </td>
 
-                        <!-- Connections Pathway -->
-                        <td class="px-8 py-6">
-                            <div class="flex items-center gap-3">
-                                <span class="font-bold text-slate-700 text-base">
-                                    {% if job.source_connection_type == 'api' and job.source_api_connection %}
-                                        {{ job.source_api_connection.name }}
-                                    {% else %}
-                                        {{ job.source_connection.name }}
-                                    {% endif %}
-                                </span>
-                                <span class="material-symbols-outlined text-sm text-slate-300">arrow_forward</span>
-                                <span class="font-bold text-slate-700 text-base">{{ job.target_connection.name }}</span>
-                            </div>
-                            <div class="text-xs text-slate-400 font-medium mt-1">Created {{ job.created_at|date:"M d, Y" }}</div>
-                        </td>
-
-                        <!-- Config Badges -->
-                        <td class="px-8 py-6">
-                            <div class="flex flex-wrap justify-center gap-2">
-                                <span class="px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-widest bg-slate-100 text-slate-600 border border-slate-200">
-                                    {{ job.get_sync_type_display }}
-                                </span>
+                    <!-- Data Gateway -->
+                    <td>
+                        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                            <span class="az-gateway-chip">
                                 {% if job.source_connection_type == 'api' and job.source_api_connection %}
-                                    <span class="px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-widest 
-                                        {% if job.source_api_connection.api_type == 'zoho_crm' %}bg-secondary/10 text-secondary border-secondary/20
-                                        {% elif job.source_api_connection.api_type == 'sap_b1' %}bg-success/10 text-success border-success/20
-                                        {% elif job.source_api_connection.api_type == 'azure_devops' %}bg-primary/10 text-primary border-primary/20
-                                        {% endif %} border">
-                                        {{ job.source_api_connection.get_api_type_display|default:job.source_api_connection.api_type }}
-                                    </span>
+                                    {{ job.source_api_connection.name }}
+                                {% else %}
+                                    {{ job.source_connection.name }}
                                 {% endif %}
-                                <span class="px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-widest bg-emerald-50 text-emerald-600 border border-emerald-100">
-                                    {{ job.tables.count }} Tables
-                                </span>
-                            </div>
-                        </td>
+                            </span>
+                            <span class="material-symbols-outlined" style="font-size: 14px; color: #A19F9D;">arrow_forward</span>
+                            <span class="az-gateway-chip">{{ job.target_connection.name }}</span>
+                        </div>
+                        <div style="font-size: 12px; color: #605E5C;">Created {{ job.created_at|date:"M d, Y" }}</div>
+                    </td>
 
-                        <!-- Status -->
-                        <td class="px-8 py-6 text-center">
-                            <div data-job-status-chip class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border
-                                {% if job.status == 'pending' %}bg-slate-50 text-slate-500 border-slate-200
-                                {% elif job.status == 'running' %}bg-blue-50 text-primary border-blue-200
-                                {% elif job.status == 'completed' %}bg-emerald-50 text-emerald-600 border-emerald-200
-                                {% elif job.status == 'failed' %}bg-red-50 text-red-600 border-red-200
-                                {% elif job.status == 'paused' %}bg-amber-50 text-amber-600 border-amber-200
-                                {% endif %}">
-                                <span data-job-status-dot class="w-2.5 h-2.5 rounded-full 
-                                    {% if job.status == 'pending' %}bg-slate-400
-                                    {% elif job.status == 'running' %}bg-primary animate-pulse
-                                    {% elif job.status == 'completed' %}bg-emerald-500
-                                    {% elif job.status == 'failed' %}bg-red-500
-                                    {% elif job.status == 'paused' %}bg-amber-400
-                                    {% endif %}">
-                                </span>
-                                <span data-job-status-text class="text-xs font-black uppercase tracking-[0.1em]">{{ job.get_status_display }}</span>
-                            </div>
-                        </td>
+                    <!-- Config -->
+                    <td>
+                        <div style="font-size: 12px; color: #323130; font-weight: 500; margin-bottom: 2px;">{{ job.get_sync_type_display }}</div>
+                        <span class="az-badge-neutral" style="padding: 1px 6px; font-size: 11px; border: 1px solid #EDEBE9; display: inline-block;">
+                            {{ job.tables.count }} Tables
+                        </span>
+                    </td>
 
-                        <!-- Run Timeline -->
-                        <td class="px-8 py-6">
-                            <div class="flex flex-col gap-2">
-                                <div class="flex items-center gap-2 text-sm font-bold text-slate-600">
-                                    <span class="material-symbols-outlined text-base">history</span>
-                                    <span data-job-last-run>{% if job.last_run_at %}{{ job.last_run_at|date:"M d, H:i" }}{% else %}Never Synced{% endif %}</span>
-                                </div>
-                                <div class="flex items-center gap-2 text-xs font-bold text-slate-400">
-                                    <span class="material-symbols-outlined text-sm">event_repeat</span>
-                                    <span data-job-next-run>{% if job.next_run_at %}{{ job.next_run_at|date:"M d, H:i" }}{% else %}Manual Refresh Only{% endif %}</span>
-                                </div>
-                            </div>
-                        </td>
+                    <!-- Health Status Badge -->
+                    <td style="text-align: center;">
+                        <div data-job-status-chip>
+                            <span class="az-badge {% if job.status == 'completed' %}az-badge-completed{% elif job.status == 'failed' %}az-badge-failed{% elif job.status == 'running' %}az-badge-running{% elif job.status == 'pending' %}az-badge-pending{% elif job.status == 'paused' %}az-badge-paused{% else %}az-badge-neutral{% endif %}">
+                                <span data-job-status-text>{{ job.get_status_display }}</span>
+                            </span>
+                        </div>
+                    </td>
 
-                        <!-- Actions -->
-                        <td class="px-8 py-6 text-right">
-                            <div class="flex items-center justify-end gap-3">
-                                <a href="{% url 'sync_jobs:job_detail' job.id %}" class="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-primary hover:text-white transition-all no-underline text-sm border border-slate-200" title="View Pipeline Details">
-                                    <span class="material-symbols-outlined text-[20px]">visibility</span>
-                                    View
-                                </a>
-                                {% if job.status != 'running' %}
-                                <form method="post" action="{% url 'sync_jobs:job_run_now' job.id %}" class="run-job-form">
-                                    {% csrf_token %}
-                                    <button type="submit" class="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all text-sm shadow-md shadow-emerald-100" title="Trigger Synchronization Now">
-                                        <span class="material-symbols-outlined text-[20px]">play_circle</span>
-                                        Run
-                                    </button>
-                                </form>
-                                {% endif %}
-                                {% if job.status == 'running' %}
-                                <div class="flex items-center gap-2 px-4 py-2 bg-blue-50 text-primary rounded-xl font-bold text-sm border border-blue-100 shadow-sm" title="Execution in progress">
-                                    <span class="material-symbols-outlined text-[20px] animate-spin">autorenew</span>
-                                    Syncing
-                                </div>
-                                {% endif %}
+                    <!-- Last Activity -->
+                    <td>
+                        <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 4px;">
+                            <span class="material-symbols-outlined az-icon-sm" style="color: #A19F9D;">history</span>
+                            <span style="font-size: 12px; color: #323130;" data-job-last-run>
+                                {% if job.last_run_at %}{{ job.last_run_at|date:"M d, H:i" }}{% else %}Never Synced{% endif %}
+                            </span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 4px;">
+                            <span class="material-symbols-outlined az-icon-sm" style="color: #A19F9D;">event_repeat</span>
+                            <span style="font-size: 12px; color: #605E5C;" data-job-next-run>
+                                {% if job.next_run_at %}{{ job.next_run_at|date:"M d, H:i" }}{% else %}Manual Refresh Only{% endif %}
+                            </span>
+                        </div>
+                    </td>
+
+                    <!-- Operations -->
+                    <td style="text-align: right;">
+                        <div style="display: inline-flex; align-items: center; gap: 8px;">
+                            <a href="{% url 'sync_jobs:job_detail' job.id %}" class="az-btn-secondary">
+                                <span class="material-symbols-outlined" style="font-size: 14px;">visibility</span>
+                                View
+                            </a>
+                            {% if job.status != 'running' %}
+                            <form method="post" action="{% url 'sync_jobs:job_run_now' job.id %}" class="run-job-form" style="display: inline;">
+                                {% csrf_token %}
+                                <button type="submit" class="az-btn-primary" style="height: 28px; padding: 0 10px; font-size: 13px;">
+                                    <span class="material-symbols-outlined" style="font-size: 14px;">play_circle</span>
+                                    Run
+                                </button>
+                            </form>
+                            {% else %}
+                            <div class="az-badge-running" style="padding: 4px 10px; display: inline-flex; align-items: center; gap: 6px;">
+                                <span class="material-symbols-outlined" style="font-size: 14px;">autorenew</span>
+                                Syncing
                             </div>
-                        </td>
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="6" class="px-8 py-24 text-center">
-                            <div class="flex flex-col items-center gap-6">
-                                <div class="w-24 h-24 rounded-full bg-slate-50 flex items-center justify-center border-4 border-white shadow-inner">
-                                    <span class="material-symbols-outlined text-5xl text-slate-200">cloud_sync</span>
-                                </div>
-                                <div class="max-w-md">
-                                    <h5 class="text-2xl font-black text-slate-900 mb-2">Workspace Is Quiet</h5>
-                                    <p class="text-slate-500 text-base font-medium">{% if search_query %}No pipelines match your search criteria. Try broadening your query.{% else %}You haven't established any sync pipelines yet. Let's build your first automation.{% endif %}</p>
-                                </div>
-                                <a href="{% url 'sync_jobs:create_step1' %}" class="px-8 py-3 bg-primary text-white rounded-2xl font-bold shadow-xl shadow-primary/20 no-underline text-lg active:scale-95 transition-all">
-                                    Begin Integration
-                                </a>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" style="padding: 48px 24px; text-align: center;">
+                        <div style="display: flex; flex-direction: column; align-items: center; gap: 16px;">
+                            <span class="material-symbols-outlined" style="font-size: 48px; color: #A19F9D;">cloud_sync</span>
+                            <div>
+                                <h5 style="font-size: 16px; font-weight: 600; color: #323130; margin: 0 0 8px 0;">No Sync Jobs Found</h5>
+                                <p style="font-size: 14px; color: #605E5C; margin: 0;">
+                                    {% if search_query %}
+                                        No pipelines match your search criteria. Try broadening your query.
+                                    {% else %}
+                                        You haven't created any sync pipelines yet. Create your first pipeline to get started.
+                                    {% endif %}
+                                </p>
                             </div>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+                            <a href="{% url 'sync_jobs:create_step1' %}" class="az-btn-primary">
+                                Create Sync Job
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 {% endblock %}
@@ -283,11 +494,12 @@
             form.addEventListener('submit', function(e) {
                 const button = form.querySelector('button[type="submit"]');
                 button.disabled = true;
-                button.classList.add('opacity-75', 'cursor-not-allowed');
-                button.innerHTML = '<span class="material-symbols-outlined animate-spin text-[20px]">autorenew</span> Syncing...';
-                
+                button.style.opacity = '0.6';
+                button.style.cursor = 'not-allowed';
+                button.innerHTML = '<span class="material-symbols-outlined" style="font-size: 14px;">autorenew</span> Syncing...';
+
                 if (typeof showNotification === 'function') {
-                    showNotification('Integration sequence initiated...', 'info');
+                    showNotification('Sync job started...', 'info');
                 }
             });
         });

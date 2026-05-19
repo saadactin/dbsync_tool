@@ -431,10 +431,26 @@ def validate_transform_plan(
             lc, rc = cond.get("left_column"), cond.get("right_column")
             la = (cond.get("left_alias") or base_alias).strip()
             ra = (cond.get("right_alias") or alias).strip()
-            if la not in used_aliases or ra not in used_aliases:
+
+            # FIXED: Validate aliases exist in the join chain up to current position
+            # For N-way joins (3+ tables), left_alias can reference any previously defined alias
+            if la not in used_aliases:
                 raise TransformPlanValidationError(
-                    f"join_nodes[{i}].on[{k}] references unknown alias", "invalid_join"
+                    f"join_nodes[{i}].on[{k}] left_alias '{la}' references unknown or not-yet-defined table. "
+                    f"Available aliases at this point: {', '.join(sorted(used_aliases))}",
+                    "invalid_join_alias_order"
                 )
+
+            # right_alias should be the current node's alias (standard join pattern)
+            # OR any previously defined alias (for complex multi-table joins)
+            valid_right_aliases = used_aliases | {alias}
+            if ra not in valid_right_aliases:
+                raise TransformPlanValidationError(
+                    f"join_nodes[{i}].on[{k}] right_alias '{ra}' references unknown alias. "
+                    f"Available aliases: {', '.join(sorted(valid_right_aliases))}",
+                    "invalid_join"
+                )
+
             if not _identifier_ok(str(lc)) or not _identifier_ok(str(rc)):
                 raise TransformPlanValidationError(
                     f"join_nodes[{i}].on[{k}] columns must be identifiers", "invalid_join"

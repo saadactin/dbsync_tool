@@ -2,11 +2,16 @@
 {% load static %}
 {% load humanize %}
 {% load sync_jobs_tags %}
+{% load recon_extras %}
 
 {% block title %}Execution Log: {{ execution.id|slice:":8" }} | SyncArchitect{% endblock %}
 
 {% block extra_css %}
 <style>
+    /* Azure Execution Report Styles */
+    body {
+        font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
     .animate-progress {
         background-size: 30px 30px;
         background-image: linear-gradient(
@@ -25,298 +30,312 @@
         from { background-position: 0 0; }
         to { background-position: 30px 0; }
     }
+    .az-table {
+        table-layout: fixed;
+    }
+    .az-table tbody tr {
+        transition: background 0.15s;
+    }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="flex-1 overflow-y-auto p-8 space-y-10 no-scrollbar bg-slate-50/50">
-    <!-- Breadcrumbs / Meta -->
-    <div class="flex items-center gap-3 text-sm font-bold text-slate-400">
-        <a href="{% url 'sync_jobs:list' %}" class="flex items-center gap-1 hover:text-primary transition-colors no-underline">
-            <span class="material-symbols-outlined text-[18px]">list</span>
+<div class="flex-1 overflow-y-auto no-scrollbar" style="background: #F3F2F1; padding: 24px;">
+    <!-- Breadcrumb Navigation Bar -->
+    <div class="flex items-center" style="padding: 0 0 16px 0;">
+        <a href="{% url 'sync_jobs:list' %}" class="no-underline" style="font-size: 13px; color: #0078D4; font-weight: 400; transition: color 0.15s;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">
             Pipelines
         </a>
-        <span class="text-slate-200">/</span>
-        <a href="{% url 'sync_jobs:job_detail' job_id=job.id %}" class="flex items-center gap-1 hover:text-primary transition-colors no-underline">
+        <span style="font-size: 13px; color: #A19F9D; margin: 0 6px;">/</span>
+        <a href="{% url 'sync_jobs:job_detail' job_id=job.id %}" class="no-underline" style="font-size: 13px; color: #0078D4; font-weight: 400; transition: color 0.15s;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">
             {{ job.name }}
         </a>
-        <span class="text-slate-200">/</span>
-        <span class="text-slate-500">Execution Archive: {{ execution.id|slice:":8" }}</span>
+        <span style="font-size: 13px; color: #A19F9D; margin: 0 6px;">/</span>
+        <span style="font-size: 12px; color: #A19F9D; font-family: 'Consolas', 'Courier New', monospace; font-weight: 400;">Execution Archive: {{ execution.id }}</span>
     </div>
 
-    <!-- Execution Header -->
-    <div class="bg-surface-container-lowest rounded-3xl shadow-sm border border-slate-100 p-8 flex flex-col lg:flex-row lg:items-center justify-between gap-8">
-        <div class="space-y-4">
-            <div class="flex items-center gap-4">
-                <div class="w-14 h-14 rounded-2xl bg-primary/10 text-primary flex items-center justify-center">
-                    <span class="material-symbols-outlined text-3xl">analytics</span>
+    <!-- Page Header Section -->
+    <div style="background: #FFFFFF; border: 1px solid #EDEBE9; border-radius: 2px; padding: 20px 24px; box-shadow: 0 1.6px 3.6px rgba(0,0,0,0.10); margin-bottom: 20px;">
+        <div class="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
+            <!-- LEFT SIDE -->
+            <div>
+                <!-- Icon + Title row -->
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="material-symbols-outlined" style="font-size: 20px; color: #0078D4;">analytics</span>
+                    <h1 style="font-size: 20px; font-weight: 600; color: #323130; margin: 0;">Execution Report</h1>
                 </div>
-                <div>
-                    <h1 class="text-3xl font-black text-on-surface tracking-tight">Execution Report</h1>
-                    <div class="flex items-center gap-2 mt-0.5">
-                        <span class="text-xs font-black text-slate-400 uppercase tracking-widest">Job:</span>
-                        <span class="text-xs font-black text-primary uppercase tracking-widest">{{ job.name }}</span>
+
+                <!-- Metadata row -->
+                <div class="flex items-center flex-wrap gap-5 mt-2">
+                    <!-- Job label -->
+                    <div class="flex items-center gap-1">
+                        <span style="font-size: 12px; font-weight: 400; color: #605E5C;">Job:</span>
+                        <span style="font-size: 12px; font-weight: 500; color: #0078D4;">{{ job.name }}</span>
                     </div>
-                </div>
-            </div>
-            
-            <div class="flex items-center gap-8">
-                <div class="flex items-center gap-3 px-5 py-2.5 rounded-2xl border
-                    {% if execution.status == 'pending' %}bg-slate-50 text-slate-500 border-slate-200
-                    {% elif execution.status == 'running' %}bg-blue-50 text-primary border-blue-200
-                    {% elif execution.status == 'completed' %}bg-emerald-50 text-emerald-600 border-emerald-200
-                    {% elif execution.status == 'failed' %}bg-red-50 text-red-600 border-red-200
-                    {% endif %} shadow-sm">
-                    <span class="w-2.5 h-2.5 rounded-full 
-                        {% if execution.status == 'pending' %}bg-slate-400
-                        {% elif execution.status == 'running' %}bg-primary animate-pulse
-                        {% elif execution.status == 'completed' %}bg-emerald-500
-                        {% elif execution.status == 'failed' %}bg-red-500
-                        {% endif %}">
+
+                    <!-- Status badge -->
+                    <span style="{% if execution.status == 'completed' %}background: #DFF6DD; color: #107C10;{% elif execution.status == 'failed' %}background: #FDE7E9; color: #A80000;{% elif execution.status == 'running' %}background: #C7E0F4; color: #004578;{% else %}background: #F3F2F1; color: #605E5C;{% endif %} border-radius: 2px; padding: 2px 8px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px;">
+                        {{ execution.get_status_display }}
                     </span>
-                    <span class="text-base font-black uppercase tracking-wider">{{ execution.get_status_display }}</span>
-                    {% if execution.status == 'running' %}
-                        <span class="material-symbols-outlined animate-spin text-lg ml-1">sync</span>
+
+                    <!-- Initialization -->
+                    <div class="flex items-center gap-1">
+                        <span class="material-symbols-outlined" style="font-size: 14px; color: #A19F9D;">schedule</span>
+                        <span style="font-size: 12px; color: #605E5C;">Initialization —</span>
+                        <span style="font-size: 12px; color: #323130;">{{ execution.started_at|date:"M d, Y H:i:s" }}</span>
+                    </div>
+
+                    <!-- Termination -->
+                    {% if execution.completed_at %}
+                    <div class="flex items-center gap-1">
+                        <span class="material-symbols-outlined" style="font-size: 14px; color: #A19F9D;">flag</span>
+                        <span style="font-size: 12px; color: #605E5C;">Termination —</span>
+                        <span style="font-size: 12px; color: #323130;">{{ execution.completed_at|date:"M d, Y H:i:s" }}</span>
+                    </div>
+                    {% endif %}
+
+                    <!-- Duration -->
+                    {% if duration %}
+                    <div class="flex items-center gap-1">
+                        <span class="material-symbols-outlined" style="font-size: 14px; color: #A19F9D;">timer</span>
+                        <span style="font-size: 12px; color: #605E5C;">Duration Cycle —</span>
+                        <span style="font-size: 12px; font-weight: 500; color: #323130;">{{ duration|format_duration }}</span>
+                    </div>
                     {% endif %}
                 </div>
-
-                <div class="flex flex-col">
-                    <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Initialization</span>
-                    <span class="text-sm font-bold text-slate-600 mt-1">{{ execution.started_at|date:"M d, Y H:i:s" }}</span>
-                </div>
-                
-                {% if execution.completed_at %}
-                <div class="flex flex-col">
-                    <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Termination</span>
-                    <span class="text-sm font-bold text-slate-600 mt-1">{{ execution.completed_at|date:"M d, Y H:i:s" }}</span>
-                </div>
-                {% endif %}
-
-                {% if duration %}
-                <div class="flex flex-col">
-                    <span class="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Duration Cycle</span>
-                    <span class="text-sm font-bold text-slate-600 mt-1">{{ duration|format_duration }}</span>
-                </div>
-                {% endif %}
             </div>
-        </div>
 
-        <div class="flex items-center gap-3">
-             <button class="flex items-center gap-2 px-6 py-3 bg-white border border-slate-200 text-slate-700 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-50 transition-all shadow-sm" onclick="exportLogs('csv')">
-                <span class="material-symbols-outlined text-lg">download</span>
-                Export CSV
-            </button>
-            <button class="flex items-center gap-2 px-6 py-3 bg-white border border-slate-200 text-slate-700 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-50 transition-all shadow-sm" onclick="exportLogs('json')">
-                <span class="material-symbols-outlined text-lg">data_object</span>
-                JSON
-            </button>
+            <!-- RIGHT SIDE — EXPORT BUTTONS -->
+            <div class="flex flex-col items-end gap-2">
+                <div class="flex items-center gap-2">
+                    <button class="flex items-center gap-2 no-underline" style="background: #FFFFFF; color: #0078D4; border: 1px solid #0078D4; border-radius: 2px; height: 32px; padding: 0 14px; font-size: 13px; cursor: pointer; transition: background 0.15s;" onmouseover="this.style.background='#EFF6FC'" onmouseout="this.style.background='#FFFFFF'" onclick="exportLogs('csv')">
+                        <span class="material-symbols-outlined" style="font-size: 14px;">download</span>
+                        Export CSV
+                    </button>
+                    <button class="flex items-center gap-2 no-underline" style="background: #FFFFFF; color: #0078D4; border: 1px solid #0078D4; border-radius: 2px; height: 32px; padding: 0 14px; font-size: 13px; cursor: pointer; transition: background 0.15s;" onmouseover="this.style.background='#EFF6FC'" onmouseout="this.style.background='#FFFFFF'" onclick="exportLogs('json')">
+                        <span class="material-symbols-outlined" style="font-size: 14px;">data_object</span>
+                        JSON
+                    </button>
+                </div>
+                <div class="flex items-center gap-2">
+                    <a href="{% url 'sync_jobs:execution_reconciliation' job_id=job.id execution_id=execution.id %}?format=json" class="flex items-center gap-1 no-underline" style="font-size: 12px; color: #0078D4; transition: text-decoration 0.15s;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'" title="Download reconciliation report as JSON">
+                        <span class="material-symbols-outlined" style="font-size: 13px;">verified</span>
+                        Report (JSON)
+                    </a>
+                    <a href="{% url 'sync_jobs:execution_reconciliation' job_id=job.id execution_id=execution.id %}?format=csv" class="flex items-center gap-1 no-underline" style="font-size: 12px; color: #0078D4; transition: text-decoration 0.15s;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'" title="Download reconciliation report as CSV">
+                        <span class="material-symbols-outlined" style="font-size: 13px;">table_view</span>
+                        Report (CSV)
+                    </a>
+                </div>
+            </div>
         </div>
     </div>
 
     <!-- Error Summary (If failure exists) -->
     {% if execution.status == 'failed' and execution.error_message %}
-    <div class="bg-red-50 border border-red-100 p-6 rounded-3xl flex gap-4 items-start animate-fade-in">
-        <div class="p-2 rounded-xl bg-red-100 text-red-600">
-            <span class="material-symbols-outlined text-xl">error</span>
-        </div>
-        <div class="space-y-2">
-            <h5 class="text-sm font-black text-red-900 uppercase tracking-wide">Critical Execution Abort</h5>
-            <p class="text-sm text-red-700 font-medium leading-relaxed">{{ execution.error_message }}</p>
+    <div class="flex items-start gap-3" style="background: #FDE7E9; border: 1px solid #A80000; border-left: 3px solid #A80000; border-radius: 2px; padding: 12px 16px; margin-bottom: 20px;">
+        <span class="material-symbols-outlined" style="font-size: 16px; color: #A80000; margin-top: 1px;">error</span>
+        <div>
+            <div style="font-size: 13px; font-weight: 600; color: #A80000; margin-bottom: 2px;">Critical Execution Abort</div>
+            <div style="font-size: 13px; font-weight: 400; color: #605E5C;">{{ execution.error_message }}</div>
         </div>
     </div>
     {% endif %}
 
-    <!-- Metric Cluster -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-        <!-- Tables Progress Card -->
-        <div class="bg-surface-container-lowest p-8 rounded-3xl shadow-sm border border-slate-100 flex flex-col justify-between space-y-4">
-             <div class="flex justify-between items-start">
-                <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Schema Objects</div>
-                <span class="material-symbols-outlined text-slate-300">account_tree</span>
-            </div>
+    <!-- KPI Summary Cards Row -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4" style="margin-bottom: 20px;">
+        <!-- CARD 1 — Schema Objects -->
+        <div style="background: #FFFFFF; border: 1px solid #EDEBE9; border-radius: 2px; padding: 16px 20px; box-shadow: 0 1.6px 3.6px rgba(0,0,0,0.10);">
+            <span class="material-symbols-outlined" style="font-size: 20px; color: #0078D4; margin-bottom: 8px; display: block;">account_tree</span>
+            <div style="font-size: 12px; font-weight: 400; color: #605E5C; margin-bottom: 4px;">Schema Objects</div>
             {% with completed_count=completed_logs.count total_count=logs.count %}
-            <div class="flex items-baseline gap-1">
-                <span class="text-4xl font-black text-on-surface">{{ completed_count }}</span>
-                <span class="text-sm font-bold text-slate-400">/ {{ total_count }}</span>
-            </div>
-            
-            <div class="space-y-2">
-                <div class="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                    <div class="h-full bg-primary {% if execution.status == 'running' %}animate-progress{% endif %} transition-all duration-1000" 
-                         style="width: {% if total_count > 0 %}{% widthratio completed_count total_count 100 %}{% else %}0{% endif %}%"></div>
-                </div>
-                <div class="flex justify-between text-[9px] font-black text-slate-400 uppercase">
-                    <span>Progress</span>
-                    <span>{% if total_count > 0 %}{% widthratio completed_count total_count 100 %}{% else %}0{% endif %}%</span>
-                </div>
-            </div>
+            <div style="font-size: 24px; font-weight: 600; color: #323130; line-height: 1.1;">{{ completed_count }} / {{ total_count }}</div>
+            <div style="font-size: 12px; color: #A19F9D; margin-top: 4px;">Progress {% if total_count > 0 %}{% widthratio completed_count total_count 100 %}{% else %}0{% endif %}%</div>
             {% endwith %}
         </div>
 
-        <!-- Rows Processed Card -->
-        <div class="bg-surface-container-lowest p-8 rounded-3xl shadow-sm border border-slate-100 flex flex-col justify-between">
-            <div class="flex justify-between items-start">
-                <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                    {% if job.sync_type == 'incremental' %}Rows Upserted{% else %}Rows Synced{% endif %}
-                </div>
-                <span class="material-symbols-outlined text-slate-300">dataset</span>
-            </div>
-            <div class="my-4">
-                <div class="text-4xl font-black text-on-surface">{{ execution.total_rows_synced|intcomma }}</div>
-                <div class="text-[10px] font-bold text-slate-400 uppercase mt-1 tracking-widest leading-none">Total Records Processed</div>
-            </div>
-            <div class="flex items-center gap-2 pt-2 border-t border-slate-50">
-                <span class="material-symbols-outlined text-xs text-emerald-500">trending_up</span>
-                <span class="text-[10px] font-bold text-slate-400 uppercase">Active Stream</span>
+        <!-- CARD 2 — Rows Synced -->
+        <div style="background: #FFFFFF; border: 1px solid #EDEBE9; border-radius: 2px; padding: 16px 20px; box-shadow: 0 1.6px 3.6px rgba(0,0,0,0.10);">
+            <span class="material-symbols-outlined" style="font-size: 20px; color: #0078D4; margin-bottom: 8px; display: block;">dataset</span>
+            <div style="font-size: 12px; font-weight: 400; color: #605E5C; margin-bottom: 4px;">Rows Synced</div>
+            <div style="font-size: 24px; font-weight: 600; color: #323130; line-height: 1.1;">{{ execution.total_rows_synced|intcomma }}</div>
+            <div style="font-size: 12px; color: #A19F9D; margin-top: 4px;">Total Records Processed</div>
+        </div>
+
+        <!-- CARD 3 — Active Stream -->
+        <div style="background: #FFFFFF; border: 1px solid #EDEBE9; border-radius: 2px; padding: 16px 20px; box-shadow: 0 1.6px 3.6px rgba(0,0,0,0.10);">
+            <span class="material-symbols-outlined" style="font-size: 20px; color: #0078D4; margin-bottom: 8px; display: block;">trending_up</span>
+            <div style="font-size: 12px; font-weight: 400; color: #605E5C; margin-bottom: 4px;">Active Stream</div>
+            <div style="font-size: 14px; font-weight: 500; color: #323130; line-height: 1.4; margin-top: 8px;">
+                {% if execution.status == 'running' %}Processing{% elif execution.status == 'completed' %}Completed{% else %}Idle{% endif %}
             </div>
         </div>
 
-        <!-- Health Pulse: Success -->
-        <div class="bg-surface-container-lowest p-8 rounded-3xl shadow-sm border border-slate-100 flex flex-col justify-between">
-            <div class="flex justify-between items-start">
-                <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Successful Entities</div>
-                <span class="material-symbols-outlined text-emerald-300">check_circle</span>
-            </div>
-            <div class="my-4">
-                <div class="text-4xl font-black text-emerald-600">{{ completed_logs.count }}</div>
-                <div class="text-[10px] font-bold text-slate-400 uppercase mt-1 tracking-widest leading-none">Verified Completions</div>
-            </div>
-            <div class="text-[10px] font-bold text-emerald-500 uppercase">Status: Healthy</div>
+        <!-- CARD 4 — Successful Entities -->
+        <div style="background: #FFFFFF; border: 1px solid #EDEBE9; border-radius: 2px; padding: 16px 20px; box-shadow: 0 1.6px 3.6px rgba(0,0,0,0.10);">
+            <span class="material-symbols-outlined" style="font-size: 20px; color: #107C10; margin-bottom: 8px; display: block;">check_circle</span>
+            <div style="font-size: 12px; font-weight: 400; color: #605E5C; margin-bottom: 4px;">Successful Entities</div>
+            <div style="font-size: 24px; font-weight: 600; color: #107C10; line-height: 1.1;">{{ completed_logs.count }}</div>
+            <div style="font-size: 12px; color: #A19F9D; margin-top: 4px;">Verified Completions</div>
+            <div style="font-size: 12px; color: #107C10; font-weight: 400; margin-top: 4px;">Status: Healthy</div>
         </div>
 
-        <!-- Health Pulse: Failures -->
-        <div class="bg-surface-container-lowest p-8 rounded-3xl shadow-sm border border-slate-100 flex flex-col justify-between">
-            <div class="flex justify-between items-start">
-                <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Entity Failures</div>
-                <span class="material-symbols-outlined text-red-300">report</span>
-            </div>
-            <div class="my-4">
-                <div class="text-4xl font-black {% if failed_logs.count > 0 %}text-red-500{% else %}text-on-surface{% endif %}">
-                    {{ failed_logs.count }}
-                </div>
-                <div class="text-[10px] font-bold text-slate-400 uppercase mt-1 tracking-widest leading-none">Critical Aborts</div>
-            </div>
-            <div class="text-[10px] font-bold {% if failed_logs.count > 0 %}text-red-400{% else %}text-slate-400{% endif %} uppercase tracking-widest">
+        <!-- CARD 5 — Entity Failures -->
+        <div style="background: #FFFFFF; border: 1px solid #EDEBE9; border-radius: 2px; padding: 16px 20px; box-shadow: 0 1.6px 3.6px rgba(0,0,0,0.10);">
+            <span class="material-symbols-outlined" style="font-size: 20px; {% if failed_logs.count > 0 %}color: #A80000;{% else %}color: #A19F9D;{% endif %} margin-bottom: 8px; display: block;">report</span>
+            <div style="font-size: 12px; font-weight: 400; color: #605E5C; margin-bottom: 4px;">Entity Failures</div>
+            <div style="font-size: 24px; font-weight: 600; {% if failed_logs.count > 0 %}color: #A80000;{% else %}color: #323130;{% endif %} line-height: 1.1;">{{ failed_logs.count }}</div>
+            <div style="font-size: 12px; color: #A19F9D; margin-top: 4px;">Critical Aborts</div>
+            <div style="font-size: 12px; {% if failed_logs.count > 0 %}color: #A80000;{% else %}color: #A19F9D;{% endif %} font-weight: 400; margin-top: 4px;">
                 {% if failed_logs.count > 0 %}Attention Required{% else %}No Issues Detected{% endif %}
             </div>
         </div>
     </div>
 
-    <!-- Audit Log Grid -->
-    <div class="bg-surface-container-lowest rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
-        <div class="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/20">
-            <div>
-                <h5 class="text-lg font-black text-on-surface">Data Hub Audit Trail</h5>
-                <p class="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1">Granular per-object sync telemetry</p>
-            </div>
-            <div class="flex items-center gap-4">
-                 <div class="relative">
-                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">search</span>
-                    <input type="text" placeholder="Filter entities..." class="pl-9 pr-4 py-2 rounded-xl bg-white border border-slate-200 text-xs font-bold focus:ring-2 focus:ring-primary/20 outline-none w-64">
-                </div>
-            </div>
+    <!-- Section Header -->
+    <div style="margin-bottom: 16px;">
+        <div style="font-size: 16px; font-weight: 600; color: #323130; margin-bottom: 2px;">Data Hub Audit Trail</div>
+        <div style="font-size: 13px; font-weight: 400; color: #605E5C;">Granular per-object sync telemetry</div>
+    </div>
+
+    <!-- Filter Bar + Table Card -->
+    <div style="background: #FFFFFF; border: 1px solid #EDEBE9; border-radius: 2px; box-shadow: 0 1.6px 3.6px rgba(0,0,0,0.10); overflow: hidden;">
+        <!-- Filter Bar -->
+        <div class="flex items-center gap-2" style="background: #FFFFFF; border-bottom: 1px solid #EDEBE9; padding: 10px 16px;">
+            <span class="material-symbols-outlined" style="font-size: 16px; color: #A19F9D;">search</span>
+            <input type="text" placeholder="Filter entities..." style="border: none; outline: none; font-size: 14px; color: #323130; background: transparent; flex: 1; height: 32px;" class="filter-input">
         </div>
 
+        <!-- Table -->
         <div class="overflow-x-auto">
-            <table class="w-full text-left border-collapse">
+            <table class="w-full text-left border-collapse az-table" style="min-width: 1100px;">
                 <thead>
-                    <tr class="text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-50/50">
-                        <th class="px-8 py-4">Context / Object</th>
-                        <th class="px-8 py-4">Life Cycle</th>
-                        <th class="px-8 py-4">Batches</th>
-                        <th class="px-8 py-4">Input Stream</th>
-                        <th class="px-8 py-4">{% if job.sync_type == 'incremental' %}Integrations{% else %}Insertions{% endif %}</th>
-                        <th class="px-8 py-4">Duration</th>
-                        <th class="px-8 py-4">Verification</th>
-                        <th class="px-8 py-4 text-right">Audit</th>
+                    <tr style="background: #F3F2F1; border-bottom: 1px solid #EDEBE9; height: 40px;">
+                        <th style="font-size: 12px; font-weight: 600; color: #323130; padding: 0 12px; text-align: left; width: 18%;">Context / Object</th>
+                        <th style="font-size: 12px; font-weight: 600; color: #323130; padding: 0 12px; text-align: left; width: 9%;">Life Cycle</th>
+                        <th style="font-size: 12px; font-weight: 600; color: #323130; padding: 0 12px; text-align: right; width: 6%;">Batches</th>
+                        <th style="font-size: 12px; font-weight: 600; color: #323130; padding: 0 12px; text-align: right; width: 9%;">Input Stream</th>
+                        <th style="font-size: 12px; font-weight: 600; color: #323130; padding: 0 12px; text-align: right; width: 9%;">Insertions</th>
+                        <th style="font-size: 12px; font-weight: 600; color: #323130; padding: 0 12px; text-align: left; width: 8%;" title="Day-4: dead-letter rows">Dead-letter</th>
+                        <th style="font-size: 12px; font-weight: 600; color: #323130; padding: 0 12px; text-align: left; width: 7%;">Duration</th>
+                        <th style="font-size: 12px; font-weight: 600; color: #323130; padding: 0 12px; text-align: left; width: 20%;">Verification</th>
+                        <th style="font-size: 12px; font-weight: 600; color: #323130; padding: 0 12px; text-align: left; width: 7%;" title="Day-5/6: DQ decision">Quality</th>
+                        <th style="font-size: 12px; font-weight: 600; color: #323130; padding: 0 12px; text-align: right; width: 7%;">Audit</th>
                     </tr>
                 </thead>
-                <tbody id="logs-table-body" class="divide-y divide-slate-50">
+                <tbody id="logs-table-body">
                     {% for log in logs %}
-                    <tr class="group hover:bg-slate-50 transition-all log-row" data-log-id="{{ log.id }}">
-                        <td class="px-8 py-5">
-                            <div class="flex flex-col">
-                                <span class="text-sm font-black text-on-surface">{{ log.table_name }}</span>
-                                <span class="text-[10px] font-bold text-slate-300 font-mono tracking-tighter uppercase">{{ log.schema_name }}</span>
-                            </div>
+                    <tr class="log-row" data-log-id="{{ log.id }}" style="min-height: 48px; border-bottom: 1px solid #EDEBE9; background: #FFFFFF;" onmouseover="this.style.background='#EFF6FC'" onmouseout="this.style.background='#FFFFFF'">
+                        <!-- Context / Object Column -->
+                        <td style="padding: 10px 12px; white-space: normal;">
+                            <div style="font-size: 13px; font-weight: 600; color: #323130; display: block;">{{ log.table_name }}</div>
+                            <span style="font-size: 11px; font-weight: 400; color: #A19F9D; background: #F3F2F1; border: 1px solid #EDEBE9; border-radius: 2px; padding: 1px 6px; display: inline-block; margin-top: 3px; font-family: 'Consolas', 'Courier New', monospace;">{{ log.schema_name }}</span>
                         </td>
-                        <td class="px-8 py-5">
-                            <div class="flex items-center gap-2">
-                                <span class="w-2 h-2 rounded-full bg-{{ log.status|status_badge_class }}"></span>
-                                <span class="text-[10px] font-black text-{{ log.status|status_badge_class }} uppercase tracking-widest">{{ log.get_status_display }}</span>
-                                {% if log.status == 'running' %}
-                                    <span class="material-symbols-outlined animate-spin text-xs text-primary">autorenew</span>
+
+                        <!-- Life Cycle Column -->
+                        <td style="padding: 10px 12px;">
+                            <span style="{% if log.status == 'completed' %}background: #DFF6DD; color: #107C10;{% elif log.status == 'failed' %}background: #FDE7E9; color: #A80000;{% elif log.status == 'running' %}background: #C7E0F4; color: #004578;{% else %}background: #FFF4CE; color: #797600;{% endif %} border-radius: 2px; padding: 2px 8px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; white-space: nowrap;">
+                                {{ log.get_status_display }}
+                            </span>
+                        </td>
+
+                        <!-- Batches Column -->
+                        <td style="padding: 10px 12px; text-align: right; font-size: 13px; {% if log.batch_number %}color: #323130;{% else %}color: #A19F9D;{% endif %} font-weight: 400; font-variant-numeric: tabular-nums;">{{ log.batch_number|default:"—" }}</td>
+
+                        <!-- Input Stream Column -->
+                        <td style="padding: 10px 12px; text-align: right; font-size: 13px; {% if log.rows_fetched and log.rows_fetched > 0 %}color: #323130;{% else %}color: #A19F9D;{% endif %} font-weight: 400; font-variant-numeric: tabular-nums;">{{ log.rows_fetched|intcomma|default:"0" }}</td>
+
+                        <!-- Insertions Column -->
+                        <td style="padding: 10px 12px; text-align: right; font-size: 13px; {% if log.rows_inserted and log.rows_inserted > 0 %}color: #323130;{% else %}color: #A19F9D;{% endif %} font-weight: 400; font-variant-numeric: tabular-nums;">{{ log.rows_inserted|intcomma|default:"0" }}</td>
+                        <!-- Dead-letter Column -->
+                        <td style="padding: 10px 12px;">
+                            {% if log.dead_letter_count and log.dead_letter_count > 0 %}
+                                {% if log.last_error_code == "ROW_ERROR" and log.status == 'failed' %}
+                                    <span style="font-size: 12px; color: #A80000; font-weight: 500;" title="Budget exceeded: {{ log.dead_letter_count }} bad rows">{{ log.dead_letter_count|intcomma }}</span>
+                                {% else %}
+                                    <span style="font-size: 12px; color: #797600; font-weight: 400;" title="{{ log.dead_letter_count }} bad rows within budget">{{ log.dead_letter_count|intcomma }}</span>
                                 {% endif %}
-                            </div>
+                            {% else %}
+                                <span style="font-size: 12px; color: #107C10; font-weight: 400;" title="No dead-letter rows">Clean</span>
+                            {% endif %}
                         </td>
-                        <td class="px-8 py-5 text-sm font-bold text-slate-500">{{ log.batch_number|default:"-" }}</td>
-                        <td class="px-8 py-5 text-sm font-bold text-slate-600">{{ log.rows_fetched|intcomma|default:"0" }}</td>
-                        <td class="px-8 py-5 text-sm font-bold text-slate-600">{{ log.rows_inserted|intcomma|default:"0" }}</td>
-                        <td class="px-8 py-5 text-sm font-bold text-slate-500">
-                             {% if log.status == 'running' and log.started_at %}
-                                <span class="text-primary font-bold animate-pulse text-[10px] uppercase">Active...</span>
+
+                        <!-- Duration Column -->
+                        <td style="padding: 10px 12px; font-size: 12px; {% if log.status == 'running' %}color: #0078D4;{% elif log.completed_at %}color: #323130;{% else %}color: #A19F9D;{% endif %} font-weight: 400;">
+                            {% if log.status == 'running' and log.started_at %}
+                                Active...
                             {% elif log.completed_at and log.started_at %}
                                 {% with duration=log.completed_at|timeuntil:log.started_at %}
                                     {{ duration|slice:":-4" }}
                                 {% endwith %}
-                            {% elif log.verification_summary|slice:":9" == "Duration:" %}
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
+
+                        <!-- Verification Column -->
+                        <td style="padding: 10px 12px; font-size: 11px; font-family: 'Consolas', 'Courier New', monospace; color: #605E5C; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px;">
+                            {% if log.verification_summary %}
                                 {{ log.verification_summary }}
                             {% else %}
-                                <span class="text-slate-300">-</span>
+                                <span style="color: #A19F9D;">—</span>
                             {% endif %}
                         </td>
-                        <td class="px-8 py-5">
-                            {% if log.verification_summary %}
-                                <div class="px-2.5 py-1 bg-blue-50 text-blue-600 text-[9px] font-black uppercase tracking-widest rounded-lg border border-blue-100 inline-block" title="{{ log.verification_summary }}">
-                                    {{ log.verification_summary|truncatewords:8 }}
-                                </div>
+                        <!-- Quality Column -->
+                        <td style="padding: 10px 12px;">
+                            {% recon_for recon_by_table log.schema_name log.table_name as recon %}
+                            {% if recon.decision == 'ok' or recon.decision == 'OK' %}
+                                <span style="background: #DFF6DD; color: #107C10; border-radius: 2px; padding: 2px 8px; font-size: 11px; font-weight: 600; text-transform: uppercase;" title="DQ decision: OK">OK</span>
+                            {% elif recon.decision == 'warning' or recon.decision == 'WARNING' %}
+                                <span style="background: #FFF4CE; color: #797600; border-radius: 2px; padding: 2px 8px; font-size: 11px; font-weight: 600; text-transform: uppercase;" title="DQ decision: WARNING">WARNING</span>
                             {% else %}
-                                <span class="text-slate-300">-</span>
+                                <span style="background: #DFF6DD; color: #107C10; border-radius: 2px; padding: 2px 8px; font-size: 11px; font-weight: 600; text-transform: uppercase;">OK</span>
                             {% endif %}
                         </td>
-                        <td class="px-8 py-5 text-right">
-                             {% if log.error_message %}
-                                <button class="p-2 text-red-400 hover:text-red-600 transition-colors"
-                                        title="View Error Details"
-                                        data-bs-toggle="modal"
-                                        data-bs-target="#errorModal{{ log.id }}">
-                                    <span class="material-symbols-outlined text-[20px]">warning</span>
+
+                        <!-- Audit Column -->
+                        <td style="padding: 10px 12px; text-align: right;">
+                            {% if log.error_message %}
+                                <button style="padding: 8px; color: #A80000; background: transparent; border: none; cursor: pointer; transition: color 0.15s;" onmouseover="this.style.color='#D13438'" onmouseout="this.style.color='#A80000'" title="View Error Details" data-bs-toggle="modal" data-bs-target="#errorModal{{ log.id }}">
+                                    <span class="material-symbols-outlined" style="font-size: 16px;">warning</span>
                                 </button>
-                                
-                                <!-- Error Modal -->
+
+                                <!-- Error Modal (kept original for functionality) -->
                                 <div class="modal fade" id="errorModal{{ log.id }}" tabindex="-1" aria-hidden="true">
                                     <div class="modal-dialog modal-lg">
-                                        <div class="modal-content rounded-3xl border-none shadow-2xl overflow-hidden text-left">
-                                            <div class="bg-red-50 px-8 py-6 border-b border-red-100 flex justify-between items-center">
-                                                <div class="flex items-center gap-3">
-                                                    <span class="material-symbols-outlined text-red-500">report_problem</span>
-                                                    <h5 class="text-lg font-black text-red-900 tracking-tight">Audit Failure Details</h5>
+                                        <div class="modal-content" style="border-radius: 2px; border: none; box-shadow: 0 4px 16px rgba(0,0,0,0.20); overflow: hidden;">
+                                            <div class="flex justify-between items-center" style="background: #FDE7E9; padding: 20px 24px; border-bottom: 1px solid #EDEBE9;">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="material-symbols-outlined" style="color: #A80000; font-size: 20px;">report_problem</span>
+                                                    <h5 style="font-size: 16px; font-weight: 600; color: #A80000; margin: 0;">Audit Failure Details</h5>
                                                 </div>
-                                                <button type="button" class="material-symbols-outlined text-red-400 hover:text-red-600 transition-all outline-none" data-bs-dismiss="modal">close</button>
+                                                <button type="button" class="material-symbols-outlined" style="color: #A80000; background: transparent; border: none; cursor: pointer; font-size: 20px;" data-bs-dismiss="modal">close</button>
                                             </div>
-                                            <div class="p-8 space-y-4">
-                                                <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Target Object: {{ log.schema_name }}.{{ log.table_name }}</div>
-                                                <pre class="bg-slate-900 text-blue-100 p-6 rounded-2xl text-xs font-mono overflow-x-auto border-4 border-slate-800 leading-relaxed">{{ log.error_message }}</pre>
+                                            <div style="padding: 20px 24px;">
+                                                <div style="font-size: 12px; font-weight: 600; color: #605E5C; margin-bottom: 12px;">Target Object: {{ log.schema_name }}.{{ log.table_name }}</div>
+                                                <pre style="background: #323130; color: #C7E0F4; padding: 16px; border-radius: 2px; font-size: 12px; font-family: 'Consolas', 'Courier New', monospace; overflow-x: auto; border: 1px solid #EDEBE9;">{{ log.error_message }}</pre>
                                             </div>
-                                            <div class="px-8 py-6 bg-slate-50 flex justify-end">
-                                                <button type="button" class="px-8 py-2.5 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest outline-none" data-bs-dismiss="modal">Close Audit</button>
+                                            <div class="flex justify-end" style="padding: 16px 24px; background: #F3F2F1;">
+                                                <button type="button" style="background: #0078D4; color: #FFFFFF; border: none; border-radius: 2px; height: 32px; padding: 0 16px; font-size: 13px; cursor: pointer; font-weight: 400;" data-bs-dismiss="modal">Close</button>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
                             {% else %}
-                                <span class="material-symbols-outlined text-slate-200 text-[20px]">check_circle</span>
+                                <span class="material-symbols-outlined" style="font-size: 16px; color: #107C10;">check_circle</span>
                             {% endif %}
                         </td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="8" class="text-center py-20">
-                            <div class="w-16 h-16 rounded-full bg-slate-50 flex items-center justify-center mx-auto text-slate-200 mb-4">
-                                <span class="material-symbols-outlined text-4xl">folder_off</span>
+                        <td colspan="10" class="text-center" style="padding: 80px 20px;">
+                            <div class="flex flex-col items-center justify-center mx-auto">
+                                <div class="flex items-center justify-center mb-4" style="width: 64px; height: 64px; border-radius: 2px; background: #F3F2F1; color: #A19F9D;">
+                                    <span class="material-symbols-outlined" style="font-size: 36px;">folder_off</span>
+                                </div>
+                                <div style="font-size: 16px; font-weight: 600; color: #323130;">Archive Sequence Null</div>
+                                <div style="font-size: 13px; color: #605E5C; margin-top: 8px;">Telemetry logs have not been generated for this sequence.</div>
                             </div>
-                            <h6 class="text-base font-bold text-slate-900">Archive Sequence Null</h6>
-                            <p class="text-sm text-slate-500">Telemetry logs have not been generated for this sequence.</p>
                         </td>
                     </tr>
                     {% endfor %}

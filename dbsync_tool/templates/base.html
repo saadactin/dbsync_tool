@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
     
     <!-- CSS -->
+    <link rel="stylesheet" href="{% static 'css/azure-theme.css' %}">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -22,31 +23,28 @@
             theme: {
                 extend: {
                     colors: {
-                        primary: '#0c56d0',
-                        secondary: '#475569',
-                        success: '#10b981',
-                        danger: '#ef4444',
-                        warning: '#f59e0b',
+                        primary: '#0078D4',
+                        secondary: '#605E5C',
+                        success: '#107C10',
+                        danger: '#A80000',
+                        warning: '#FFB900',
                     },
                     fontFamily: {
-                        sans: ['Plus Jakarta Sans', 'sans-serif'],
-                        headline: ['Outfit', 'sans-serif'],
+                        sans: ['"Segoe UI"', 'system-ui', '-apple-system', 'sans-serif'],
+                        headline: ['"Segoe UI"', 'system-ui', '-apple-system', 'sans-serif'],
                     },
-                    dropShadow: {
-                        'glow': '0 0 15px rgba(12, 86, 208, 0.4)',
-                    }
                 }
             }
         }
     </script>
     <style>
         :root {
-            --primary-color: #0c56d0;
-            --sidebar-width: 160px;
+            --primary-color: #0078D4;
+            --sidebar-width: 220px;
         }
         body {
-            font-family: 'Plus Jakarta Sans', sans-serif;
-            background-color: #f8fafc;
+            font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+            background-color: #FFFFFF;
         }
         .material-symbols-outlined {
             font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
@@ -58,113 +56,75 @@
         }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        
-        .active-nav {
-            position: relative;
-        }
-        .active-nav::after {
-            content: '';
-            position: absolute;
-            right: 0;
-            top: 20%;
-            bottom: 20%;
-            width: 4px;
-            background: white;
-            border-radius: 4px 0 0 4px;
-        }
     </style>
     {% block extra_css %}{% endblock %}
 </head>
 <body class="bg-gray-50 text-slate-900 antialiased">
     
     {% if user.is_authenticated %}
-    <!-- Enterprise Sidebar -->
-    <nav class="fixed inset-y-0 left-0 z-[9999] w-64 bg-[#d0d8e4] shadow-[0_10px_28px_rgba(15,23,42,0.10)] border-r border-[#bccbde] flex flex-col transition-all duration-300 transform -translate-x-full md:translate-x-0 overflow-y-auto no-scrollbar pointer-events-auto">
+    <!-- Azure Sidebar -->
+    <nav class="fixed inset-y-0 left-0 z-[9999] w-64 bg-[#F3F2F1] shadow-none border-r border-[#EDEBE9] flex flex-col transition-all duration-300 transform -translate-x-full md:translate-x-0 overflow-y-auto no-scrollbar pointer-events-auto">
         <!-- Brand Header -->
-        <div class="px-6 py-7 border-b border-[#bccbde] mb-4">
-            <div class="flex items-center gap-3.5">
-                <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-[#0c56d0] to-[#0a3f96] flex items-center justify-center shadow-lg shadow-[#0c56d0]/20">
+        <div class="px-6 py-4 border-b border-[#EDEBE9] bg-white">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-sm bg-[#0078D4] flex items-center justify-center">
                     <span class="material-symbols-outlined text-white filled text-[20px]">sync_alt</span>
                 </div>
                 <div class="min-w-0">
-                    <span class="block text-[17px] font-extrabold text-[#244571] tracking-tight leading-none font-headline">DB Sync</span>
-                    <span class="block text-[10px] font-semibold uppercase tracking-[0.2em] text-[#55769d] mt-1">Orchestrator</span>
+                    <span class="block text-[16px] font-semibold text-[#323130] tracking-normal leading-none font-headline">DB Sync Tool</span>
+                    <span class="block text-[12px] font-normal text-[#605E5C] mt-0.5">Data Migration</span>
                 </div>
             </div>
         </div>
 
         <!-- Navigation Links -->
-        <div class="flex-1 px-4 pb-4 space-y-1.5">
+        <div class="flex-1 px-2 pb-4 space-y-0.5">
             {% url 'core:dashboard' as dashboard_url %}
-            <a href="{{ dashboard_url }}" class="flex items-center gap-3 px-3.5 py-3 rounded-xl border border-transparent transition-all duration-200 group no-underline relative
-                {% if request.resolver_match.app_name == 'core' and request.resolver_match.url_name == 'dashboard' %}bg-[#b8c9e4] border-[#8fb2e6] text-[#1d4ed8] shadow-[inset_0_1px_0_rgba(255,255,255,0.30)]{% else %}text-[#3f6491] hover:text-[#244571] hover:bg-[#c4d2e6]/80 hover:border-[#adc4e2]{% endif %}">
-                {% if request.resolver_match.app_name == 'core' and request.resolver_match.url_name == 'dashboard' %}
-                    <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-[#7da8ff] rounded-r-full"></div>
-                {% endif %}
-                <span class="w-8 h-8 rounded-lg bg-[#c5d5ec] border border-transparent flex items-center justify-center flex-shrink-0">
-                    <span class="material-symbols-outlined text-[18px] {% if request.resolver_match.app_name == 'core' and request.resolver_match.url_name == 'dashboard' %}filled{% endif %}">dashboard</span>
-                </span>
-                <span class="text-[13px] font-semibold tracking-wide uppercase whitespace-nowrap">Dashboard</span>
+            <a href="{{ dashboard_url }}" class="flex items-center gap-2 px-3 py-2 border-l-2 transition-all duration-150 group no-underline
+                {% if request.resolver_match.app_name == 'core' and request.resolver_match.url_name == 'dashboard' %}bg-white border-l-[#0078D4] text-[#0078D4] font-semibold{% else %}border-l-transparent text-[#323130] hover:bg-[#EDEBE9]{% endif %}">
+                <span class="material-symbols-outlined text-[16px] {% if request.resolver_match.app_name == 'core' and request.resolver_match.url_name == 'dashboard' %}filled{% endif %}">dashboard</span>
+                <span class="text-[14px] whitespace-nowrap">Dashboard</span>
             </a>
 
             {% if user.is_authenticated and user.userprofile %}
                 {% if user.userprofile.is_super_admin or user.userprofile.is_admin %}
                     {% url 'accounts:user_list' as user_list_url %}
-                    <a href="{{ user_list_url }}" class="flex items-center gap-3 px-3.5 py-3 rounded-xl border border-transparent transition-all duration-200 group no-underline relative
-                        {% if request.resolver_match.app_name == 'accounts' %}bg-[#b8c9e4] border-[#8fb2e6] text-[#1d4ed8] shadow-[inset_0_1px_0_rgba(255,255,255,0.30)]{% else %}text-[#3f6491] hover:text-[#244571] hover:bg-[#c4d2e6]/80 hover:border-[#adc4e2]{% endif %}">
-                        {% if request.resolver_match.app_name == 'accounts' %}
-                            <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-[#7da8ff] rounded-r-full"></div>
-                        {% endif %}
-                        <span class="w-8 h-8 rounded-lg bg-[#c5d5ec] border border-transparent flex items-center justify-center flex-shrink-0">
-                            <span class="material-symbols-outlined text-[18px] {% if request.resolver_match.app_name == 'accounts' %}filled{% endif %}">group</span>
-                        </span>
-                        <span class="text-[13px] font-semibold tracking-wide uppercase whitespace-nowrap">User Management</span>
+                    <a href="{{ user_list_url }}" class="flex items-center gap-2 px-3 py-2 border-l-2 transition-all duration-150 group no-underline
+                        {% if request.resolver_match.app_name == 'accounts' %}bg-white border-l-[#0078D4] text-[#0078D4] font-semibold{% else %}border-l-transparent text-[#323130] hover:bg-[#EDEBE9]{% endif %}">
+                        <span class="material-symbols-outlined text-[16px] {% if request.resolver_match.app_name == 'accounts' %}filled{% endif %}">group</span>
+                        <span class="text-[14px] whitespace-nowrap">User Management</span>
                     </a>
                 {% endif %}
                 
                 {% if not user.userprofile.is_viewer %}
                     {% url 'connections:list' as connections_list_url %}
-                    <a href="{{ connections_list_url }}" class="flex items-center gap-3 px-3.5 py-3 rounded-xl border border-transparent transition-all duration-200 group no-underline relative
-                        {% if request.resolver_match.app_name == 'connections' %}bg-[#b8c9e4] border-[#8fb2e6] text-[#1d4ed8] shadow-[inset_0_1px_0_rgba(255,255,255,0.30)]{% else %}text-[#3f6491] hover:text-[#244571] hover:bg-[#c4d2e6]/80 hover:border-[#adc4e2]{% endif %}">
-                        {% if request.resolver_match.app_name == 'connections' %}
-                            <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-[#7da8ff] rounded-r-full"></div>
-                        {% endif %}
-                        <span class="w-8 h-8 rounded-lg bg-[#c5d5ec] border border-transparent flex items-center justify-center flex-shrink-0">
-                            <span class="material-symbols-outlined text-[18px] {% if request.resolver_match.app_name == 'connections' %}filled{% endif %}">hub</span>
-                        </span>
-                        <span class="text-[13px] font-semibold tracking-wide uppercase whitespace-nowrap">Connections</span>
+                    <a href="{{ connections_list_url }}" class="flex items-center gap-2 px-3 py-2 border-l-2 transition-all duration-150 group no-underline
+                        {% if request.resolver_match.app_name == 'connections' %}bg-white border-l-[#0078D4] text-[#0078D4] font-semibold{% else %}border-l-transparent text-[#323130] hover:bg-[#EDEBE9]{% endif %}">
+                        <span class="material-symbols-outlined text-[16px] {% if request.resolver_match.app_name == 'connections' %}filled{% endif %}">hub</span>
+                        <span class="text-[14px] whitespace-nowrap">Connections</span>
                     </a>
 
                     {% url 'sync_jobs:list' as sync_jobs_list_url %}
-                    <a href="{{ sync_jobs_list_url }}" class="flex items-center gap-3 px-3.5 py-3 rounded-xl border border-transparent transition-all duration-200 group no-underline relative
-                        {% if request.resolver_match.app_name == 'sync_jobs' and request.resolver_match.url_name != 'dashboard' %}bg-[#b8c9e4] border-[#8fb2e6] text-[#1d4ed8] shadow-[inset_0_1px_0_rgba(255,255,255,0.30)]{% else %}text-[#3f6491] hover:text-[#244571] hover:bg-[#c4d2e6]/80 hover:border-[#adc4e2]{% endif %}">
-                        {% if request.resolver_match.app_name == 'sync_jobs' and request.resolver_match.url_name != 'dashboard' %}
-                            <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-[#7da8ff] rounded-r-full"></div>
-                        {% endif %}
-                        <span class="w-8 h-8 rounded-lg bg-[#c5d5ec] border border-transparent flex items-center justify-center flex-shrink-0">
-                            <span class="material-symbols-outlined text-[18px] {% if request.resolver_match.app_name == 'sync_jobs' and request.resolver_match.url_name != 'dashboard' %}filled{% endif %}">sync_saved_locally</span>
-                        </span>
-                        <span class="text-[13px] font-semibold tracking-wide uppercase whitespace-nowrap">Sync Jobs</span>
+                    <a href="{{ sync_jobs_list_url }}" class="flex items-center gap-2 px-3 py-2 border-l-2 transition-all duration-150 group no-underline
+                        {% if request.resolver_match.app_name == 'sync_jobs' and request.resolver_match.url_name != 'dashboard' %}bg-white border-l-[#0078D4] text-[#0078D4] font-semibold{% else %}border-l-transparent text-[#323130] hover:bg-[#EDEBE9]{% endif %}">
+                        <span class="material-symbols-outlined text-[16px] {% if request.resolver_match.app_name == 'sync_jobs' and request.resolver_match.url_name != 'dashboard' %}filled{% endif %}">sync_saved_locally</span>
+                        <span class="text-[14px] whitespace-nowrap">Sync Jobs</span>
                     </a>
+
                 {% endif %}
             {% endif %}
         </div>
 
         <!-- Profile Footer -->
-        <div class="p-4 mt-auto border-t border-[#bccbde] bg-[#c2d0e2]">
+        <div class="p-2 mt-auto border-t border-[#EDEBE9] bg-white">
             {% url 'accounts:profile' as profile_url %}
-            <a href="{{ profile_url }}" class="flex items-center gap-3 px-3.5 py-3 rounded-xl border border-transparent transition-all duration-200 group no-underline mb-2 relative
-                {% if request.resolver_match.url_name == 'profile' or request.resolver_match.url_name == 'change_password' %}bg-[#b8c9e4] border-[#8fb2e6] text-[#1d4ed8] shadow-[inset_0_1px_0_rgba(255,255,255,0.30)]{% else %}text-[#3f6491] hover:text-[#244571] hover:bg-[#c4d2e6]/80 hover:border-[#adc4e2]{% endif %}">
-                {% if request.resolver_match.url_name == 'profile' or request.resolver_match.url_name == 'change_password' %}
-                    <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-[#7da8ff] rounded-r-full"></div>
-                {% endif %}
-                <div class="w-9 h-9 rounded-lg bg-[#c5d5ec] border border-transparent flex items-center justify-center transition-colors">
-                    <span class="material-symbols-outlined text-[18px] {% if request.resolver_match.url_name == 'profile' %}filled{% endif %}">account_circle</span>
-                </div>
+            <a href="{{ profile_url }}" class="flex items-center gap-2 px-3 py-2 border-l-2 transition-all duration-150 group no-underline mb-1
+                {% if request.resolver_match.url_name == 'profile' or request.resolver_match.url_name == 'change_password' %}bg-white border-l-[#0078D4] text-[#0078D4] font-semibold{% else %}border-l-transparent text-[#323130] hover:bg-[#EDEBE9]{% endif %}">
+                <span class="material-symbols-outlined text-[16px] {% if request.resolver_match.url_name == 'profile' %}filled{% endif %}">account_circle</span>
                 <div class="flex flex-col flex-1 min-w-0">
-                    <span class="text-[12px] font-semibold text-[#244571] tracking-wide uppercase truncate">{{ user.username|title }}</span>
+                    <span class="text-[14px] truncate">{{ user.username|title }}</span>
                     {% if user.is_authenticated and user.userprofile %}
-                        <span class="text-[10px] font-medium uppercase tracking-[0.08em] text-[#55769d] leading-none mt-1">
+                        <span class="text-[12px] text-[#605E5C] leading-none mt-0.5">
                             {% if user.userprofile.is_super_admin %}Super Admin
                             {% elif user.userprofile.is_admin %}Admin
                             {% elif user.userprofile.is_operator %}Operator
@@ -177,11 +137,9 @@
             <!-- Logout Form -->
             <form action="{% url 'accounts:logout' %}" method="post" class="w-full">
                 {% csrf_token %}
-                <button type="submit" class="w-full flex items-center gap-3 px-3.5 py-3 rounded-xl border border-transparent transition-all duration-200 text-[#3f6491] hover:text-[#244571] hover:bg-[#c4d2e6]/80 hover:border-[#adc4e2] outline-none bg-transparent cursor-pointer group pointer-events-auto">
-                    <span class="w-8 h-8 rounded-lg bg-[#c5d5ec] border border-transparent flex items-center justify-center flex-shrink-0">
-                        <span class="material-symbols-outlined text-[18px]">logout</span>
-                    </span>
-                    <span class="text-[13px] font-semibold tracking-wide uppercase">Logout</span>
+                <button type="submit" class="w-full flex items-center gap-2 px-3 py-2 border-l-2 border-l-transparent transition-all duration-150 text-[#323130] hover:bg-[#EDEBE9] outline-none bg-transparent cursor-pointer group pointer-events-auto">
+                    <span class="material-symbols-outlined text-[16px]">logout</span>
+                    <span class="text-[14px]">Logout</span>
                 </button>
             </form>
         </div>
@@ -208,48 +166,47 @@
                  style="display: none;">
                 
                 <!-- Chat Header -->
-                <div class="bg-primary p-6 text-white flex items-center justify-between">
+                <div class="bg-[#0078D4] p-4 text-white flex items-center justify-between rounded-t-sm">
                     <div class="flex items-center gap-3">
-                        <div class="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-sm">
-                            <img src="{% static 'img/chatbot_avatar.png' %}" alt="Bot" class="w-7 h-7 object-contain" onerror="this.src='https://cdn-icons-png.flaticon.com/512/4712/4712035.png'">
+                        <div class="w-8 h-8 rounded-sm bg-white/20 flex items-center justify-center">
+                            <img src="{% static 'img/chatbot_avatar.png' %}" alt="Bot" class="w-6 h-6 object-contain" onerror="this.src='https://cdn-icons-png.flaticon.com/512/4712/4712035.png'">
                         </div>
                         <div>
-                            <h4 class="text-sm font-black uppercase tracking-widest leading-none">Syncro</h4>
-                            <span class="text-[10px] font-bold opacity-80 uppercase tracking-tighter">Intelligent Architect</span>
+                            <h4 class="text-sm font-semibold leading-none">Syncro Assistant</h4>
+                            <span class="text-[10px] opacity-90">AI Helper</span>
                         </div>
                     </div>
-                    <button @click="open = false" class="text-white/60 hover:text-white transition-colors">
+                    <button @click="open = false" class="text-white/80 hover:text-white transition-colors">
                         <span class="material-symbols-outlined">close</span>
                     </button>
                 </div>
 
                 <!-- Chat Body -->
-                <div class="p-8 bg-slate-50/50 min-h-[160px] flex flex-col items-center justify-center text-center space-y-4">
-                    <div class="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center text-primary group">
-                        <span class="material-symbols-outlined text-4xl animate-pulse">forum</span>
+                <div class="p-6 bg-[#F3F2F1] min-h-[160px] flex flex-col items-center justify-center text-center space-y-3">
+                    <div class="w-12 h-12 rounded-sm bg-[#EFF6FC] flex items-center justify-center text-[#0078D4]">
+                        <span class="material-symbols-outlined text-3xl">forum</span>
                     </div>
                     <div>
-                        <h5 class="text-lg font-black text-slate-800">Hi, I'm Syncro!</h5>
-                        <p class="text-sm text-slate-500 font-medium leading-relaxed">
-                            I'm currently training to become your expert data companion. Soon I'll be here to help you architect and synchronize your pipelines with AI precision.
+                        <h5 class="text-base font-semibold text-[#323130]">Hi, I'm Syncro!</h5>
+                        <p class="text-sm text-[#605E5C] leading-relaxed">
+                            I'm currently training to become your data migration assistant. Check back soon for AI-powered help.
                         </p>
                     </div>
                 </div>
 
                 <!-- Chat Footer -->
-                <div class="p-4 bg-white border-t border-slate-100 flex justify-center">
-                    <span class="text-[9px] font-black text-slate-300 uppercase tracking-[0.2em]">Alpha Integration Phase</span>
+                <div class="p-3 bg-white border-t border-[#EDEBE9] flex justify-center rounded-b-sm">
+                    <span class="text-[10px] font-semibold text-[#A19F9D] uppercase tracking-wider">Coming Soon</span>
                 </div>
             </div>
 
             <!-- Floating Toggle Button -->
-            <button @click="open = !open" 
-                    class="w-16 h-16 rounded-3xl bg-primary text-white shadow-2xl shadow-primary/30 flex items-center justify-center transition-all duration-300 transform hover:scale-110 active:scale-90 hover:rotate-3 group relative overflow-hidden">
-                <div class="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                <img src="{% static 'img/chatbot_avatar.png' %}" alt="Chat" class="w-10 h-10 object-contain group-hover:drop-shadow-glow transition-all" onerror="this.src='https://cdn-icons-png.flaticon.com/512/4712/4712035.png'">
-                
+            <button @click="open = !open"
+                    class="w-14 h-14 rounded-sm bg-[#0078D4] text-white shadow-lg flex items-center justify-center transition-all duration-150 hover:bg-[#005A9E] group relative">
+                <img src="{% static 'img/chatbot_avatar.png' %}" alt="Chat" class="w-8 h-8 object-contain" onerror="this.src='https://cdn-icons-png.flaticon.com/512/4712/4712035.png'">
+
                 <!-- Notification Badge -->
-                <span class="absolute top-3 right-3 w-3 h-3 bg-emerald-400 border-2 border-primary rounded-full"></span>
+                <span class="absolute top-2 right-2 w-2.5 h-2.5 bg-[#107C10] border-2 border-white rounded-full"></span>
             </button>
         </div>
     </main>

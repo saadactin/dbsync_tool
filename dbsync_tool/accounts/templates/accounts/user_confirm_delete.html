@@ -1,51 +1,102 @@
 {% extends 'base.html' %}
 {% load static %}
 
-{% block title %}Delete User - DB Sync Tool{% endblock %}
+{% block title %}Delete User | SyncArchitect{% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <div class="card">
-        <div class="card-header">
-            <h3>Delete User</h3>
+<div class="flex-1 overflow-y-auto no-scrollbar" style="background: #F3F2F1; padding: 24px;">
+    <!-- Back Navigation -->
+    <div class="flex items-center gap-2" style="margin-bottom: 20px;">
+        <a href="{% url 'accounts:user_list' %}" class="flex items-center gap-1 no-underline" style="font-size: 13px; color: #0078D4; font-weight: 400; transition: color 0.15s;" onmouseover="this.style.color='#005A9E'" onmouseout="this.style.color='#0078D4'">
+            <span class="material-symbols-outlined" style="font-size: 16px;">arrow_back</span>
+            Back to Users
+        </a>
+    </div>
+
+    <div style="max-width: 600px;">
+        <!-- Page Header -->
+        <div style="background: #FFFFFF; border: 1px solid #EDEBE9; border-radius: 2px; padding: 20px 24px; box-shadow: 0 1.6px 3.6px rgba(0,0,0,0.10); margin-bottom: 20px;">
+            <div class="flex items-center gap-3 mb-2">
+                <div class="flex items-center justify-center" style="width: 40px; height: 40px; border-radius: 2px; background: #A80000; color: #FFFFFF;">
+                    <span class="material-symbols-outlined" style="font-size: 20px;">delete</span>
+                </div>
+                <h1 style="font-size: 20px; font-weight: 600; color: #323130; margin: 0;">Delete User</h1>
+            </div>
+            <p style="font-size: 13px; color: #605E5C; margin: 0;">Permanently remove this user account from the directory.</p>
         </div>
-        <div class="card-body">
-            {% if messages %}
-                {% for message in messages %}
-                    <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
-                        {{ message }}
-                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+
+        <!-- Content Card -->
+        <div style="background: #FFFFFF; border: 1px solid #EDEBE9; border-radius: 2px; box-shadow: 0 1.6px 3.6px rgba(0,0,0,0.10); overflow: hidden;">
+            <div style="padding: 24px;">
+                {% if messages %}
+                    {% for message in messages %}
+                        <div style="margin-bottom: 24px; padding: 16px; background: {% if message.tags == 'error' or message.tags == 'danger' %}#FDE7E9; border-left: 3px solid #A80000{% else %}#DFF6DD; border-left: 3px solid #107C10{% endif %}; border-radius: 2px;">
+                            <div class="flex items-center gap-2" style="font-size: 13px; font-weight: 400; color: {% if message.tags == 'error' or message.tags == 'danger' %}#A80000{% else %}#107C10{% endif %};">
+                                <span class="material-symbols-outlined" style="font-size: 16px;">{% if message.tags == 'error' or message.tags == 'danger' %}error{% else %}check_circle{% endif %}</span>
+                                {{ message }}
+                            </div>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+
+                <p style="font-size: 14px; color: #323130; margin-bottom: 16px;">Are you sure you want to delete the following user?</p>
+
+                <!-- User Details -->
+                <div style="background: #F3F2F1; border: 1px solid #EDEBE9; border-radius: 2px; padding: 16px; margin-bottom: 24px;">
+                    <div class="flex flex-col gap-3">
+                        <div class="flex items-center gap-2">
+                            <span style="font-size: 12px; font-weight: 400; color: #605E5C; min-width: 80px;">Username:</span>
+                            <span style="font-size: 14px; font-weight: 500; color: #323130;">{{ user.username }}</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span style="font-size: 12px; font-weight: 400; color: #605E5C; min-width: 80px;">Email:</span>
+                            <span style="font-size: 14px; font-weight: 500; color: #323130;">{{ user.email|default:"—" }}</span>
+                        </div>
                     </div>
-                {% endfor %}
-            {% endif %}
-
-            <p>Are you sure you want to delete:</p>
-            <ul>
-                <li><strong>Username:</strong> {{ user.username }}</li>
-                <li><strong>Email:</strong> {{ user.email|default:"—" }}</li>
-            </ul>
-
-            {% if not can_delete %}
-                <div class="alert alert-danger">
-                    <strong>Cannot delete this user:</strong> {{ reason }}
                 </div>
-            {% else %}
-                <div class="alert alert-warning">
-                    <strong>Warning:</strong> This action cannot be undone. The user will be deactivated.
-                </div>
-            {% endif %}
 
-            <form method="post">
-                {% csrf_token %}
-                <div class="d-flex gap-2">
-                    {% if can_delete %}
-                        <button type="submit" class="btn btn-danger">Delete User</button>
-                    {% else %}
-                        <button type="button" class="btn btn-danger" disabled>Delete User</button>
-                    {% endif %}
-                    <a href="{% url 'accounts:user_list' %}" class="btn btn-secondary">Cancel</a>
-                </div>
-            </form>
+                {% if not can_delete %}
+                    <!-- Error Banner -->
+                    <div style="margin-bottom: 24px; padding: 16px; background: #FDE7E9; border-left: 3px solid #A80000; border-radius: 2px;">
+                        <div class="flex items-start gap-2">
+                            <span class="material-symbols-outlined" style="font-size: 20px; color: #A80000;">error</span>
+                            <div>
+                                <div style="font-size: 14px; font-weight: 600; color: #A80000; margin-bottom: 4px;">Cannot delete this user</div>
+                                <div style="font-size: 13px; font-weight: 400; color: #A80000;">{{ reason }}</div>
+                            </div>
+                        </div>
+                    </div>
+                {% else %}
+                    <!-- Warning Banner -->
+                    <div style="margin-bottom: 24px; padding: 16px; background: #FFF4CE; border-left: 3px solid #FFB900; border-radius: 2px;">
+                        <div class="flex items-start gap-2">
+                            <span class="material-symbols-outlined" style="font-size: 20px; color: #797600;">warning</span>
+                            <div>
+                                <div style="font-size: 14px; font-weight: 600; color: #797600; margin-bottom: 4px;">Warning</div>
+                                <div style="font-size: 13px; font-weight: 400; color: #797600;">This action cannot be undone. The user will be deactivated.</div>
+                            </div>
+                        </div>
+                    </div>
+                {% endif %}
+
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="flex items-center justify-end gap-3">
+                        <a href="{% url 'accounts:user_list' %}" class="no-underline" style="height: 32px; padding: 0 16px; font-size: 14px; font-weight: 400; color: #605E5C; display: inline-flex; align-items: center; transition: color 0.15s;" onmouseover="this.style.color='#323130'" onmouseout="this.style.color='#605E5C'">
+                            Cancel
+                        </a>
+                        {% if can_delete %}
+                            <button type="submit" style="height: 32px; padding: 0 20px; background: #A80000; color: #FFFFFF; border: none; border-radius: 2px; font-size: 14px; font-weight: 400; cursor: pointer; transition: background 0.15s;" onmouseover="this.style.background='#750B0B'" onmouseout="this.style.background='#A80000'">
+                                Delete User
+                            </button>
+                        {% else %}
+                            <button type="button" disabled style="height: 32px; padding: 0 20px; background: #EDEBE9; color: #A19F9D; border: none; border-radius: 2px; font-size: 14px; font-weight: 400; cursor: not-allowed;">
+                                Delete User
+                            </button>
+                        {% endif %}
+                    </div>
+                </form>
+            </div>
         </div>
     </div>
 </div>

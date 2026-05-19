@@ -5,66 +5,81 @@
 
 {% block extra_css %}
 <style>
-    /* Modern form control styling */
+    /* Azure form control styling */
     input[type="text"], input[type="email"], input[type="password"], select {
         width: 100%;
-        padding: 0.625rem 0.875rem;
-        border-radius: 0.5rem;
-        border: 1px solid #e2e8f0;
-        background-color: #f8fafc;
-        font-size: 0.875rem;
-        transition: all 0.2s;
+        height: 32px;
+        padding: 0 12px;
+        border-radius: 2px;
+        border: 1px solid #EDEBE9;
+        background-color: #FFFFFF;
+        font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+        font-size: 14px;
+        font-weight: 400;
+        color: #323130;
+        transition: border-color 0.15s, box-shadow 0.15s;
         outline: none;
     }
     input:focus, select:focus {
-        border-color: #0c56d0;
-        background-color: #ffffff;
-        box-shadow: 0 0 0 3px rgba(12, 86, 208, 0.1);
+        border-color: #0078D4;
+        box-shadow: inset 0 0 0 1px #0078D4;
+    }
+    input::placeholder {
+        color: #A19F9D;
     }
     .form-check-input {
-        width: 1.25rem !important;
-        height: 1.25rem !important;
-        margin-top: 0.25rem;
-        border-radius: 0.25rem !important;
-        border: 1px solid #e2e8f0 !important;
+        width: 16px !important;
+        height: 16px !important;
+        margin-top: 2px;
+        border-radius: 2px !important;
+        border: 1px solid #EDEBE9 !important;
+        background-color: #FFFFFF !important;
         cursor: pointer;
     }
+    .form-check-input:checked {
+        background-color: #0078D4 !important;
+        border-color: #0078D4 !important;
+    }
     .form-check-label {
-        font-size: 0.875rem;
-        font-weight: 500;
-        color: #1e293b;
+        font-size: 14px;
+        font-weight: 400;
+        color: #323130;
         cursor: pointer;
-        padding-left: 0.5rem;
     }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="flex-1 overflow-y-auto p-6 space-y-8 no-scrollbar bg-slate-50/50">
-    <!-- Breadcrumbs / Back Link -->
-    <div class="flex items-center gap-2 text-sm">
-        <a href="{% url 'accounts:user_list' %}" class="flex items-center gap-1 text-slate-500 hover:text-primary transition-colors no-underline font-medium">
-            <span class="material-symbols-outlined text-sm">arrow_back</span>
+<div class="flex-1 overflow-y-auto no-scrollbar" style="background: #F3F2F1; padding: 24px;">
+    <!-- Back Navigation -->
+    <div class="flex items-center gap-2" style="margin-bottom: 20px;">
+        <a href="{% url 'accounts:user_list' %}" class="flex items-center gap-1 no-underline" style="font-size: 13px; color: #0078D4; font-weight: 400; transition: color 0.15s;" onmouseover="this.style.color='#005A9E'" onmouseout="this.style.color='#0078D4'">
+            <span class="material-symbols-outlined" style="font-size: 16px;">arrow_back</span>
             Back to Users
         </a>
     </div>
 
-    <div class="max-w-2xl">
+    <div style="max-width: 800px;">
         <!-- Page Header -->
-        <div class="mb-8">
-            <h1 class="text-3xl font-extrabold text-on-surface tracking-tight">{{ form_title }}</h1>
-            <p class="text-on-surface-variant mt-1 font-medium">Update account details, permissions, and security settings.</p>
+        <div style="background: #FFFFFF; border: 1px solid #EDEBE9; border-radius: 2px; padding: 20px 24px; box-shadow: 0 1.6px 3.6px rgba(0,0,0,0.10); margin-bottom: 20px;">
+            <div class="flex items-center gap-3 mb-2">
+                <div class="flex items-center justify-center" style="width: 40px; height: 40px; border-radius: 2px; background: #0078D4; color: #FFFFFF;">
+                    <span class="material-symbols-outlined" style="font-size: 20px;">person_add</span>
+                </div>
+                <h1 style="font-size: 20px; font-weight: 600; color: #323130; margin: 0;">{{ form_title }}</h1>
+            </div>
+            <p style="font-size: 13px; color: #605E5C; margin: 0;">Update account details, permissions, and security settings.</p>
         </div>
 
         <!-- Form Card -->
-        <div class="bg-surface-container-lowest rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-            <div class="p-8">
+        <div style="background: #FFFFFF; border: 1px solid #EDEBE9; border-radius: 2px; box-shadow: 0 1.6px 3.6px rgba(0,0,0,0.10); overflow: hidden;">
+            <div style="padding: 24px;">
                 {% if form.non_field_errors %}
-                <div class="mb-6 p-4 bg-red-50 border-l-4 border-red-500 rounded-r-lg">
-                    <ul class="space-y-1">
+                <div style="margin-bottom: 24px; padding: 16px; background: #FDE7E9; border-left: 3px solid #A80000; border-radius: 2px;">
+                    <ul style="margin: 0; padding: 0; list-style: none;">
                         {% for error in form.non_field_errors %}
-                        <li class="text-sm font-bold text-red-800 flex items-center gap-2">
-                            <span class="material-symbols-outlined text-sm">error</span>
+                        <li class="flex items-center gap-2" style="font-size: 13px; font-weight: 400; color: #A80000;">
+                            <span class="material-symbols-outlined" style="font-size: 16px;">error</span>
                             {{ error }}
                         </li>
                         {% endfor %}
@@ -72,31 +87,31 @@
                 </div>
                 {% endif %}
 
-                <form method="post" class="space-y-6">
+                <form method="post" style="display: flex; flex-direction: column; gap: 24px;">
                     {% csrf_token %}
-                    
+
                     <!-- Basic Info Group -->
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div class="space-y-1.5">
-                            <label for="{{ form.username.id_for_label }}" class="text-sm font-bold text-slate-700">
-                                Username <span class="text-red-500">*</span>
+                    <div class="grid grid-cols-1 md:grid-cols-2" style="gap: 20px;">
+                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                            <label for="{{ form.username.id_for_label }}" style="font-size: 12px; font-weight: 400; color: #605E5C;">
+                                Username <span style="color: #A80000;">*</span>
                             </label>
                             {{ form.username }}
                             {% if form.username.help_text %}
-                            <p class="text-[10px] text-slate-400 font-medium">{{ form.username.help_text }}</p>
+                            <p style="font-size: 11px; color: #A19F9D; margin: 0;">{{ form.username.help_text }}</p>
                             {% endif %}
                             {% if form.username.errors %}
-                            <div class="text-xs font-bold text-red-500 mt-1">
+                            <div style="font-size: 12px; font-weight: 400; color: #A80000;">
                                 {% for error in form.username.errors %}{{ error }}{% endfor %}
                             </div>
                             {% endif %}
                         </div>
 
-                        <div class="space-y-1.5">
-                            <label for="{{ form.email.id_for_label }}" class="text-sm font-bold text-slate-700">Email Address</label>
+                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                            <label for="{{ form.email.id_for_label }}" style="font-size: 12px; font-weight: 400; color: #605E5C;">Email Address</label>
                             {{ form.email }}
                             {% if form.email.errors %}
-                            <div class="text-xs font-bold text-red-500 mt-1">
+                            <div style="font-size: 12px; font-weight: 400; color: #A80000;">
                                 {% for error in form.email.errors %}{{ error }}{% endfor %}
                             </div>
                             {% endif %}
@@ -105,37 +120,37 @@
 
                     <!-- Password Group -->
                     {% if form.password1 or form.new_password %}
-                    <div class="pt-4 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="grid grid-cols-1 md:grid-cols-2" style="padding-top: 16px; border-top: 1px solid #EDEBE9; gap: 20px;">
                         {% if form.password1 %}
-                        <div class="space-y-1.5">
-                            <label for="{{ form.password1.id_for_label }}" class="text-sm font-bold text-slate-700">
-                                Password <span class="text-red-500">*</span>
+                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                            <label for="{{ form.password1.id_for_label }}" style="font-size: 12px; font-weight: 400; color: #605E5C;">
+                                Password <span style="color: #A80000;">*</span>
                             </label>
                             {{ form.password1 }}
                             {% if form.password1.errors %}
-                            <div class="text-xs font-bold text-red-500 mt-1">
+                            <div style="font-size: 12px; font-weight: 400; color: #A80000;">
                                 {% for error in form.password1.errors %}{{ error }}{% endfor %}
                             </div>
                             {% endif %}
                         </div>
-                        <div class="space-y-1.5">
-                            <label for="{{ form.password2.id_for_label }}" class="text-sm font-bold text-slate-700">Confirm Password</label>
+                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                            <label for="{{ form.password2.id_for_label }}" style="font-size: 12px; font-weight: 400; color: #605E5C;">Confirm Password</label>
                             {{ form.password2 }}
                         </div>
                         {% endif %}
 
                         {% if form.new_password %}
-                        <div class="space-y-1.5">
-                            <label for="{{ form.new_password.id_for_label }}" class="text-sm font-bold text-slate-700">New Password</label>
+                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                            <label for="{{ form.new_password.id_for_label }}" style="font-size: 12px; font-weight: 400; color: #605E5C;">New Password</label>
                             {{ form.new_password }}
                             {% if form.new_password.errors %}
-                            <div class="text-xs font-bold text-red-500 mt-1">
+                            <div style="font-size: 12px; font-weight: 400; color: #A80000;">
                                 {% for error in form.new_password.errors %}{{ error }}{% endfor %}
                             </div>
                             {% endif %}
                         </div>
-                        <div class="space-y-1.5">
-                            <label for="{{ form.confirm_password.id_for_label }}" class="text-sm font-bold text-slate-700">Confirm New Password</label>
+                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                            <label for="{{ form.confirm_password.id_for_label }}" style="font-size: 12px; font-weight: 400; color: #605E5C;">Confirm New Password</label>
                             {{ form.confirm_password }}
                         </div>
                         {% endif %}
@@ -143,46 +158,46 @@
                     {% endif %}
 
                     <!-- Permissions Group -->
-                    <div class="pt-4 border-t border-slate-100 flex flex-col gap-4">
+                    <div style="padding-top: 16px; border-top: 1px solid #EDEBE9; display: flex; flex-direction: column; gap: 16px;">
                         {% if form.role %}
-                        <div class="space-y-1.5 max-w-xs">
-                            <label for="{{ form.role.id_for_label }}" class="text-sm font-bold text-slate-700">
-                                Assigned Role <span class="text-red-500">*</span>
+                        <div style="display: flex; flex-direction: column; gap: 8px; max-width: 320px;">
+                            <label for="{{ form.role.id_for_label }}" style="font-size: 12px; font-weight: 400; color: #605E5C;">
+                                Assigned Role <span style="color: #A80000;">*</span>
                             </label>
                             {{ form.role }}
                             {% if form.role.errors %}
-                            <div class="text-xs font-bold text-red-500 mt-1">
+                            <div style="font-size: 12px; font-weight: 400; color: #A80000;">
                                 {% for error in form.role.errors %}{{ error }}{% endfor %}
                             </div>
                             {% endif %}
                         </div>
                         {% endif %}
 
-                        <div class="flex gap-8">
+                        <div class="flex flex-wrap" style="gap: 32px;">
                             <div class="flex items-start gap-2">
                                 {{ form.is_active }}
-                                <label class="form-check-label" for="{{ form.is_active.id_for_label }}">
-                                    Account Enabled
-                                    <p class="font-normal text-[10px] text-slate-400">Allow user to login to the system.</p>
+                                <label class="form-check-label flex flex-col" for="{{ form.is_active.id_for_label }}">
+                                    <span>Account Enabled</span>
+                                    <span style="font-size: 11px; color: #A19F9D;">Allow user to login to the system.</span>
                                 </label>
                             </div>
 
                             <div class="flex items-start gap-2">
                                 {{ form.is_staff }}
-                                <label class="form-check-label" for="{{ form.is_staff.id_for_label }}">
-                                    Staff Access
-                                    <p class="font-normal text-[10px] text-slate-400">Access to Django admin interface.</p>
+                                <label class="form-check-label flex flex-col" for="{{ form.is_staff.id_for_label }}">
+                                    <span>Staff Access</span>
+                                    <span style="font-size: 11px; color: #A19F9D;">Access to Django admin interface.</span>
                                 </label>
                             </div>
                         </div>
                     </div>
 
                     <!-- Actions -->
-                    <div class="pt-8 border-t border-slate-100 flex items-center justify-end gap-3">
-                        <a href="{% url 'accounts:user_list' %}" class="px-6 py-2.5 text-slate-500 font-bold hover:text-slate-800 transition-colors no-underline">
+                    <div class="flex items-center justify-end gap-3" style="padding-top: 24px; border-top: 1px solid #EDEBE9;">
+                        <a href="{% url 'accounts:user_list' %}" class="no-underline" style="height: 32px; padding: 0 16px; font-size: 14px; font-weight: 400; color: #605E5C; display: inline-flex; align-items: center; transition: color 0.15s;" onmouseover="this.style.color='#323130'" onmouseout="this.style.color='#605E5C'">
                             Cancel
                         </a>
-                        <button type="submit" class="px-8 py-2.5 bg-primary text-white rounded-lg font-bold shadow-lg shadow-primary/20 hover:bg-primary-container active:scale-95 transition-all outline-none">
+                        <button type="submit" style="height: 32px; padding: 0 20px; background: #0078D4; color: #FFFFFF; border: none; border-radius: 2px; font-size: 14px; font-weight: 400; cursor: pointer; transition: background 0.15s;" onmouseover="this.style.background='#005A9E'" onmouseout="this.style.background='#0078D4'">
                             {{ submit_button }}
                         </button>
                     </div>

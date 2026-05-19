@@ -26,6 +26,7 @@ from .connectors import get_connector
 from .file_source_paths import resolve_safe_source_path
 from .file_format import validate_upload, default_extension_for
 from core.exceptions import DatabaseConnectionError, InvalidDatabaseTypeError
+from core.virus_scan import scan_uploaded_file, VirusScanError
 
 logger = logging.getLogger('connections.views')
 
@@ -144,6 +145,25 @@ class FileSourceCreateView(ViewerReadOnlyMixin, OperatorOrAboveMixin, CreateView
             return self.form_invalid(form)
         uploaded_file = self.request.FILES.get('upload_file')
         if uploaded_file:
+            # Virus scan uploaded file
+            try:
+                is_clean, threat = scan_uploaded_file(uploaded_file)
+                if not is_clean:
+                    messages.error(
+                        self.request,
+                        f'File upload blocked: Virus detected ({threat}). Please scan your file and try again.'
+                    )
+                    return self.form_invalid(form)
+            except VirusScanError as e:
+                logger.error(f"Virus scan failed: {e}")
+                # STRICT MODE: Block upload if scan fails (ClamAV required)
+                messages.error(
+                    self.request,
+                    f'File upload blocked: Virus scanning failed ({e}). '
+                    f'ClamAV must be installed for file uploads. Contact administrator.'
+                )
+                return self.form_invalid(form)
+
             instance.file_format = validate_upload(uploaded_file, form.cleaned_data.get('file_format'))
             instance.relative_path = _save_uploaded_file_source(
                 uploaded_file,
@@ -179,6 +199,25 @@ class FileSourceUpdateView(ViewerReadOnlyMixin, OperatorOrAboveMixin, UpdateView
         instance = form.save(commit=False)
         uploaded_file = self.request.FILES.get('upload_file')
         if uploaded_file:
+            # Virus scan uploaded file
+            try:
+                is_clean, threat = scan_uploaded_file(uploaded_file)
+                if not is_clean:
+                    messages.error(
+                        self.request,
+                        f'File upload blocked: Virus detected ({threat}). Please scan your file and try again.'
+                    )
+                    return self.form_invalid(form)
+            except VirusScanError as e:
+                logger.error(f"Virus scan failed: {e}")
+                # STRICT MODE: Block upload if scan fails (ClamAV required)
+                messages.error(
+                    self.request,
+                    f'File upload blocked: Virus scanning failed ({e}). '
+                    f'ClamAV must be installed for file uploads. Contact administrator.'
+                )
+                return self.form_invalid(form)
+
             instance.file_format = validate_upload(uploaded_file, form.cleaned_data.get('file_format'))
             instance.relative_path = _save_uploaded_file_source(
                 uploaded_file,

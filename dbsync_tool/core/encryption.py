@@ -3,7 +3,10 @@ Password encryption/decryption utility using Fernet (symmetric encryption)
 """
 from cryptography.fernet import Fernet
 import os
+import logging
 from django.conf import settings
+
+logger = logging.getLogger(__name__)
 
 class EncryptionService:
     """
@@ -29,7 +32,7 @@ class EncryptionService:
             if not key:
                 # Generate a key for development (WARNING: Not for production!)
                 key = Fernet.generate_key()
-                print(f"WARNING: Generated new encryption key. Set ENCRYPTION_KEY={key.decode()} in settings.py")
+                logger.warning(f"Generated new encryption key. Set ENCRYPTION_KEY={key.decode()} in settings.py")
             
             # If key is a string, encode it
             if isinstance(key, str):
@@ -39,8 +42,8 @@ class EncryptionService:
             if len(key) != 44:
                 # Generate a new key if invalid
                 key = Fernet.generate_key()
-                print(f"WARNING: Invalid encryption key length. Generated new key: {key.decode()}")
-                print(f"Add this to settings.py: ENCRYPTION_KEY = '{key.decode()}'")
+                logger.warning(f"Invalid encryption key length. Generated new key: {key.decode()}")
+                logger.warning(f"Add this to settings.py: ENCRYPTION_KEY = '{key.decode()}'")
             
             try:
                 self._fernet = Fernet(key)
