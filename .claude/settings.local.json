@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile sync_jobs/tests/test_incremental_integration.py sync_jobs/tests/test_transformation_integration.py sync_jobs/tests/test_transformation_data_accuracy.py)"
+    ]
+  }
+}

@@ -382,39 +382,7 @@ h3, .heading-small {
    MODALS / DIALOGS
    ========================================== */
 
-.azure-modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    z-index: 1000;
-}
-
-.azure-modal {
-    background: var(--azure-white);
-    border-radius: var(--radius-sm);
-    max-width: 600px;
-    margin: 0 auto;
-    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
-}
-
-.azure-modal-header {
-    padding: 24px 24px 0;
-    font-size: var(--font-size-lg);
-    font-weight: 600;
-    color: var(--azure-neutral-dark);
-}
-
-.azure-modal-body {
-    padding: var(--spacing-lg);
-}
-
-.azure-modal-footer {
-    padding: 16px 24px;
-    border-top: 1px solid var(--azure-border);
-    display: flex;
-    justify-content: flex-end;
-    gap: var(--spacing-sm);
-}
+/* NOTE: Modal classes removed - now handled in component-specific CSS */
 
 /* ==========================================
    LOADING STATES

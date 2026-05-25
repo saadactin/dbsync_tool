@@ -59,20 +59,40 @@ class RequestValidationMiddleware(MiddlewareMixin):
         # Validate Content-Type for POST/PUT/PATCH requests
         if request.method in ['POST', 'PUT', 'PATCH']:
             content_type = request.META.get('CONTENT_TYPE', '')
+            content_length = request.META.get('CONTENT_LENGTH', '0')
+
+            # DEBUG LOGGING
+            logger.info(f"[RequestValidation] Path: {request.path}, Method: {request.method}")
+            logger.info(f"[RequestValidation] Content-Type: '{content_type}'")
+            logger.info(f"[RequestValidation] Content-Length: '{content_length}'")
+
+            # Allow empty body for PATCH/DELETE (toggle/delete operations)
+            try:
+                body_size = int(content_length)
+                if body_size == 0 and request.method in ['PATCH', 'DELETE']:
+                    logger.info(f"[RequestValidation] Allowing empty body PATCH/DELETE")
+                    return None  # Skip validation for empty body PATCH/DELETE
+            except (ValueError, TypeError):
+                pass
+
             if not content_type:
                 # Allow form submissions without explicit Content-Type
                 if not request.path.startswith('/api/'):
                     return None
-            
-            # For API requests, validate Content-Type
+
+            # For API requests, validate Content-Type only if there's a body
             if request.path.startswith('/api/'):
-                if 'application/json' not in content_type and 'multipart/form-data' not in content_type:
-                    if 'application/x-www-form-urlencoded' not in content_type:
-                        return create_error_response(
-                            code=ErrorCode.BAD_REQUEST,
-                            message="Invalid Content-Type. Expected application/json or multipart/form-data.",
-                            status_code=400
-                        )
+                # Allow application/json, multipart/form-data, or form-urlencoded
+                valid_types = ['application/json', 'multipart/form-data', 'application/x-www-form-urlencoded']
+                if not any(ct in content_type for ct in valid_types):
+                    logger.error(f"[RequestValidation] REJECTED - Content-Type '{content_type}' not in {valid_types}")
+                    return create_error_response(
+                        code=ErrorCode.BAD_REQUEST,
+                        message=f"Invalid Content-Type: '{content_type}'. Expected application/json, multipart/form-data, or application/x-www-form-urlencoded.",
+                        status_code=400
+                    )
+                else:
+                    logger.info(f"[RequestValidation] Content-Type validation passed")
         
         # Log query params only when sanitization actually changes key or value
         # (previous code compared param names to sanitized values by mistake).

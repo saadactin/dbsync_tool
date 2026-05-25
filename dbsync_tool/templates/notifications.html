@@ -1,0 +1,719 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Notifications - DB Sync Tool{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* === TOAST NOTIFICATIONS === */
+    .toast-container {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 999999;
+    }
+
+    .toast {
+        min-width: 320px;
+        padding: 16px 20px;
+        border-radius: 6px;
+        margin-bottom: 12px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        animation: slideInToast 0.3s ease-out;
+    }
+
+    @keyframes slideInToast {
+        from { transform: translateX(400px); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+    }
+
+    .toast.success { background-color: #107C10; color: white; }
+    .toast.error { background-color: #A80000; color: white; }
+
+    /* === MODAL SYSTEM - BOOTSTRAP STYLE === */
+
+    /* Full screen black backdrop */
+    .custom-modal-backdrop {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.75);
+        z-index: 1040;
+        display: none;
+    }
+
+    .custom-modal-backdrop.show {
+        display: block;
+    }
+
+    /* Modal wrapper */
+    .custom-modal {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 1050;
+        display: none;
+        overflow-x: hidden;
+        overflow-y: auto;
+        outline: 0;
+    }
+
+    .custom-modal.show {
+        display: block;
+    }
+
+    /* Modal dialog container */
+    .custom-modal-dialog {
+        position: relative;
+        width: auto;
+        max-width: 550px;
+        margin: 1.75rem auto;
+        pointer-events: none;
+    }
+
+    /* Modal content box */
+    .custom-modal-content {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        pointer-events: auto;
+        background-color: #fff;
+        background-clip: padding-box;
+        border: 1px solid rgba(0,0,0,.2);
+        border-radius: 8px;
+        outline: 0;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+    }
+
+    /* Modal header */
+    .custom-modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 20px 24px;
+        border-bottom: 1px solid #dee2e6;
+        border-top-left-radius: 8px;
+        border-top-right-radius: 8px;
+        background-color: #f8f9fa;
+    }
+
+    .custom-modal-title {
+        margin: 0;
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: #212529;
+        line-height: 1.5;
+    }
+
+    .custom-modal-close {
+        padding: 0;
+        background: transparent;
+        border: 0;
+        font-size: 1.5rem;
+        font-weight: 700;
+        line-height: 1;
+        color: #000;
+        opacity: .5;
+        cursor: pointer;
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+    }
+
+    .custom-modal-close:hover {
+        opacity: .75;
+        background-color: #e9ecef;
+    }
+
+    /* Modal body */
+    .custom-modal-body {
+        position: relative;
+        flex: 1 1 auto;
+        padding: 24px;
+    }
+
+    /* Modal footer */
+    .custom-modal-footer {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: flex-end;
+        padding: 16px 24px;
+        border-top: 1px solid #dee2e6;
+        border-bottom-right-radius: 8px;
+        border-bottom-left-radius: 8px;
+        gap: 10px;
+    }
+
+    /* Form styles */
+    .form-group-custom {
+        margin-bottom: 20px;
+    }
+
+    .form-group-custom:last-child {
+        margin-bottom: 0;
+    }
+
+    .form-label-custom {
+        display: inline-block;
+        margin-bottom: 8px;
+        font-weight: 600;
+        font-size: 14px;
+        color: #212529;
+    }
+
+    .form-label-custom .text-danger {
+        color: #dc3545;
+        margin-left: 3px;
+    }
+
+    .form-control-custom {
+        display: block;
+        width: 100%;
+        padding: 10px 12px;
+        font-size: 15px;
+        font-weight: 400;
+        line-height: 1.5;
+        color: #212529;
+        background-color: #fff;
+        background-clip: padding-box;
+        border: 1px solid #ced4da;
+        border-radius: 6px;
+        transition: border-color .15s ease-in-out, box-shadow .15s ease-in-out;
+    }
+
+    .form-control-custom:focus {
+        color: #212529;
+        background-color: #fff;
+        border-color: #0d6efd;
+        outline: 0;
+        box-shadow: 0 0 0 0.25rem rgba(13,110,253,.25);
+    }
+
+    .form-control-custom::placeholder {
+        color: #6c757d;
+        opacity: 1;
+    }
+
+    /* Button styles */
+    .btn-custom {
+        display: inline-block;
+        font-weight: 600;
+        line-height: 1.5;
+        text-align: center;
+        text-decoration: none;
+        vertical-align: middle;
+        cursor: pointer;
+        user-select: none;
+        border: 1px solid transparent;
+        padding: 10px 20px;
+        font-size: 14px;
+        border-radius: 6px;
+        transition: all .15s ease-in-out;
+        min-width: 100px;
+    }
+
+    .btn-primary-custom {
+        color: #fff;
+        background-color: #0d6efd;
+        border-color: #0d6efd;
+    }
+
+    .btn-primary-custom:hover {
+        background-color: #0b5ed7;
+        border-color: #0a58ca;
+    }
+
+    .btn-secondary-custom {
+        color: #fff;
+        background-color: #6c757d;
+        border-color: #6c757d;
+    }
+
+    .btn-secondary-custom:hover {
+        background-color: #5c636a;
+        border-color: #565e64;
+    }
+
+    .btn-danger-custom {
+        color: #fff;
+        background-color: #dc3545;
+        border-color: #dc3545;
+    }
+
+    .btn-danger-custom:hover {
+        background-color: #bb2d3b;
+        border-color: #b02a37;
+    }
+
+    .btn-success-custom {
+        color: #fff;
+        background-color: #198754;
+        border-color: #198754;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .btn-success-custom:hover {
+        background-color: #157347;
+        border-color: #146c43;
+    }
+
+    /* Toggle switch - RED when OFF, GREEN when ON */
+    .toggle-switch {
+        position: relative;
+        width: 48px;
+        height: 24px;
+        background-color: #dc3545;
+        border-radius: 12px;
+        cursor: pointer;
+        transition: background-color 0.3s ease;
+        box-shadow: inset 0 1px 3px rgba(0,0,0,0.2);
+    }
+
+    .toggle-switch.active {
+        background-color: #107C10;
+    }
+
+    .toggle-slider {
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 20px;
+        height: 20px;
+        background-color: white;
+        border-radius: 50%;
+        transition: transform 0.3s ease;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+
+    .toggle-switch.active .toggle-slider {
+        transform: translateX(24px);
+    }
+
+    .toggle-switch:hover {
+        opacity: 0.9;
+    }
+
+    /* Status text */
+    .status-text {
+        font-size: 12px;
+        font-weight: 600;
+        margin-left: 8px;
+    }
+
+    .status-text.active {
+        color: #107C10;
+    }
+
+    .status-text.inactive {
+        color: #dc3545;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Toast Container -->
+<div class="toast-container" id="toastContainer"></div>
+
+<div class="px-8 py-6">
+    <!-- Page Header -->
+    <div class="mb-6">
+        <div class="flex items-center justify-between">
+            <div>
+                <h1 class="text-3xl font-semibold text-[#323130] mb-2">Notification Recipients</h1>
+                <p class="text-[#605E5C]">Manage email recipients for system alerts (server shutdown, errors, etc.)</p>
+            </div>
+            <button onclick="openAddModal()" class="btn-custom btn-success-custom">
+                <span class="material-symbols-outlined text-[18px]">add</span>
+                Add Recipient
+            </button>
+        </div>
+    </div>
+
+    <!-- Recipients Table -->
+    <div class="bg-white rounded-sm shadow-sm border border-[#EDEBE9]">
+        <div class="px-6 py-4 border-b border-[#EDEBE9]">
+            <h2 class="text-lg font-semibold text-[#323130]">Active Recipients</h2>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead class="bg-[#F3F2F1] border-b border-[#EDEBE9]">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-semibold text-[#605E5C] uppercase tracking-wider">Email</th>
+                        <th class="px-6 py-3 text-left text-xs font-semibold text-[#605E5C] uppercase tracking-wider">Name</th>
+                        <th class="px-6 py-3 text-left text-xs font-semibold text-[#605E5C] uppercase tracking-wider">Status</th>
+                        <th class="px-6 py-3 text-left text-xs font-semibold text-[#605E5C] uppercase tracking-wider">Added</th>
+                        <th class="px-6 py-3 text-right text-xs font-semibold text-[#605E5C] uppercase tracking-wider">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="recipientsTable" class="divide-y divide-[#EDEBE9]">
+                    <tr>
+                        <td colspan="5" class="px-6 py-8 text-center text-[#605E5C]">
+                            <span class="material-symbols-outlined text-4xl mb-2 block text-[#A19F9D]">hourglass_empty</span>
+                            Loading recipients...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Empty State -->
+        <div id="emptyState" class="hidden px-6 py-12 text-center">
+            <span class="material-symbols-outlined text-6xl text-[#A19F9D] mb-4 block">notifications_off</span>
+            <h3 class="text-lg font-semibold text-[#323130] mb-2">No recipients configured</h3>
+            <p class="text-[#605E5C] mb-4">Add email addresses to receive system alerts</p>
+        </div>
+    </div>
+
+    <!-- Info Box -->
+    <div class="mt-6 bg-[#EFF6FC] border border-[#0078D4] rounded-sm px-4 py-3">
+        <div class="flex items-start gap-3">
+            <span class="material-symbols-outlined text-[#0078D4] mt-0.5">info</span>
+            <div>
+                <p class="text-sm text-[#323130] mb-2">
+                    <strong>Email Configuration:</strong> Recipients listed here will receive system notifications (server shutdown, errors, alerts).
+                    If no recipients are active, alerts fall back to <code class="bg-white px-2 py-0.5 rounded text-[#A80000]">ADMIN_EMAILS</code> from .env.
+                </p>
+                <p class="text-sm text-[#323130]">
+                    <strong>Toggle Status:</strong>
+                    <span style="color: #107C10; font-weight: 600;">● Green = Active</span> (will receive emails) •
+                    <span style="color: #dc3545; font-weight: 600;">● Red = Inactive</span> (will NOT receive emails)
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Recipient Modal -->
+<div class="custom-modal-backdrop" id="addModalBackdrop"></div>
+<div class="custom-modal" id="addModal" tabindex="-1">
+    <div class="custom-modal-dialog">
+        <div class="custom-modal-content">
+            <div class="custom-modal-header">
+                <h5 class="custom-modal-title">Add Notification Recipient</h5>
+                <button type="button" class="custom-modal-close" onclick="closeAddModal()">
+                    <span>&times;</span>
+                </button>
+            </div>
+            <form onsubmit="handleAddRecipient(event)">
+                <div class="custom-modal-body">
+                    <div class="form-group-custom">
+                        <label class="form-label-custom" for="recipientEmail">
+                            Email Address 
+                            <span class="text-danger">*</span>
+                        </label>
+                        <input
+                            type="email"
+                            id="recipientEmail"
+                            required
+                            class="form-control-custom"
+                            placeholder="user@example.com"
+                        >
+                    </div>
+
+                    <div class="form-group-custom">
+                        <label class="form-label-custom" for="recipientName">Name (Optional)</label>
+                        <input
+                            type="text"
+                            id="recipientName"
+                            class="form-control-custom"
+                            placeholder="John Doe"
+                        >
+                    </div>
+                </div>
+                <div class="custom-modal-footer">
+                    <button type="button" onclick="closeAddModal()" class="btn-custom btn-secondary-custom">Cancel</button>
+                    <button type="submit" class="btn-custom btn-primary-custom">Add Recipient</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="custom-modal-backdrop" id="deleteModalBackdrop"></div>
+<div class="custom-modal" id="deleteModal" tabindex="-1">
+    <div class="custom-modal-dialog">
+        <div class="custom-modal-content">
+            <div class="custom-modal-header">
+                <h5 class="custom-modal-title">Confirm Deletion</h5>
+                <button type="button" class="custom-modal-close" onclick="closeDeleteModal()">
+                    <span>&times;</span>
+                </button>
+            </div>
+            <div class="custom-modal-body">
+                <p style="color: #212529; font-size: 15px; line-height: 1.6; margin: 0;">
+                    Are you sure you want to remove <strong id="deleteEmailText"></strong> from notification recipients?
+                    <br><br>
+                    <span style="color: #dc3545; font-weight: 600;">This action cannot be undone.</span>
+                </p>
+            </div>
+            <div class="custom-modal-footer">
+                <button type="button" onclick="closeDeleteModal()" class="btn-custom btn-secondary-custom">Cancel</button>
+                <button type="button" onclick="confirmDelete()" class="btn-custom btn-danger-custom">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let recipients = [];
+    let deleteTargetId = null;
+
+    document.addEventListener('DOMContentLoaded', () => {
+        loadRecipients();
+
+        // ESC key closes modals
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeAddModal();
+                closeDeleteModal();
+            }
+        });
+
+        // Click backdrop to close
+        document.getElementById('addModalBackdrop').addEventListener('click', closeAddModal);
+        document.getElementById('deleteModalBackdrop').addEventListener('click', closeDeleteModal);
+    });
+
+    function showToast(message, type = 'success') {
+        const container = document.getElementById('toastContainer');
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        const icon = type === 'success' ? 'check_circle' : 'error';
+        toast.innerHTML = `
+            <span class="material-symbols-outlined">${icon}</span>
+            <span>${message}</span>
+        `;
+        container.appendChild(toast);
+        setTimeout(() => toast.remove(), 4000);
+    }
+
+    async function loadRecipients() {
+        try {
+            const response = await fetch('/api/notification-recipients/');
+            const result = await response.json();
+            if (result.success) {
+                recipients = result.data;
+                renderRecipients();
+            } else {
+                showToast(result.error || 'Failed to load recipients', 'error');
+            }
+        } catch (error) {
+            showToast('Network error: ' + error.message, 'error');
+        }
+    }
+
+    function renderRecipients() {
+        const tbody = document.getElementById('recipientsTable');
+        const emptyState = document.getElementById('emptyState');
+
+        if (recipients.length === 0) {
+            tbody.parentElement.classList.add('hidden');
+            emptyState.classList.remove('hidden');
+            return;
+        }
+
+        tbody.parentElement.classList.remove('hidden');
+        emptyState.classList.add('hidden');
+
+        tbody.innerHTML = recipients.map(r => `
+            <tr class="${!r.is_active ? 'opacity-50' : ''}">
+                <td class="px-6 py-4 text-sm text-[#323130]">${r.email}</td>
+                <td class="px-6 py-4 text-sm text-[#605E5C]">${r.name || '<span class="italic">—</span>'}</td>
+                <td class="px-6 py-4">
+                    <div style="display: flex; align-items: center;">
+                        <div
+                            class="toggle-switch ${r.is_active ? 'active' : ''}"
+                            onclick="toggleRecipient(${r.id})"
+                            title="Click to ${r.is_active ? 'deactivate (stop receiving emails)' : 'activate (start receiving emails)'}"
+                        >
+                            <div class="toggle-slider"></div>
+                        </div>
+                        <span class="status-text ${r.is_active ? 'active' : 'inactive'}">
+                            ${r.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                    </div>
+                </td>
+                <td class="px-6 py-4 text-sm text-[#605E5C]">${new Date(r.created_at).toLocaleDateString()}</td>
+                <td class="px-6 py-4 text-right">
+                    <button
+                        onclick="openDeleteModal(${r.id}, '${r.email}')"
+                        class="text-[#A80000] hover:text-[#8B0000] transition-colors"
+                        title="Delete recipient"
+                    >
+                        <span class="material-symbols-outlined text-[20px]">delete</span>
+                    </button>
+                </td>
+            </tr>
+        `).join('');
+    }
+
+    function openAddModal() {
+        document.getElementById('addModalBackdrop').classList.add('show');
+        document.getElementById('addModal').classList.add('show');
+        document.body.style.overflow = 'hidden';
+        setTimeout(() => document.getElementById('recipientEmail').focus(), 200);
+    }
+
+    function closeAddModal() {
+        document.getElementById('addModalBackdrop').classList.remove('show');
+        document.getElementById('addModal').classList.remove('show');
+        document.getElementById('recipientEmail').value = '';
+        document.getElementById('recipientName').value = '';
+        document.body.style.overflow = '';
+    }
+
+    async function handleAddRecipient(event) {
+        event.preventDefault();
+        const email = document.getElementById('recipientEmail').value.trim();
+        const name = document.getElementById('recipientName').value.trim();
+
+        try {
+            const response = await fetch('/api/notification-recipients/create/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCsrfToken()
+                },
+                body: JSON.stringify({ email, name })
+            });
+
+            const result = await response.json();
+            if (result.success) {
+                showToast(result.message, 'success');
+                closeAddModal();
+                loadRecipients();
+            } else {
+                showToast(result.error, 'error');
+            }
+        } catch (error) {
+            showToast('Network error: ' + error.message, 'error');
+        }
+    }
+
+    async function toggleRecipient(id) {
+        console.log(`[Toggle] Starting toggle for recipient ${id}`);
+
+        // Find the toggle element and disable it during request
+        const toggleElement = event.target.closest('.toggle-switch');
+        if (toggleElement) {
+            toggleElement.style.pointerEvents = 'none';
+            toggleElement.style.opacity = '0.6';
+        }
+
+        const url = `/api/notification-recipients/${id}/toggle/`;
+        const headers = {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCsrfToken()
+        };
+
+        console.log(`[Toggle] Request URL: ${url}`);
+        console.log(`[Toggle] Request headers:`, headers);
+
+        try {
+            console.log(`[Toggle] Sending PATCH request...`);
+            const response = await fetch(url, {
+                method: 'PATCH',
+                headers: headers
+            });
+
+            console.log(`[Toggle] Response status: ${response.status}`);
+
+            console.log(`[Toggle] Parsing JSON response...`);
+            const result = await response.json();
+            console.log(`[Toggle] Response data:`, result);
+
+            if (result.success) {
+                // Show appropriate toast based on new state
+                const action = result.data.is_active ? 'activated' : 'deactivated';
+                const toastMsg = `Recipient ${action}. ${result.data.is_active ? 'Will receive emails.' : 'Will NOT receive emails.'}`;
+                showToast(toastMsg, 'success');
+
+                // Reload table to reflect changes
+                loadRecipients();
+            } else {
+                console.error(`[Toggle] Error from server:`, result.error);
+                showToast(result.error, 'error');
+                // Re-enable on error
+                if (toggleElement) {
+                    toggleElement.style.pointerEvents = '';
+                    toggleElement.style.opacity = '';
+                }
+            }
+        } catch (error) {
+            console.error(`[Toggle] Exception:`, error);
+            showToast('Network error: ' + error.message, 'error');
+            // Re-enable on error
+            if (toggleElement) {
+                toggleElement.style.pointerEvents = '';
+                toggleElement.style.opacity = '';
+            }
+        }
+    }
+
+    function openDeleteModal(id, email) {
+        deleteTargetId = id;
+        document.getElementById('deleteEmailText').textContent = email;
+        document.getElementById('deleteModalBackdrop').classList.add('show');
+        document.getElementById('deleteModal').classList.add('show');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeDeleteModal() {
+        document.getElementById('deleteModalBackdrop').classList.remove('show');
+        document.getElementById('deleteModal').classList.remove('show');
+        deleteTargetId = null;
+        document.body.style.overflow = '';
+    }
+
+    async function confirmDelete() {
+        if (!deleteTargetId) return;
+
+        try {
+            const response = await fetch(`/api/notification-recipients/${deleteTargetId}/delete/`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCsrfToken()
+                }
+            });
+
+            const result = await response.json();
+            if (result.success) {
+                showToast(result.message, 'success');
+                closeDeleteModal();
+                loadRecipients();
+            } else {
+                showToast(result.error, 'error');
+            }
+        } catch (error) {
+            showToast('Network error: ' + error.message, 'error');
+        }
+    }
+
+    function getCsrfToken() {
+        const name = 'csrftoken';
+        const cookies = document.cookie.split(';');
+        for (let cookie of cookies) {
+            const [key, value] = cookie.trim().split('=');
+            if (key === name) return value;
+        }
+        return '';
+    }
+</script>
+{% endblock %}

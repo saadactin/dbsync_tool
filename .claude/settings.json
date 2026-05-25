@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python manage.py check)",
+      "Bash(python -m py_compile sync_engine/*.py)",
+      "Bash(python -m py_compile sync_jobs/*.py)",
+      "Bash(python manage.py test sync_jobs.tests.test_incremental_integration --dry-run)",
+      "Bash(python -c \"from sync_jobs.models import SyncJob, SyncExecution; from connections.models import DatabaseConnection; print\\('Models import OK'\\)\")",
+      "Bash(python manage.py migrate --check)",
+      "Bash(python -c \"import django; django.setup\\(\\); from sync_jobs.models import SyncJob; print\\('Import OK'\\)\")",
+      "Bash(python manage.py runserver --check)",
+      "Bash(python manage.py check --deploy)",
+      "Bash(python manage.py shell -c \"from connections.models import DatabaseConnection; print\\(f'Connections: {DatabaseConnection.objects.count\\(\\)}'\\)\")",
+      "Bash(python manage.py shell -c \"from sync_jobs.models import SyncJob; print\\(f'Jobs: {SyncJob.objects.count\\(\\)}'\\)\")",
+      "Bash(python manage.py shell -c \"from core.virus_scan import get_virus_scanner; scanner = get_virus_scanner\\(\\); print\\(f'Enabled: {scanner.enabled}'\\); print\\(f'Available: {scanner.is_available\\(\\)}'\\)\")",
+      "Bash(python manage.py makemigrations connections)",
+      "Bash(python manage.py shell -c \"from core.models import NotificationRecipient; print\\('DB Recipients:', list\\(NotificationRecipient.objects.filter\\(is_active=True\\).values\\('email', 'name'\\)\\)\\)\")",
+      "Bash(python manage.py help runserver_monitored)",
+      "Bash(python ../manage.py help runserver_monitored)",
+      "Bash(python ./manage.py help runserver_monitored)",
+      "Bash(python manage.py help runserver)"
+    ]
+  }
+}
