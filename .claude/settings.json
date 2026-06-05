@@ -18,7 +18,10 @@
       "Bash(python manage.py help runserver_monitored)",
       "Bash(python ../manage.py help runserver_monitored)",
       "Bash(python ./manage.py help runserver_monitored)",
-      "Bash(python manage.py help runserver)"
+      "Bash(python manage.py help runserver)",
+      "Bash(git checkout *)",
+      "Bash(git branch *)",
+      "Bash(git add *)"
     ]
   }
 }
