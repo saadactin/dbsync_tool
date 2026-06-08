@@ -54,13 +54,14 @@ if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 
-# Ensure logs directory exists
-LOGS_DIR = Path("logs")
+# Ensure logs directory exists (centralized location)
+LOGS_DIR = Path(__file__).resolve().parents[1] / "logs"
 LOGS_DIR.mkdir(exist_ok=True)
 
-# Setup logging
-TODAY = datetime.now().strftime("%Y%m%d")
-LOG_FILE = LOGS_DIR / f"zoho_increment_{TODAY}.log"
+# Setup logging with standardized naming: source_destination_synctype_date (Windows compatible)
+_now = datetime.now()
+TODAY = f"{_now.strftime('%B').lower()}_{_now.day}_{_now.year}"  # e.g., june_5_2026
+LOG_FILE = LOGS_DIR / f"zoho_clickhouse_incre_{TODAY}.log"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -95,11 +96,16 @@ CLICKHOUSE_DB = os.getenv("CLICKHOUSE_DB", "JARVIS_DB_test")
 
 # API Settings
 MAX_CONCURRENT_REQUESTS = int(os.getenv("MAX_CONCURRENT_REQUESTS", "3"))
-REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "60"))
+REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "180"))  # Increased from 60 to 180 seconds
 CONNECTION_LIMIT = int(os.getenv("CONNECTION_LIMIT", "10"))
 FETCH_BATCH_SIZE = 200          # Zoho hard max per_page
 INSERT_BATCH_SIZE = 5000
 GC_EVERY_N_BATCHES = 10
+
+# Network retry settings
+MAX_RETRIES = int(os.getenv("MAX_RETRIES", "5"))
+RETRY_BACKOFF_FACTOR = float(os.getenv("RETRY_BACKOFF_FACTOR", "2.0"))  # Exponential backoff: 2s, 4s, 8s, 16s, 32s
+INITIAL_RETRY_DELAY = int(os.getenv("INITIAL_RETRY_DELAY", "2"))  # seconds
 
 # Table naming
 TABLE_PREFIX = os.getenv("PREFIX_ZOHO", "ZOHO_")
@@ -152,6 +158,14 @@ except ImportError:
 
 class ZohoAPIError(Exception):
     """A Zoho API request failed in a way that must not be silently ignored."""
+
+
+class NetworkError(Exception):
+    """Network connectivity issues (transient, can be retried)."""
+
+
+class RetryExhaustedError(Exception):
+    """All retry attempts have been exhausted."""
 
 
 # ============================================================
@@ -252,21 +266,33 @@ class AsyncZohoClient:
             "client_secret": ZOHO_CLIENT_SECRET,
             "grant_type": "refresh_token",
         }
-        try:
-            async with self.session.post(ZOHO_TOKEN_URL, params=params) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    self.access_token = data["access_token"]
-                    expires_in = data.get("expires_in", 3600)
-                    self.token_expiry = datetime.now() + timedelta(seconds=expires_in - 300)
-                    logger.info("Zoho access token refreshed")
-                    return True
-                text = await response.text()
-                logger.error(f"Token refresh failed: {response.status} - {text[:200]}")
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                async with self.session.post(ZOHO_TOKEN_URL, params=params) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        self.access_token = data["access_token"]
+                        expires_in = data.get("expires_in", 3600)
+                        self.token_expiry = datetime.now() + timedelta(seconds=expires_in - 300)
+                        logger.info("Zoho access token refreshed")
+                        return True
+                    text = await response.text()
+                    logger.error(f"Token refresh failed: {response.status} - {text[:200]}")
+                    return False
+            except (aiohttp.ClientConnectorError, aiohttp.ServerTimeoutError, asyncio.TimeoutError) as e:
+                if attempt < MAX_RETRIES:
+                    delay = INITIAL_RETRY_DELAY * (RETRY_BACKOFF_FACTOR ** (attempt - 1))
+                    logger.warning(f"🔄 Network error during token refresh (attempt {attempt}/{MAX_RETRIES}): {type(e).__name__}")
+                    logger.warning(f"   Retrying in {delay:.1f} seconds...")
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(f"❌ Token refresh failed after {MAX_RETRIES} attempts: Network unavailable")
+                    raise NetworkError(f"Token refresh network error after {MAX_RETRIES} retries: {e}")
+            except Exception as e:
+                logger.error(f"Token refresh error: {e}")
                 return False
-        except Exception as e:
-            logger.error(f"Token refresh error: {e}")
-            return False
+        return False
 
     async def ensure_token(self) -> None:
         if not self.token_expiry or datetime.now() >= self.token_expiry:
@@ -279,14 +305,30 @@ class AsyncZohoClient:
         await self.ensure_token()
         url = self._module_url(module)
         headers = {"Authorization": f"Zoho-oauthtoken {self.access_token}"}
-        async with self._semaphore:
-            try:
-                async with self.session.get(url, headers=headers, params={"per_page": 1}) as response:
-                    if response.status in (200, 204):
-                        return True, None
-                    return False, f"Status: {response.status}"
-            except Exception as e:
-                return False, str(e)
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            async with self._semaphore:
+                try:
+                    async with self.session.get(url, headers=headers, params={"per_page": 1}) as response:
+                        if response.status in (200, 204):
+                            return True, None
+                        return False, f"Status: {response.status}"
+                except (
+                    aiohttp.ClientConnectorError,
+                    aiohttp.ServerTimeoutError,
+                    asyncio.TimeoutError,
+                    ConnectionError
+                ) as e:
+                    if attempt < MAX_RETRIES:
+                        delay = INITIAL_RETRY_DELAY * (RETRY_BACKOFF_FACTOR ** (attempt - 1))
+                        logger.warning(
+                            f"🔄 Network error checking {module} access (attempt {attempt}/{MAX_RETRIES})"
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        return False, f"Network error after {MAX_RETRIES} retries: {type(e).__name__}"
+                except Exception as e:
+                    return False, str(e)
 
     async def iter_pages(
         self,
@@ -296,7 +338,7 @@ class AsyncZohoClient:
     ) -> AsyncGenerator[Tuple[List[Dict], Dict], None]:
         """
         Fetch ALL records from a module (full refresh, no incremental filtering).
-        Uses simple page-based pagination - same as zoho_full.py.
+        Uses simple page-based pagination with automatic retry on network errors.
         Continues fetching until has_more is False (no artificial limits).
         """
         page = 1
@@ -314,36 +356,91 @@ class AsyncZohoClient:
 
             headers = {"Authorization": f"Zoho-oauthtoken {self.access_token}"}
 
-            async with self._semaphore:
-                async with self.session.get(self._module_url(module), headers=headers, params=params) as response:
-                    status = response.status
-                    if status in (204, 304):
-                        return  # no records
-                    if status == 401:
-                        await self.refresh_token()
-                        continue
-                    if status != 200:
-                        text = await response.text()
-                        logger.error(f"{module}: HTTP {status} - {text[:200]}")
+            # Retry logic for this page
+            retry_count = 0
+            last_error = None
+
+            while retry_count <= MAX_RETRIES:
+                try:
+                    async with self._semaphore:
+                        async with self.session.get(
+                            self._module_url(module),
+                            headers=headers,
+                            params=params
+                        ) as response:
+                            status = response.status
+                            if status in (204, 304):
+                                return  # no records
+                            if status == 401:
+                                await self.refresh_token()
+                                break  # Break retry loop, continue outer loop
+                            if status != 200:
+                                text = await response.text()
+                                logger.error(f"{module}: HTTP {status} - {text[:200]}")
+                                return
+                            data = await response.json()
+
+                    # Success - break out of retry loop
+                    records = data.get("data", []) or []
+                    info = data.get("info", {}) or {}
+                    yield records, info
+
+                    if not info.get("more_records", False):
                         return
-                    data = await response.json()
 
-            records = data.get("data", []) or []
-            info = data.get("info", {}) or {}
-            yield records, info
+                    next_token = info.get("next_page_token")
+                    if next_token:
+                        page_token = next_token
+                    else:
+                        page += 1
 
-            if not info.get("more_records", False):
-                return
+                    await asyncio.sleep(0.3)  # Rate limiting
+                    break  # Success, move to next page
 
-            next_token = info.get("next_page_token")
-            if next_token:
-                page_token = next_token
-            else:
-                page += 1
-                # NO ARTIFICIAL LIMIT - keep going as long as has_more is True
-                # This matches zoho_full.py behavior
+                except (
+                    aiohttp.ClientConnectorError,
+                    aiohttp.ClientConnectionError,
+                    aiohttp.ClientPayloadError,
+                    aiohttp.ServerDisconnectedError,
+                    aiohttp.ServerTimeoutError,
+                    asyncio.TimeoutError,
+                    ConnectionResetError,
+                    ConnectionError
+                ) as e:
+                    retry_count += 1
+                    last_error = e
+                    error_type = type(e).__name__
 
-            await asyncio.sleep(0.3)  # Rate limiting (same as zoho_full.py)
+                    if retry_count <= MAX_RETRIES:
+                        delay = INITIAL_RETRY_DELAY * (RETRY_BACKOFF_FACTOR ** (retry_count - 1))
+                        logger.warning(
+                            f"🔄 Network error on {module} page {page} (attempt {retry_count}/{MAX_RETRIES}): {error_type}"
+                        )
+                        logger.warning(f"   Error details: {str(e)[:150]}")
+                        logger.warning(f"   Retrying in {delay:.1f} seconds...")
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.error(
+                            f"❌ CRITICAL: Network error on {module} after {MAX_RETRIES} retry attempts"
+                        )
+                        logger.error(f"   Last error: {error_type} - {str(last_error)}")
+                        logger.error(f"   Page: {page} | Page token: {page_token}")
+                        raise NetworkError(
+                            f"Failed to fetch {module} page {page} after {MAX_RETRIES} retries. "
+                            f"Last error: {error_type} - {str(last_error)}"
+                        )
+
+                except aiohttp.ClientError as e:
+                    # Other aiohttp errors (non-network)
+                    logger.error(f"❌ API client error on {module} page {page}: {type(e).__name__} - {e}")
+                    raise ZohoAPIError(f"API error on {module}: {e}")
+
+                except Exception as e:
+                    # Unexpected errors
+                    logger.error(f"❌ Unexpected error on {module} page {page}: {type(e).__name__} - {e}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+                    raise
 
 
 # ============================================================
@@ -663,8 +760,24 @@ class FullRefreshMigrator:
             result["status"] = "SUCCESS"
             result["duration"] = duration
 
+        except NetworkError as e:
+            logger.error(f"  ✗ NETWORK FAILURE: {e}")
+            logger.error(f"  💡 This is likely due to internet connectivity issues.")
+            logger.error(f"  💡 The sync will be retried in the next scheduled run.")
+            result["status"] = "NETWORK_ERROR"
+            result["error"] = f"Network connectivity issue: {str(e)}"
+            result["duration"] = time.time() - start_time
+
+        except ZohoAPIError as e:
+            logger.error(f"  ✗ ZOHO API ERROR: {e}")
+            result["status"] = "API_ERROR"
+            result["error"] = f"Zoho API error: {str(e)}"
+            result["duration"] = time.time() - start_time
+
         except Exception as e:
-            logger.error(f"  ✗ FAILED: {e}")
+            logger.error(f"  ✗ UNEXPECTED FAILURE: {e}")
+            import traceback
+            logger.error(f"  Traceback: {traceback.format_exc()}")
             result["status"] = "ERROR"
             result["error"] = str(e)
             result["duration"] = time.time() - start_time
@@ -679,6 +792,10 @@ class FullRefreshMigrator:
         logger.info("ZOHO CRM → CLICKHOUSE - FULL REFRESH WITH STAGING")
         logger.info(f"API version: {ZOHO_API_VERSION}")
         logger.info("Strategy: Full load → Staging → Atomic swap")
+        logger.info(f"Network settings:")
+        logger.info(f"  • Request timeout: {REQUEST_TIMEOUT}s")
+        logger.info(f"  • Max retries: {MAX_RETRIES}")
+        logger.info(f"  • Retry backoff: {INITIAL_RETRY_DELAY}s × {RETRY_BACKOFF_FACTOR}^attempt")
         logger.info(f"{'#'*60}")
 
         modules = [m for m in MODULES_TO_SYNC if m not in SKIP_MODULES]
@@ -715,12 +832,14 @@ class FullRefreshMigrator:
                 "NO_ACCESS": "⚠",
                 "NO_TABLE": "⚠",
                 "ERROR": "✗",
-                "SWAP_FAILED": "✗"
+                "SWAP_FAILED": "✗",
+                "NETWORK_ERROR": "🔌",
+                "API_ERROR": "⚠"
             }.get(r["status"], "?")
 
             net_change = r.get("records_after", 0) - r.get("records_before", 0)
             logger.info(
-                f"{r['production_table']:<32} {icon} {r['status']:<12} "
+                f"{r['production_table']:<32} {icon} {r['status']:<15} "
                 f"Loaded: {r.get('records_loaded', 0):,} | "
                 f"Change: {net_change:+,} | "
                 f"({r.get('duration', 0):>5.1f}s)"
@@ -732,7 +851,12 @@ class FullRefreshMigrator:
             logger.warning("FAILED MODULES:")
             for r in failed:
                 error = r.get("error", r.get("swap_status", "Unknown error"))
-                logger.warning(f"   • {r['production_table']}: {error}")
+                status_detail = ""
+                if r["status"] == "NETWORK_ERROR":
+                    status_detail = " (Network connectivity issue - will retry next run)"
+                elif r["status"] == "API_ERROR":
+                    status_detail = " (Zoho API issue)"
+                logger.warning(f"   • {r['production_table']}{status_detail}: {error}")
         logger.info(f"{'-'*60}\n")
 
 
