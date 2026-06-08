@@ -26,6 +26,40 @@ from .services.execution_launcher import launch_sync_job_subprocess
 logger = logging.getLogger(__name__)
 
 
+def _get_latest_health_check(user):
+    """
+    Get cached health check results without running tests.
+    Returns None if no health check exists.
+    """
+    try:
+        from connections.models import ConnectionHealthCheckLog
+        from django.db.models import Q
+
+        # Get user's tenant
+        user_tenant = None
+        if hasattr(user, 'userprofile'):
+            user_tenant = user.userprofile.get_tenant()
+
+        # Get health check for current user's tenant OR global health checks (tenant=None)
+        latest_health_check = ConnectionHealthCheckLog.objects.filter(
+            Q(tenant=user_tenant) | Q(tenant__isnull=True)
+        ).order_by('-tested_at').first()
+
+        if latest_health_check:
+            return {
+                'tested_at': latest_health_check.tested_at.isoformat(),
+                'total_tested': latest_health_check.total_tested,
+                'total_passed': latest_health_check.total_passed,
+                'total_failed': latest_health_check.total_failed,
+                'health_percentage': latest_health_check.health_percentage(),
+                'failed_connections': latest_health_check.get_failed_connections(),
+            }
+        return None
+    except Exception as e:
+        logger.error(f"Error retrieving health check: {e}", exc_info=True)
+        return None
+
+
 def _generate_heatmap_data(user):
     """
     Generate heatmap data showing execution counts by day and hour (last 7 days).
@@ -216,159 +250,22 @@ def viewer_read_only_required(view_func):
 @login_required
 def dashboard(request):
     """
-    Enhanced dashboard with comprehensive statistics
-    Role-based dashboard display
+    Enhanced dashboard with skeleton loading for instant render
+    Data loaded asynchronously via API endpoint
     """
-    from sync_jobs.services import DashboardService
     from accounts.models import UserProfile
-    
+
     try:
         # Get user profile for role information
         profile = request.user.userprofile
-        
-        # Get comprehensive statistics
-        stats = DashboardService.get_user_statistics(request.user)
-        
-        # Get execution trends (last 30 days)
-        trends = DashboardService.get_execution_trends(request.user, days=30)
 
-        # Get recent activity (last 5 jobs only)
-        recent_activity = DashboardService.get_recent_activity(request.user, limit=5)
-
-        # Get heatmap data (executions by day/hour for last 7 days)
-        heatmap_data = _generate_heatmap_data(request.user)
-        
-        # Serialize trends data to JSON for JavaScript
-        import json
-        from django.utils.dateformat import format
-        trends_json = json.dumps([
-            {
-                'day': trend['day'].strftime('%Y-%m-%d') if hasattr(trend['day'], 'strftime') else str(trend['day']),
-                'total': trend.get('total', 0),
-                'successful': trend.get('successful', 0),
-                'failed': trend.get('failed', 0),
-                'rows_synced': trend.get('rows_synced', 0) or 0
-            }
-            for trend in trends
-        ])
-
-        # Serialize heatmap data to JSON
-        heatmap_json = json.dumps(heatmap_data)
-        
-        # Day-7 reliability insights are now embedded directly into the
-        # existing dashboard (no separate ops page required).
-        reliability_rollup_24h = None
-        reliability_rollup_7d = None
-        reliability_jobs = []
-        try:
-            from sync_jobs.services import ops_metrics_service
-
-            reliability_rollup_24h = ops_metrics_service.compute_health_rollup(
-                request.user, window_hours=24,
-            )
-            reliability_rollup_7d = ops_metrics_service.compute_health_rollup(
-                request.user, window_hours=168,
-            )
-            reliability_jobs = ops_metrics_service.compute_job_health(
-                request.user, window_hours=24,
-            )[:6]
-        except Exception as rel_exc:  # pragma: no cover - defensive dashboard path
-            logger.warning("Dashboard reliability insights unavailable: %s", rel_exc)
-
-        # Prepare trends data for ApexCharts
-        trends_data = {
-            'days': [trend['day'].strftime('%m/%d') if hasattr(trend['day'], 'strftime') else str(trend['day']) for trend in trends],
-            'total': [trend.get('total', 0) for trend in trends],
-            'successful': [trend.get('successful', 0) for trend in trends],
-            'failed': [trend.get('failed', 0) for trend in trends],
-            'rows_synced': [trend.get('rows_synced', 0) or 0 for trend in trends],
-        }
-
-        # Debug: Log the last 5 days of trends
-        logger.info(f"Dashboard trends - Last 5 days:")
-        for i, trend in enumerate(trends[-5:]):
-            logger.info(f"  Day {i}: {trend['day']} -> Total={trend['total']}, Success={trend['successful']}, Failed={trend['failed']}")
-        logger.info(f"Trends data arrays - Last 5 values:")
-        logger.info(f"  Days: {trends_data['days'][-5:]}")
-        logger.info(f"  Total: {trends_data['total'][-5:]}")
-        logger.info(f"  Successful: {trends_data['successful'][-5:]}")
-        logger.info(f"  Failed: {trends_data['failed'][-5:]}")
-
-        # Get latest health check results
-        health_check_data = None
-        try:
-            from connections.models import ConnectionHealthCheckLog
-            from connections.health_check import ConnectionHealthCheck
-            from django.db.models import Q
-
-            # Get user's tenant
-            user_tenant = None
-            if hasattr(request.user, 'userprofile'):
-                user_tenant = request.user.userprofile.get_tenant()
-
-            # Get health check for current user's tenant OR global health checks (tenant=None)
-            latest_health_check = ConnectionHealthCheckLog.objects.filter(
-                Q(tenant=user_tenant) | Q(tenant__isnull=True)
-            ).order_by('-tested_at').first()
-
-            logger.info(f"Health check query - User: {request.user}, Tenant: {user_tenant}, Found: {latest_health_check is not None}")
-
-            # If no health check exists or it's older than 24 hours, run a new one automatically
-            should_auto_test = False
-            if not latest_health_check:
-                should_auto_test = True
-                logger.info("No health check found - will auto-test on first load")
-            else:
-                # Check if health check is older than 24 hours
-                age_hours = (timezone.now() - latest_health_check.tested_at).total_seconds() / 3600
-                if age_hours > 24:
-                    should_auto_test = True
-                    logger.info(f"Health check is {age_hours:.1f} hours old - will refresh")
-
-            if should_auto_test:
-                # Run health check in background
-                logger.info("Running automatic health check...")
-                health_checker = ConnectionHealthCheck()
-                results = health_checker.test_all_connections(tenant=user_tenant)
-
-                # Save to database
-                latest_health_check = ConnectionHealthCheckLog.objects.create(
-                    tenant=user_tenant,
-                    total_tested=results['total_tested'],
-                    total_passed=results['total_passed'],
-                    total_failed=results['total_failed'],
-                    results_json=results
-                )
-                logger.info(f"Auto health check completed: {latest_health_check.id}")
-
-            if latest_health_check:
-                health_check_data = {
-                    'tested_at': latest_health_check.tested_at,
-                    'total_tested': latest_health_check.total_tested,
-                    'total_passed': latest_health_check.total_passed,
-                    'total_failed': latest_health_check.total_failed,
-                    'health_percentage': latest_health_check.health_percentage(),
-                    'failed_connections': latest_health_check.get_failed_connections(),
-                }
-                logger.info(f"Health check data prepared: tested_at={health_check_data['tested_at']}, health={health_check_data['health_percentage']}%")
-        except Exception as hc_exc:
-            logger.error(f"Dashboard health check data unavailable: {hc_exc}", exc_info=True)
-
+        # INSTANT RENDER - no data fetching, just skeleton placeholders
         context = {
             'page_title': 'Dashboard',
-            'stats': stats,
-            'trends': trends,
-            'trends_data': trends_data,  # For ApexCharts
-            'trends_json': trends_json,  # JSON serialized for JavaScript (legacy)
-            'recent_activity': recent_activity,
-            'user_role': profile.role,  # For template display
+            'user_role': profile.role,
             'is_super_admin': profile.is_super_admin(),
             'is_admin': profile.is_admin(),
-            'reliability_rollup_24h': reliability_rollup_24h,
-            'reliability_rollup_7d': reliability_rollup_7d,
-            'reliability_jobs': reliability_jobs,
-            'health_check_data': health_check_data,  # Connection health check
-            'heatmap_data': heatmap_json,  # Execution heatmap by hour/day (JSON)
+            'loading_mode': True,  # Triggers skeleton display in template
         }
 
         # Use advanced dashboard template with heatmaps, radar, treemaps
@@ -384,17 +281,54 @@ def dashboard(request):
 @require_http_methods(["GET"])
 def dashboard_api(request):
     """
-    API endpoint for AJAX partial dashboard updates
-    Returns only the data that changes (KPIs and recent activity)
+    Comprehensive API endpoint for async dashboard data loading
+    Returns all metrics, trends, charts, health checks for progressive loading
     """
     from sync_jobs.services import DashboardService
+    import json
 
     try:
-        # Get fresh statistics
+        # Get comprehensive statistics
         stats = DashboardService.get_user_statistics(request.user)
+
+        # Get execution trends (last 30 days)
+        trends = DashboardService.get_execution_trends(request.user, days=30)
 
         # Get recent activity
         recent_activity = DashboardService.get_recent_activity(request.user, limit=5)
+
+        # Get heatmap data (last 7 days)
+        heatmap_data = _generate_heatmap_data(request.user)
+
+        # Get reliability insights
+        reliability_rollup_24h = None
+        reliability_rollup_7d = None
+        reliability_jobs = []
+        try:
+            from sync_jobs.services import ops_metrics_service
+            reliability_rollup_24h = ops_metrics_service.compute_health_rollup(
+                request.user, window_hours=24
+            )
+            reliability_rollup_7d = ops_metrics_service.compute_health_rollup(
+                request.user, window_hours=168
+            )
+            reliability_jobs = ops_metrics_service.compute_job_health(
+                request.user, window_hours=24
+            )[:6]
+        except Exception as rel_exc:
+            logger.warning(f"Reliability insights unavailable: {rel_exc}")
+
+        # Get CACHED health check (don't run tests on every API call)
+        health_check_data = _get_latest_health_check(request.user)
+
+        # Prepare trends data for ApexCharts
+        trends_data = {
+            'days': [trend['day'].strftime('%m/%d') if hasattr(trend['day'], 'strftime') else str(trend['day']) for trend in trends],
+            'total': [trend.get('total', 0) for trend in trends],
+            'successful': [trend.get('successful', 0) for trend in trends],
+            'failed': [trend.get('failed', 0) for trend in trends],
+            'rows_synced': [trend.get('rows_synced', 0) or 0 for trend in trends],
+        }
 
         # Format recent activity for JSON
         activity_data = []
@@ -411,7 +345,7 @@ def dashboard_api(request):
                 'status_display': execution.get_status_display()
             })
 
-        # Return comprehensive data
+        # Return comprehensive dashboard data
         return JsonResponse({
             'success': True,
             'stats': {
@@ -422,8 +356,17 @@ def dashboard_api(request):
                 'rows_synced_30d': stats.get('rows_synced', {}).get('last_30d', 0),
                 'avg_duration': stats.get('performance', {}).get('avg_duration_30d', 0),
                 'total_connections': stats.get('connections', {}).get('total', 0),
+                # Additional stats for charts
+                'database_usage': stats.get('database_usage', []),
+                'source_distribution': stats.get('source_distribution', {}),
             },
+            'trends_data': trends_data,
             'recent_activity': activity_data,
+            'heatmap_data': heatmap_data,
+            'reliability_rollup_24h': reliability_rollup_24h,
+            'reliability_rollup_7d': reliability_rollup_7d,
+            'reliability_jobs': reliability_jobs,
+            'health_check_data': health_check_data,
             'timestamp': timezone.now().isoformat()
         })
     except Exception as e:

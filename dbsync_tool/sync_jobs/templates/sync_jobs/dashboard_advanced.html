@@ -164,46 +164,65 @@
 
     <!-- KPI Stat Cards - Azure Clean Style -->
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4" id="kpi-cards" style="gap: 16px;">
-        <div class="stat-card gradient-1">
-            <div class="metric-label" style="margin-bottom: 4px;">Total Relays</div>
-            <div class="metric-value">{{ stats.jobs.total }}</div>
-            <div class="mt-2 text-xs" style="color: #605E5C;">{{ stats.jobs.running }} Active</div>
-        </div>
+        {% if loading_mode %}
+            <!-- SKELETON KPI CARDS -->
+            {% for i in "123456" %}
+            <div class="stat-card gradient-{{ forloop.counter }} skeleton-stat-card" data-card-index="{{ forloop.counter }}">
+                <div class="skeleton-content">
+                    <div class="skeleton skeleton-text" style="width: 60%; height: 14px;"></div>
+                    <div class="skeleton skeleton-text-lg" style="width: 50%; margin-top: 8px;"></div>
+                    <div class="skeleton skeleton-text-sm" style="width: 40%; margin-top: 8px;"></div>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <!-- REAL DATA KPI CARDS -->
+            <div class="stat-card gradient-1">
+                <div class="metric-label" style="margin-bottom: 4px;">Total Relays</div>
+                <div class="metric-value">{{ stats.jobs.total }}</div>
+                <div class="mt-2 text-xs" style="color: #605E5C;">{{ stats.jobs.running }} Active</div>
+            </div>
 
-        <div class="stat-card gradient-2">
-            <div class="metric-label" style="margin-bottom: 4px;">Success Rate</div>
-            <div class="metric-value">{{ stats.success_rates.last_30d }}%</div>
-            <div class="mt-2 text-xs" style="color: #605E5C;">{{ stats.executions.last_30d }} Executions</div>
-        </div>
+            <div class="stat-card gradient-2">
+                <div class="metric-label" style="margin-bottom: 4px;">Success Rate</div>
+                <div class="metric-value">{{ stats.success_rates.last_30d }}%</div>
+                <div class="mt-2 text-xs" style="color: #605E5C;">{{ stats.executions.last_30d }} Executions</div>
+            </div>
 
-        <div class="stat-card gradient-3">
-            <div class="metric-label" style="margin-bottom: 4px;">Executions (24H)</div>
-            <div class="metric-value">{{ stats.executions.last_24h }}</div>
-            <div class="mt-2 text-xs" style="color: #605E5C;">7D: {{ stats.executions.last_7d }}</div>
-        </div>
+            <div class="stat-card gradient-3">
+                <div class="metric-label" style="margin-bottom: 4px;">Executions (24H)</div>
+                <div class="metric-value">{{ stats.executions.last_24h }}</div>
+                <div class="mt-2 text-xs" style="color: #605E5C;">7D: {{ stats.executions.last_7d }}</div>
+            </div>
 
-        <div class="stat-card gradient-4">
-            <div class="metric-label" style="margin-bottom: 4px;">Rows Synced</div>
-            <div class="metric-value">{{ stats.rows_synced.last_30d|intcomma }}</div>
-            <div class="mt-2 text-xs" style="color: #605E5C;">24H: {{ stats.rows_synced.last_24h|intcomma }}</div>
-        </div>
+            <div class="stat-card gradient-4">
+                <div class="metric-label" style="margin-bottom: 4px;">Rows Synced</div>
+                <div class="metric-value">{{ stats.rows_synced.last_30d|intcomma }}</div>
+                <div class="mt-2 text-xs" style="color: #605E5C;">24H: {{ stats.rows_synced.last_24h|intcomma }}</div>
+            </div>
 
-        <div class="stat-card gradient-5">
-            <div class="metric-label" style="margin-bottom: 4px;">Avg Latency</div>
-            <div class="metric-value">{% if stats.performance.avg_duration_30d %}{{ stats.performance.avg_duration_30d|floatformat:0 }}s{% else %}N/A{% endif %}</div>
-            <div class="mt-2 text-xs" style="color: #605E5C;">Completion Time</div>
-        </div>
+            <div class="stat-card gradient-5">
+                <div class="metric-label" style="margin-bottom: 4px;">Avg Latency</div>
+                <div class="metric-value">{% if stats.performance.avg_duration_30d %}{{ stats.performance.avg_duration_30d|floatformat:0 }}s{% else %}N/A{% endif %}</div>
+                <div class="mt-2 text-xs" style="color: #605E5C;">Completion Time</div>
+            </div>
 
-        <div class="stat-card gradient-6">
-            <div class="metric-label" style="margin-bottom: 4px;">DB Clusters</div>
-            <div class="metric-value">{{ stats.connections.total }}</div>
-            <div class="mt-2 text-xs" style="color: #605E5C;">API: {{ stats.api_connections.total }}</div>
-        </div>
+            <div class="stat-card gradient-6">
+                <div class="metric-label" style="margin-bottom: 4px;">DB Clusters</div>
+                <div class="metric-value">{{ stats.connections.total }}</div>
+                <div class="mt-2 text-xs" style="color: #605E5C;">API: {{ stats.api_connections.total }}</div>
+            </div>
+        {% endif %}
     </div>
 
     <!-- Connection Health Check Card - Azure Style -->
-    {% if health_check_data %}
-    <div class="chart-container">
+    {% if loading_mode %}
+    <div class="chart-container skeleton-health-card" id="health-check-container">
+        <div class="skeleton skeleton-text" style="width: 30%; height: 20px; margin-bottom: 16px;"></div>
+        <div class="skeleton" style="height: 200px; border-radius: 4px;"></div>
+    </div>
+    {% elif health_check_data %}
+    <div class="chart-container" id="health-check-container">
         <div class="section-header">
             <div class="section-icon">
                 <span class="material-symbols-outlined">health_and_safety</span>
@@ -281,127 +300,155 @@
 
     <!-- Advanced Charts Grid -->
     <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6" id="charts-grid">
+        {% if loading_mode %}
+            <!-- SKELETON CHARTS -->
+            <div class="chart-container xl:col-span-2 skeleton-chart">
+                <div class="skeleton skeleton-text" style="width: 30%; height: 20px; margin-bottom: 16px;"></div>
+                <div class="skeleton" style="height: 300px; border-radius: 4px;"></div>
+            </div>
 
-        <!-- Execution Heatmap (Activity by Hour & Day) -->
-        <div class="chart-container xl:col-span-2">
-            <div class="section-header">
-                <div class="section-icon">
-                    <span class="material-symbols-outlined">grid_view</span>
-                </div>
-                <div>
-                    <h3 class="section-title">Activity Heatmap</h3>
-                    <p class="text-xs text-slate-500 font-medium">Execution patterns by day & hour (last 7 days)</p>
-                </div>
+            <div class="chart-container skeleton-chart">
+                <div class="skeleton skeleton-text" style="width: 40%; height: 20px; margin-bottom: 16px;"></div>
+                <div class="skeleton" style="height: 300px; border-radius: 4px;"></div>
             </div>
-            <div id="heatmapChart"></div>
-        </div>
 
-        <!-- Performance Radar Chart -->
-        <div class="chart-container">
-            <div class="section-header">
-                <div class="section-icon">
-                    <span class="material-symbols-outlined">radar</span>
-                </div>
-                <div>
-                    <h3 class="section-title">System Health Score</h3>
-                    <p class="text-xs font-medium" style="color: var(--text-secondary);">Key performance indicators (0-100%)</p>
-                </div>
+            <div class="chart-container skeleton-chart">
+                <div class="skeleton skeleton-text" style="width: 35%; height: 20px; margin-bottom: 16px;"></div>
+                <div class="skeleton" style="height: 250px; border-radius: 4px;"></div>
             </div>
-            <div id="radarChart"></div>
-            <!-- Legend with actual values -->
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 1px solid #EDEBE9;">
-                <div>
-                    <div style="font-size: 11px; color: #A19F9D; margin-bottom: 2px;">Success Rate (30d)</div>
-                    <div style="font-size: 16px; font-weight: 600; color: #323130;">{{ stats.success_rates.last_30d|floatformat:1 }}%</div>
-                </div>
-                <div>
-                    <div style="font-size: 11px; color: #A19F9D; margin-bottom: 2px;">Reliability Score</div>
-                    <div style="font-size: 16px; font-weight: 600; color: #323130;" id="reliability-score">—</div>
-                </div>
-                <div>
-                    <div style="font-size: 11px; color: #A19F9D; margin-bottom: 2px;">Data Throughput</div>
-                    <div style="font-size: 16px; font-weight: 600; color: #323130;" id="throughput-score">—</div>
-                </div>
-                <div>
-                    <div style="font-size: 11px; color: #A19F9D; margin-bottom: 2px;">Activity Level (24h)</div>
-                    <div style="font-size: 16px; font-weight: 600; color: #323130;">{{ stats.executions.last_24h }} runs</div>
-                </div>
-                <div>
-                    <div style="font-size: 11px; color: #A19F9D; margin-bottom: 2px;">Speed Score</div>
-                    <div style="font-size: 16px; font-weight: 600; color: #323130;" id="speed-score">—</div>
-                </div>
-            </div>
-        </div>
 
-        <!-- Treemap (Database Usage by Size) -->
-        <div class="chart-container xl:col-span-2">
-            <div class="section-header">
-                <div class="section-icon">
-                    <span class="material-symbols-outlined">dashboard</span>
-                </div>
-                <div>
-                    <h3 class="section-title">Data Volume Treemap</h3>
-                    <p class="text-xs font-medium" style="color: var(--text-secondary);">Rows synced by database type</p>
-                </div>
+            <div class="chart-container skeleton-chart">
+                <div class="skeleton skeleton-text" style="width: 30%; height: 20px; margin-bottom: 16px;"></div>
+                <div class="skeleton" style="height: 250px; border-radius: 4px;"></div>
             </div>
-            <div id="treemapChart"></div>
-        </div>
 
-        <!-- Execution Trends (Line Chart) -->
-        <div class="chart-container">
-            <div class="section-header">
-                <div class="section-icon">
-                    <span class="material-symbols-outlined">trending_up</span>
-                </div>
-                <div>
-                    <h3 class="section-title">Execution Trends</h3>
-                    <p class="text-xs font-medium" style="color: var(--text-secondary);">30-day performance</p>
-                </div>
+            <div class="chart-container skeleton-chart">
+                <div class="skeleton skeleton-text" style="width: 35%; height: 20px; margin-bottom: 16px;"></div>
+                <div class="skeleton" style="height: 250px; border-radius: 4px;"></div>
             </div>
-            <div id="executionTrendsChart"></div>
-        </div>
+        {% else %}
+            <!-- REAL CHARTS -->
+            <!-- Execution Heatmap (Activity by Hour & Day) -->
+            <div class="chart-container xl:col-span-2">
+                <div class="section-header">
+                    <div class="section-icon">
+                        <span class="material-symbols-outlined">grid_view</span>
+                    </div>
+                    <div>
+                        <h3 class="section-title">Activity Heatmap</h3>
+                        <p class="text-xs text-slate-500 font-medium">Execution patterns by day & hour (last 7 days)</p>
+                    </div>
+                </div>
+                <div id="heatmapChart"></div>
+            </div>
 
-        <!-- Success Rate Radial Bar -->
-        <div class="chart-container">
-            <div class="section-header">
-                <div class="section-icon">
-                    <span class="material-symbols-outlined">donut_small</span>
+            <!-- Performance Radar Chart -->
+            <div class="chart-container">
+                <div class="section-header">
+                    <div class="section-icon">
+                        <span class="material-symbols-outlined">radar</span>
+                    </div>
+                    <div>
+                        <h3 class="section-title">System Health Score</h3>
+                        <p class="text-xs font-medium" style="color: var(--text-secondary);">Key performance indicators (0-100%)</p>
+                    </div>
                 </div>
-                <div>
-                    <h3 class="section-title">Success Rate</h3>
-                    <p class="text-xs font-medium" style="color: var(--text-secondary);">30-day distribution</p>
+                <div id="radarChart"></div>
+                <!-- Legend with actual values -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 1px solid #EDEBE9;">
+                    <div>
+                        <div style="font-size: 11px; color: #A19F9D; margin-bottom: 2px;">Success Rate (30d)</div>
+                        <div style="font-size: 16px; font-weight: 600; color: #323130;">{{ stats.success_rates.last_30d|floatformat:1 }}%</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 11px; color: #A19F9D; margin-bottom: 2px;">Reliability Score</div>
+                        <div style="font-size: 16px; font-weight: 600; color: #323130;" id="reliability-score">—</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 11px; color: #A19F9D; margin-bottom: 2px;">Data Throughput</div>
+                        <div style="font-size: 16px; font-weight: 600; color: #323130;" id="throughput-score">—</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 11px; color: #A19F9D; margin-bottom: 2px;">Activity Level (24h)</div>
+                        <div style="font-size: 16px; font-weight: 600; color: #323130;">{{ stats.executions.last_24h }} runs</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 11px; color: #A19F9D; margin-bottom: 2px;">Speed Score</div>
+                        <div style="font-size: 16px; font-weight: 600; color: #323130;" id="speed-score">—</div>
+                    </div>
                 </div>
             </div>
-            <div id="successRateChart"></div>
-        </div>
 
-        <!-- Database Usage Bar Chart -->
-        <div class="chart-container">
-            <div class="section-header">
-                <div class="section-icon">
-                    <span class="material-symbols-outlined">storage</span>
+            <!-- Treemap (Database Usage by Size) -->
+            <div class="chart-container xl:col-span-2">
+                <div class="section-header">
+                    <div class="section-icon">
+                        <span class="material-symbols-outlined">dashboard</span>
+                    </div>
+                    <div>
+                        <h3 class="section-title">Data Volume Treemap</h3>
+                        <p class="text-xs font-medium" style="color: var(--text-secondary);">Rows synced by database type</p>
+                    </div>
                 </div>
-                <div>
-                    <h3 class="section-title">Database Usage</h3>
-                    <p class="text-xs font-medium" style="color: var(--text-secondary);">Tables by cluster</p>
-                </div>
+                <div id="treemapChart"></div>
             </div>
-            <div id="databaseUsageChart"></div>
-        </div>
 
-        <!-- Data Volume Area Chart -->
-        <div class="chart-container">
-            <div class="section-header">
-                <div class="section-icon">
-                    <span class="material-symbols-outlined">analytics</span>
+            <!-- Execution Trends (Line Chart) -->
+            <div class="chart-container">
+                <div class="section-header">
+                    <div class="section-icon">
+                        <span class="material-symbols-outlined">trending_up</span>
+                    </div>
+                    <div>
+                        <h3 class="section-title">Execution Trends</h3>
+                        <p class="text-xs font-medium" style="color: var(--text-secondary);">30-day performance</p>
+                    </div>
                 </div>
-                <div>
-                    <h3 class="section-title">Data Volume</h3>
-                    <p class="text-xs font-medium" style="color: var(--text-secondary);">Rows over time</p>
-                </div>
+                <div id="executionTrendsChart"></div>
             </div>
-            <div id="dataVolumeChart"></div>
-        </div>
+
+            <!-- Success Rate Radial Bar -->
+            <div class="chart-container">
+                <div class="section-header">
+                    <div class="section-icon">
+                        <span class="material-symbols-outlined">donut_small</span>
+                    </div>
+                    <div>
+                        <h3 class="section-title">Success Rate</h3>
+                        <p class="text-xs font-medium" style="color: var(--text-secondary);">30-day distribution</p>
+                    </div>
+                </div>
+                <div id="successRateChart"></div>
+            </div>
+
+            <!-- Database Usage Bar Chart -->
+            <div class="chart-container">
+                <div class="section-header">
+                    <div class="section-icon">
+                        <span class="material-symbols-outlined">storage</span>
+                    </div>
+                    <div>
+                        <h3 class="section-title">Database Usage</h3>
+                        <p class="text-xs font-medium" style="color: var(--text-secondary);">Tables by cluster</p>
+                    </div>
+                </div>
+                <div id="databaseUsageChart"></div>
+            </div>
+
+            <!-- Data Volume Area Chart -->
+            <div class="chart-container">
+                <div class="section-header">
+                    <div class="section-icon">
+                        <span class="material-symbols-outlined">analytics</span>
+                    </div>
+                    <div>
+                        <h3 class="section-title">Data Volume</h3>
+                        <p class="text-xs font-medium" style="color: var(--text-secondary);">Rows over time</p>
+                    </div>
+                </div>
+                <div id="dataVolumeChart"></div>
+            </div>
+        {% endif %}
     </div>
 
     <!-- Recent Activity Table - Azure Style -->
@@ -430,50 +477,70 @@
                         <th class="px-4 py-3 text-xs font-semibold text-right" style="color: #323130;">Status</th>
                     </tr>
                 </thead>
-                <tbody style="border-top: 1px solid #EDEBE9;">
-                    {% for execution in recent_activity %}
-                    <tr class="transition-all cursor-pointer" style="border-bottom: 1px solid #EDEBE9; background: #FFFFFF;" onmouseover="this.style.background='#EFF6FC'" onmouseout="this.style.background='#FFFFFF'" onclick="window.location='{% url 'sync_jobs:execution_detail' job_id=execution.job.id execution_id=execution.id %}'">
-                        <td class="px-4 py-3" style="min-height: 44px;">
-                            <div class="flex items-center gap-3">
-                                <div class="text-sm font-semibold" style="color: #323130;">{{ execution.job.name }}</div>
-                            </div>
-                        </td>
-                        <td class="px-4 py-3">
-                            <div class="text-xs" style="color: #605E5C;">
-                                {{ execution.started_at|timesince }} ago
-                            </div>
-                        </td>
-                        <td class="px-4 py-3">
-                            <div class="text-xs tabular-nums" style="color: #323130;">
-                                {{ execution.total_rows_synced|default:0|intcomma }} rows
-                            </div>
-                        </td>
-                        <td class="px-4 py-3 text-right">
-                            {% if execution.status == 'completed' %}
-                            <span class="inline-flex items-center px-2 py-1 rounded-sm text-xs font-semibold" style="background: #DFF6DD; color: #107C10; border-radius: 2px;">
-                                Success
-                            </span>
-                            {% elif execution.status == 'failed' %}
-                            <span class="inline-flex items-center px-2 py-1 rounded-sm text-xs font-semibold" style="background: #FDE7E9; color: #A80000; border-radius: 2px;">
-                                Failed
-                            </span>
-                            {% elif execution.status == 'running' %}
-                            <span class="inline-flex items-center px-2 py-1 rounded-sm text-xs font-semibold" style="background: #EFF6FC; color: #0078D4; border-radius: 2px;">
-                                Running
-                            </span>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="4" class="px-4 py-12 text-center">
-                            <div class="flex flex-col items-center gap-3">
-                                <span class="material-symbols-outlined text-4xl" style="color: #A19F9D;">inventory_2</span>
-                                <p class="text-sm" style="color: #605E5C;">No recent activity detected</p>
-                            </div>
-                        </td>
-                    </tr>
-                    {% endfor %}
+                <tbody style="border-top: 1px solid #EDEBE9;" id="activity-tbody">
+                    {% if loading_mode %}
+                        <!-- SKELETON TABLE ROWS -->
+                        {% for i in "12345" %}
+                        <tr class="skeleton-table-row" style="border-bottom: 1px solid #EDEBE9;">
+                            <td class="px-4 py-3" style="min-height: 44px;">
+                                <div class="skeleton skeleton-text" style="width: 70%;"></div>
+                            </td>
+                            <td class="px-4 py-3">
+                                <div class="skeleton skeleton-text" style="width: 60%;"></div>
+                            </td>
+                            <td class="px-4 py-3">
+                                <div class="skeleton skeleton-text" style="width: 50%;"></div>
+                            </td>
+                            <td class="px-4 py-3 text-right">
+                                <div class="skeleton skeleton-text" style="width: 60%; margin-left: auto;"></div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        {% for execution in recent_activity %}
+                        <tr class="transition-all cursor-pointer" style="border-bottom: 1px solid #EDEBE9; background: #FFFFFF;" onmouseover="this.style.background='#EFF6FC'" onmouseout="this.style.background='#FFFFFF'" onclick="window.location='{% url 'sync_jobs:execution_detail' job_id=execution.job.id execution_id=execution.id %}'">
+                            <td class="px-4 py-3" style="min-height: 44px;">
+                                <div class="flex items-center gap-3">
+                                    <div class="text-sm font-semibold" style="color: #323130;">{{ execution.job.name }}</div>
+                                </div>
+                            </td>
+                            <td class="px-4 py-3">
+                                <div class="text-xs" style="color: #605E5C;">
+                                    {{ execution.started_at|timesince }} ago
+                                </div>
+                            </td>
+                            <td class="px-4 py-3">
+                                <div class="text-xs tabular-nums" style="color: #323130;">
+                                    {{ execution.total_rows_synced|default:0|intcomma }} rows
+                                </div>
+                            </td>
+                            <td class="px-4 py-3 text-right">
+                                {% if execution.status == 'completed' %}
+                                <span class="inline-flex items-center px-2 py-1 rounded-sm text-xs font-semibold" style="background: #DFF6DD; color: #107C10; border-radius: 2px;">
+                                    Success
+                                </span>
+                                {% elif execution.status == 'failed' %}
+                                <span class="inline-flex items-center px-2 py-1 rounded-sm text-xs font-semibold" style="background: #FDE7E9; color: #A80000; border-radius: 2px;">
+                                    Failed
+                                </span>
+                                {% elif execution.status == 'running' %}
+                                <span class="inline-flex items-center px-2 py-1 rounded-sm text-xs font-semibold" style="background: #EFF6FC; color: #0078D4; border-radius: 2px;">
+                                    Running
+                                </span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="4" class="px-4 py-12 text-center">
+                                <div class="flex flex-col items-center gap-3">
+                                    <span class="material-symbols-outlined text-4xl" style="color: #A19F9D;">inventory_2</span>
+                                    <p class="text-sm" style="color: #605E5C;">No recent activity detected</p>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% endif %}
                 </tbody>
             </table>
         </div>

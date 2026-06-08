@@ -1,6 +1,6 @@
 /**
- * Dashboard JavaScript for real-time AJAX updates
- * No more full page reloads - only updates the data that changes
+ * Dashboard JavaScript for progressive loading with skeleton screens
+ * Instant page render + async data loading
  */
 
 (function() {
@@ -8,9 +8,63 @@
 
     let refreshInterval;
     let lastUpdateTimestamp = null;
+    let isInitialLoad = true;
+    let chartsInitialized = false;
 
     /**
-     * Update dashboard data via AJAX without reloading the page
+     * Initial load - fetch ALL dashboard data and replace skeletons
+     */
+    function loadDashboardData() {
+        console.log('Loading dashboard data...');
+
+        fetch('/sync-jobs/api/dashboard/')
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (!data.success) {
+                    console.error('Dashboard API returned error:', data.error);
+                    showError('Failed to load dashboard data');
+                    return;
+                }
+
+                // Replace skeletons with real data
+                replaceSkeletonsWithData(data);
+
+                // Update KPI cards
+                updateKPICards(data.stats);
+
+                // Update recent activity table
+                updateRecentActivity(data.recent_activity);
+
+                // Update health check
+                if (data.health_check_data) {
+                    updateHealthCheck(data.health_check_data);
+                }
+
+                // Initialize charts (only once)
+                if (!chartsInitialized && typeof ApexCharts !== 'undefined') {
+                    initializeCharts(data);
+                    chartsInitialized = true;
+                }
+
+                // Store timestamp
+                lastUpdateTimestamp = data.timestamp;
+                isInitialLoad = false;
+
+                console.log('Dashboard loaded successfully at', new Date().toLocaleTimeString());
+            })
+            .catch(error => {
+                console.error('Error loading dashboard:', error);
+                showError('Network error loading dashboard');
+            });
+    }
+
+    /**
+     * Subsequent updates - just refresh data, don't recreate everything
      */
     function updateDashboardData() {
         fetch('/sync-jobs/api/dashboard/')
@@ -32,6 +86,16 @@
                 // Update recent activity table
                 updateRecentActivity(data.recent_activity);
 
+                // Update health check
+                if (data.health_check_data) {
+                    updateHealthCheck(data.health_check_data);
+                }
+
+                // Update charts if they exist
+                if (chartsInitialized && typeof ApexCharts !== 'undefined') {
+                    updateChartData(data);
+                }
+
                 // Store timestamp
                 lastUpdateTimestamp = data.timestamp;
 
@@ -44,54 +108,88 @@
     }
 
     /**
-     * Update KPI card values without changing the UI structure
+     * Replace skeleton placeholders with real content structure
+     */
+    function replaceSkeletonsWithData(data) {
+        // Remove skeleton classes from KPI cards
+        const skeletonCards = document.querySelectorAll('.skeleton-stat-card');
+        skeletonCards.forEach((card, index) => {
+            card.classList.remove('skeleton-stat-card');
+            const skeletonContent = card.querySelector('.skeleton-content');
+            if (skeletonContent) {
+                skeletonContent.remove();
+            }
+
+            // Add real content structure
+            const labels = ['Total Relays', 'Success Rate', 'Executions (24H)', 'Rows Synced', 'Avg Latency', 'DB Clusters'];
+            card.innerHTML = `
+                <div class="metric-label" style="margin-bottom: 4px;">${labels[index]}</div>
+                <div class="metric-value">—</div>
+                <div class="mt-2 text-xs" style="color: #605E5C;">Loading...</div>
+            `;
+
+            // Fade in animation
+            card.classList.add('fade-in');
+        });
+
+        // Remove skeleton from charts
+        const skeletonCharts = document.querySelectorAll('.skeleton-chart');
+        skeletonCharts.forEach(chart => {
+            chart.classList.remove('skeleton-chart');
+            chart.classList.add('fade-in');
+        });
+
+        // Remove skeleton from table
+        const skeletonRows = document.querySelectorAll('.skeleton-table-row');
+        skeletonRows.forEach(row => row.remove());
+
+        // Remove skeleton from health check
+        const healthContainer = document.getElementById('health-check-container');
+        if (healthContainer && healthContainer.classList.contains('skeleton-health-card')) {
+            healthContainer.classList.remove('skeleton-health-card');
+            healthContainer.classList.add('fade-in');
+        }
+    }
+
+    /**
+     * Update KPI card values
      */
     function updateKPICards(stats) {
-        // Find and update each metric by looking for the metric values
-        const metricSelectors = {
-            'total_jobs': '.stat-card .metric-value',
-            'success_rate': '.stat-card .metric-value',
-            'executions_24h': '.stat-card .metric-value',
-            'rows_synced_30d': '.stat-card .metric-value',
-            'avg_duration': '.stat-card .metric-value',
-            'total_connections': '.stat-card .metric-value'
-        };
-
-        // Update Total Jobs (first card)
         const cards = document.querySelectorAll('.stat-card');
-        if (cards.length >= 1 && stats.total_jobs !== undefined) {
-            const valueEl = cards[0].querySelector('.metric-value');
-            if (valueEl) animateNumberChange(valueEl, stats.total_jobs);
-        }
 
-        // Update Success Rate (second card)
-        if (cards.length >= 2 && stats.success_rate !== undefined) {
-            const valueEl = cards[1].querySelector('.metric-value');
-            if (valueEl) animateNumberChange(valueEl, stats.success_rate.toFixed(1) + '%');
+        if (cards.length >= 1) {
+            updateCard(cards[0], stats.total_jobs || 0, `${stats.active_jobs || 0} Active`);
         }
-
-        // Update Executions 24h (third card)
-        if (cards.length >= 3 && stats.executions_24h !== undefined) {
-            const valueEl = cards[2].querySelector('.metric-value');
-            if (valueEl) animateNumberChange(valueEl, stats.executions_24h);
+        if (cards.length >= 2) {
+            updateCard(cards[1], `${stats.success_rate || 0}%`, `${stats.executions_24h || 0} Executions`);
         }
-
-        // Update Rows Synced 30d (fourth card)
-        if (cards.length >= 4 && stats.rows_synced_30d !== undefined) {
-            const valueEl = cards[3].querySelector('.metric-value');
-            if (valueEl) animateNumberChange(valueEl, formatNumber(stats.rows_synced_30d));
+        if (cards.length >= 3) {
+            updateCard(cards[2], stats.executions_24h || 0, `7D: ${stats.executions_7d || 0}`);
         }
-
-        // Update Avg Duration (fifth card)
-        if (cards.length >= 5 && stats.avg_duration !== undefined) {
-            const valueEl = cards[4].querySelector('.metric-value');
-            if (valueEl) animateNumberChange(valueEl, Math.round(stats.avg_duration) + 's');
+        if (cards.length >= 4) {
+            updateCard(cards[3], formatNumber(stats.rows_synced_30d || 0), `24H: ${formatNumber(stats.rows_synced_24h || 0)}`);
         }
+        if (cards.length >= 5) {
+            const avgDuration = stats.avg_duration ? `${Math.round(stats.avg_duration)}s` : 'N/A';
+            updateCard(cards[4], avgDuration, 'Completion Time');
+        }
+        if (cards.length >= 6) {
+            updateCard(cards[5], stats.total_connections || 0, `API: ${stats.api_connections || 0}`);
+        }
+    }
 
-        // Update Total Connections (sixth card)
-        if (cards.length >= 6 && stats.total_connections !== undefined) {
-            const valueEl = cards[5].querySelector('.metric-value');
-            if (valueEl) animateNumberChange(valueEl, stats.total_connections);
+    /**
+     * Update a single KPI card
+     */
+    function updateCard(card, value, subtitle) {
+        const valueEl = card.querySelector('.metric-value');
+        const subtitleEl = card.querySelector('.mt-2.text-xs');
+
+        if (valueEl && valueEl.textContent !== String(value)) {
+            animateNumberChange(valueEl, value);
+        }
+        if (subtitleEl) {
+            subtitleEl.textContent = subtitle;
         }
     }
 
@@ -131,15 +229,16 @@
      * Update the recent activity table
      */
     function updateRecentActivity(activities) {
-        const tbody = document.querySelector('#recent-activity-table tbody');
+        const tbody = document.getElementById('activity-tbody');
         if (!tbody) return;
 
         if (!activities || activities.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="4" class="px-8 py-12 text-center">
-                        <div class="flex flex-col items-center gap-4">
-                            <p class="font-medium italic" style="color: #64748b;">No recent activity detected</p>
+                    <td colspan="4" class="px-4 py-12 text-center">
+                        <div class="flex flex-col items-center gap-3">
+                            <span class="material-symbols-outlined text-4xl" style="color: #A19F9D;">inventory_2</span>
+                            <p class="text-sm" style="color: #605E5C;">No recent activity detected</p>
                         </div>
                     </td>
                 </tr>
@@ -153,21 +252,23 @@
             const execLink = exec.job_id ? `/sync-jobs/${exec.job_id}/executions/${exec.id}/` : '#';
 
             return `
-                <tr class="border-b hover:bg-gray-50 transition-colors duration-150">
-                    <td class="px-6 py-4">
-                        <a href="${jobLink}" class="font-semibold text-indigo-600 hover:text-indigo-800 hover:underline">
-                            ${escapeHtml(exec.job_name)}
-                        </a>
+                <tr class="transition-all cursor-pointer" style="border-bottom: 1px solid #EDEBE9; background: #FFFFFF;" onmouseover="this.style.background='#EFF6FC'" onmouseout="this.style.background='#FFFFFF'" onclick="window.location='${execLink}'">
+                    <td class="px-4 py-3" style="min-height: 44px;">
+                        <div class="flex items-center gap-3">
+                            <div class="text-sm font-semibold" style="color: #323130;">${escapeHtml(exec.job_name)}</div>
+                        </div>
                     </td>
-                    <td class="px-6 py-4 text-sm text-gray-600">
-                        <a href="${execLink}" class="hover:text-indigo-600">
+                    <td class="px-4 py-3">
+                        <div class="text-xs" style="color: #605E5C;">
                             ${exec.started_at_display}
-                        </a>
+                        </div>
                     </td>
-                    <td class="px-6 py-4 text-sm font-medium text-gray-700">
-                        ${formatNumber(exec.total_rows_synced)} rows
+                    <td class="px-4 py-3">
+                        <div class="text-xs tabular-nums" style="color: #323130;">
+                            ${formatNumber(exec.total_rows_synced)} rows
+                        </div>
                     </td>
-                    <td class="px-6 py-4">
+                    <td class="px-4 py-3 text-right">
                         ${statusBadge}
                     </td>
                 </tr>
@@ -180,30 +281,59 @@
      */
     function getStatusBadgeHTML(status) {
         if (status === 'completed') {
-            return `
-                <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-gradient-to-r from-green-50 to-emerald-50 text-green-700 border border-green-200 shadow-sm">
-                    <div class="w-1.5 h-1.5 rounded-full bg-green-500"></div>
-                    <span class="text-[10px] font-black uppercase tracking-widest">Success</span>
-                </div>
-            `;
+            return `<span class="inline-flex items-center px-2 py-1 rounded-sm text-xs font-semibold" style="background: #DFF6DD; color: #107C10; border-radius: 2px;">Success</span>`;
         } else if (status === 'failed') {
-            return `
-                <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-gradient-to-r from-red-50 to-rose-50 text-red-700 border border-red-200 shadow-sm">
-                    <div class="w-1.5 h-1.5 rounded-full bg-red-500"></div>
-                    <span class="text-[10px] font-black uppercase tracking-widest">Failed</span>
-                </div>
-            `;
+            return `<span class="inline-flex items-center px-2 py-1 rounded-sm text-xs font-semibold" style="background: #FDE7E9; color: #A80000; border-radius: 2px;">Failed</span>`;
         } else if (status === 'running') {
-            return `
-                <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 border border-blue-200 shadow-sm">
-                    <div class="w-1.5 h-1.5 rounded-full bg-blue-500 relative">
-                        <span class="absolute w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping"></span>
-                    </div>
-                    <span class="text-[10px] font-black uppercase tracking-widest">Running</span>
-                </div>
-            `;
+            return `<span class="inline-flex items-center px-2 py-1 rounded-sm text-xs font-semibold" style="background: #EFF6FC; color: #0078D4; border-radius: 2px;">Running</span>`;
         }
         return `<span class="badge">${status}</span>`;
+    }
+
+    /**
+     * Update health check display
+     */
+    function updateHealthCheck(healthData) {
+        const lastCheckTime = document.getElementById('last-check-time');
+        if (lastCheckTime && healthData.tested_at) {
+            const testDate = new Date(healthData.tested_at);
+            const now = new Date();
+            const diffMinutes = Math.floor((now - testDate) / 60000);
+            const timeAgo = diffMinutes < 60
+                ? `${diffMinutes} minutes ago`
+                : diffMinutes < 1440
+                    ? `${Math.floor(diffMinutes / 60)} hours ago`
+                    : `${Math.floor(diffMinutes / 1440)} days ago`;
+            lastCheckTime.textContent = `Last check: ${timeAgo}`;
+        }
+    }
+
+    /**
+     * Initialize all charts with data (called once on initial load)
+     */
+    function initializeCharts(data) {
+        // Charts are initialized by the inline script in the template
+        // This function is a placeholder for any additional chart initialization
+        console.log('Charts initialized with data');
+    }
+
+    /**
+     * Update existing chart data (for subsequent refreshes)
+     */
+    function updateChartData(data) {
+        // Update chart data without recreating charts
+        // Implementation depends on chart update needs
+    }
+
+    /**
+     * Show error message to user
+     */
+    function showError(message) {
+        if (typeof showToast !== 'undefined') {
+            showToast(message, 'danger');
+        } else {
+            console.error(message);
+        }
     }
 
     /**
@@ -216,19 +346,26 @@
     }
 
     /**
-     * Initialize AJAX refresh system
+     * Initialize dashboard refresh system
      */
     function initDashboardRefresh() {
-        // Only refresh if we're on the dashboard page
-        if (document.querySelector('.stat-card') || document.getElementById('recent-activity-table')) {
-            // Update immediately on load
+        // Check if we have skeleton cards (loading mode)
+        const hasSkeletons = document.querySelector('.skeleton-stat-card') !== null;
+
+        if (hasSkeletons) {
+            // IMMEDIATE load for skeleton mode
+            loadDashboardData();
+        } else if (document.querySelector('.stat-card') || document.getElementById('activity-tbody')) {
+            // Data already rendered (fallback), just update after delay
             setTimeout(updateDashboardData, 2000);
-
-            // Then update every 15 seconds (reduced from 30 seconds)
-            refreshInterval = setInterval(updateDashboardData, 15000);
-
-            console.log('Dashboard AJAX refresh initialized (every 15 seconds)');
+            isInitialLoad = false;
+            chartsInitialized = true;
         }
+
+        // Set up periodic refresh (every 15 seconds)
+        refreshInterval = setInterval(updateDashboardData, 15000);
+
+        console.log('Dashboard progressive loading initialized');
     }
 
     // Initialize on page load
@@ -269,4 +406,3 @@
     // Expose showToast globally
     window.showToast = showToast;
 })();
-
